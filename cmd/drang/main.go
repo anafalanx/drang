@@ -23,7 +23,7 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.1.0"
+var version = "0.1"
 
 func main() {
 	mode := "run"

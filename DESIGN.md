@@ -1379,10 +1379,10 @@ the DX track: `--version`/`--help`, optional REPL.
 
 ## 34. Build progress (2026-06-26) — CLI hygiene: --version / --help
 
-Standard CLI manners. `drang --version` (or `-V`) prints `drang 0.1.0` and exits 0;
+Standard CLI manners. `drang --version` (or `-V`) prints `drang 0.1` and exits 0;
 `drang --help` (or `-h`) prints full usage and exits 0; bare `drang` prints a short
 usage plus "try 'drang --help'" and exits 2. The version is a `var version`
-(default "0.1.0", the first usable release) so a build can stamp it via
+(default "0.1", the first usable release) so a build can stamp it via
 `-ldflags "-X main.version=..."`. The new flags are recognized in the existing
 leading-flag loop, so `-e`, the mode flags, and `$ARGV` pass-through are unchanged.
 
@@ -1398,7 +1398,7 @@ input (`cat foo.l3 | drang`) is instead read and run as a program; `--repl` forc
 the loop regardless.
 
 ```
-drang 0.1.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+drang 0.1 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
 drang> $x := 10
 10
 drang> fn sq($n) {
