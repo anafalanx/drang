@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/anafalanx/lang3/internal/value"
@@ -17,8 +18,19 @@ type regexObj struct {
 }
 
 func (r *regexObj) TypeName() string { return "regex" }
-func (r *regexObj) Display() string  { return "qr/" + r.src + "/" }
 func (r *regexObj) Len() int         { return 0 }
+
+// Display renders as a qr// literal, choosing a delimiter the pattern does not
+// contain so the output round-trips (re-lexing yields an equal regex). Flags show
+// in their baked inline form, e.g. qr/foo/i displays as qr/(?i)foo/.
+func (r *regexObj) Display() string {
+	for _, d := range "/|#!~" {
+		if !strings.ContainsRune(r.src, d) {
+			return "qr" + string(d) + r.src + string(d)
+		}
+	}
+	return "qr/" + strings.ReplaceAll(r.src, "/", `\/`) + "/" // pattern uses every delimiter (rare)
+}
 
 func (r *regexObj) Equal(o value.Obj) bool {
 	other, ok := o.(*regexObj)
