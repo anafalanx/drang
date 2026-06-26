@@ -1237,6 +1237,10 @@ var builtins = map[string]builtin{
 	"lines":       builtinLines,
 	"repeat":      builtinRepeat,
 
+	// JSON (thin binding over encoding/json)
+	"from_json": builtinFromJSON,
+	"to_json":   builtinToJSON,
+
 	// regex (RE2)
 	"re":       builtinRe,
 	"matches":  builtinMatches,

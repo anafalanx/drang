@@ -1567,3 +1567,38 @@ Verified by payload round-trip and atomic-write unit tests
 args, `$ARGV`, exit-code propagation, build-time rejection of invalid scripts,
 same-file refusal with the source intact, pmap/subprocess inside a standalone);
 `vet` + full `-race` suite green.
+
+## 39. Build progress (2026-06-26) — JSON (`from_json` / `to_json`)
+
+Two builtins binding Go's `encoding/json`: `from_json(s)` parses, `to_json(v,
+indent?)` renders. Mapping: object↔map, array↔array, JSON number→int when integral
+and in int64 range else float, true/false↔bool, null↔nil, string↔string.
+
+Choices:
+- Key order round-trips. `from_json` builds the `OrderedMap` by streaming
+  `json.Decoder` tokens (not `Unmarshal` into a Go map, which randomizes), and
+  `to_json` walks the map in insertion order. So parse→render preserves object key
+  order — which matters for diffs and config tooling.
+- int/float kept distinct via `dec.UseNumber()`: integral & int64-range → Int,
+  else Float (integers beyond int64 fall back to Float, the language's only option).
+- Errors as values: malformed input, trailing data, and non-encodable values
+  (function, regex, range, channel, error, …) are catchable Err; only misuse
+  (wrong arity/type, bad indent) aborts. NaN/Inf → Err (not valid JSON).
+- Output is not HTML-escaped: `<`, `>`, `&` pass through (unlike `encoding/json`'s
+  default), via a hand-rolled string escaper for quotes/backslash/control chars.
+- Both parse and render recursion are depth-capped (`maxJSONDepth`), so deeply
+  nested input or a cyclic structure yields a clean Err instead of a stack overflow
+  — which Go's fatal stack-overflow would otherwise make unrecoverable.
+
+An adversarial review found four issues, all fixed: (1, critical) the parse path
+was initially uncapped, so a ~1.7 MB 850k-deep document hard-crashed the process
+(`recover` can't catch a Go fatal stack-overflow); (2) invalid-UTF-8 strings (from
+`read_file`/`capture` of binary data) were silently mangled to U+FFFD — now a
+catchable Err; (3) integral floats render as `N.0` so they stay floats across a
+round-trip; (4) the indent width is capped (`maxJSONIndent`) so a giant indent
+can't exhaust memory.
+
+Verified by `TestJSON` and `TestJSONEdgeCases` (round-trip, key-order, int/float,
+pretty indent, HTML chars, malformed/trailing/non-encodable/deep-nesting/invalid-
+UTF-8 → Err, integral-float stability), the manual's JSON section examples, and a
+direct rerun of the original crash input (now an Err); full `-race` suite green.

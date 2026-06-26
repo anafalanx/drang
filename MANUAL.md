@@ -15,7 +15,9 @@
 - [Errors as Values](#errors-as-values)
 - [Regular expressions](#regular-expressions)
 - [External Commands & Concurrency](#external-commands-concurrency)
+- [In-language concurrency](#in-language-concurrency)
 - [Files and Paths](#files-and-paths)
+- [JSON](#json)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
 
@@ -2236,6 +2238,56 @@ script run.
 
 ---
 
+## JSON
+
+`from_json` parses a JSON document into drang values; `to_json` renders them back. Objects become drang's insertion-ordered maps (so key order round-trips), arrays become arrays, and numbers become `int` when integral or `float` otherwise.
+
+```drang
+$cfg := from_json("{\"name\": \"zmal\", \"tags\": [\"build\", \"test\"]}")
+say($cfg.name)
+say($cfg.tags |> len)
+```
+
+```
+zmal
+2
+```
+
+Build a value and serialize it. A second argument to `to_json` switches on indentation — an int is that many spaces; without it the output is compact:
+
+```drang
+$out := {}
+$out["ok"] = true
+$out["items"] = [1, 2]
+say(to_json($out))
+say(to_json($out, 2))
+```
+
+```
+{"ok":true,"items":[1,2]}
+{
+  "ok": true,
+  "items": [
+    1,
+    2
+  ]
+}
+```
+
+Malformed input is a catchable error value, not an abort — recover it with `//` or inspect it with `is_err`:
+
+```drang
+say(is_err(from_json("{ broken")))
+say(from_json("nope") // "fallback")
+```
+
+```
+true
+fallback
+```
+
+---
+
 ## Quick reference: builtins
 
 Every builtin in drang, grouped by area. Signatures use `?` for an optional
@@ -2283,6 +2335,13 @@ evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 | `chars` | `chars(s)` | Array of single-rune strings. |
 | `len` | `len(x)` | Rune count of a string (also entry count of an array/map/range). |
 | `contains` | `contains(s, needle)` | Substring test for a string (also membership for an array). |
+
+### JSON
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `from_json` | `from_json(s)` | Parse JSON into drang values (object→map, array→array, number→int/float); malformed input → Err. |
+| `to_json` | `to_json(v, indent?)` | Render a value as JSON; `indent` (int spaces or whitespace string) pretty-prints, else compact. Non-encodable values → Err. |
 
 ### Collections & higher-order
 
@@ -2404,12 +2463,9 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Whole capability areas with no builtins
 
-There is no JSON, HTTP, math, date/time, randomness, hashing, or text-encoding support. The functions you might expect simply don't exist, and calling one is an `unknown function` error:
+There is no HTTP, math, date/time, randomness, hashing, or text-encoding support. The functions you might expect simply don't exist, and calling one is an `unknown function` error:
 
 ```
-drang -e 'say(json(1))'
-# drang: unknown function json
-
 drang -e 'say(sqrt(9))'
 # drang: unknown function sqrt
 

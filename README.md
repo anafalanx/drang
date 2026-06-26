@@ -64,7 +64,7 @@ payload invalidates the Mach-O signature), printing the one `codesign -s -` comm
 ## Status
 
 A young, personal daily-driver. It is genuinely usable, but see the *"Not Yet"* section of the manual
-for known gaps (no JSON / HTTP / math / date-time builtins yet, no module system, structs deferred in
+for known gaps (no HTTP / math / date-time builtins yet, no module system, structs deferred in
 favour of maps, and so on).
 
 ## License
