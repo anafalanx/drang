@@ -593,7 +593,7 @@ func TestQuoteHeredocEdges(t *testing.T) {
 }
 
 func TestVMCompilesExamples(t *testing.T) {
-	files, _ := filepath.Glob("../../examples/*.l3")
+	files, _ := filepath.Glob("../../examples/*.dr")
 	if len(files) == 0 {
 		t.Skip("no example scripts found")
 	}

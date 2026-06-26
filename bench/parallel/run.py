@@ -15,8 +15,8 @@ REPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 TIMEOUT = 600
 
 CONFIGS = [
-    ("drang seq (map)",    [LANG3, os.path.join(HERE, "mandel_seq.l3")]),
-    ("drang par (pmap)",   [LANG3, os.path.join(HERE, "mandel_par.l3")]),
+    ("drang seq (map)",    [LANG3, os.path.join(HERE, "mandel_seq.dr")]),
+    ("drang par (pmap)",   [LANG3, os.path.join(HERE, "mandel_par.dr")]),
     ("python seq",         [PY, os.path.join(HERE, "mandel.py"), "seq"]),
     ("python threads",     [PY, os.path.join(HERE, "mandel.py"), "threads"]),
     ("python mp",          [PY, os.path.join(HERE, "mandel.py"), "mp"]),

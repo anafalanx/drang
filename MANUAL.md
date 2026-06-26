@@ -36,10 +36,10 @@ Under the hood lang3 runs on a tree-walking interpreter alongside a register byt
 
 lang3 reads a program from one of four places.
 
-**A file** (`.l3` extension):
+**A file** (`.dr` extension):
 
 ```
-lang3 app.l3
+lang3 app.dr
 ```
 
 **Inline**, with `-e`:
@@ -52,7 +52,7 @@ lang3 -e 'say("hello, world")'
 hello, world
 ```
 
-**Piped stdin** — when stdin is not a terminal, lang3 runs it as the program, so `cat foo.l3 | lang3` works:
+**Piped stdin** — when stdin is not a terminal, lang3 runs it as the program, so `cat foo.dr | lang3` works:
 
 ```
 echo 'say("from stdin")' | lang3
@@ -2439,7 +2439,7 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 - **Structs are designed but not implemented.** The `struct` keyword from DESIGN.md does not parse yet (`struct Foo { ... }` → parse error). Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
 - **No module / import system.** `import "x"` and `use "x"` are both parse errors. Everything lives in one file; there is no way to split or load code.
-- **No `lang3 build`.** Producing a standalone `.exe` (the overlay-payload mechanism in DESIGN.md) is future work. lang3 only interprets — `lang3 -e '...'` or `lang3 file.l3`.
+- **No `lang3 build`.** Producing a standalone `.exe` (the overlay-payload mechanism in DESIGN.md) is future work. lang3 only interprets — `lang3 -e '...'` or `lang3 file.dr`.
 - **No automatic stringy coercion.** Despite being on the roadmap, `"5" + 3` is currently an error, not `8`. Convert explicitly with `int()`:
 
   ```lang3

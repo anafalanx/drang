@@ -1,6 +1,6 @@
 // Command drang is the drang interpreter CLI.
 //
-// Usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]
+// Usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]
 // Leading flags are consumed up to the first non-flag token (the program);
 // everything after the program is exposed to the script as $ARGV. By default it
 // runs the program; --ast prints the parsed AST and --tokens the token stream.
@@ -76,7 +76,7 @@ loop:
 	default:
 		// No program given. An interactive terminal gets the REPL (this is also what
 		// double-clicking the executable does); piped/redirected stdin is read and run
-		// as the program, so `cat foo.l3 | drang` works.
+		// as the program, so `cat foo.dr | drang` works.
 		if interactive() {
 			if mode != "run" {
 				usage()
@@ -103,7 +103,7 @@ loop:
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]")
+	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -113,7 +113,7 @@ func help() {
 	fmt.Printf(`drang %s — a small, parallel, Perl-inspired scripting language
 
 Usage:
-  drang [options] <file.l3> [args...]
+  drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
 
 Options:
@@ -195,7 +195,7 @@ func sourceLine(src string, line int) string {
 }
 
 // interactive reports whether stdin is a terminal (vs a pipe or file), which is
-// how we tell an interactive session (-> REPL) from `cat foo.l3 | drang` (-> run).
+// how we tell an interactive session (-> REPL) from `cat foo.dr | drang` (-> run).
 func interactive() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
