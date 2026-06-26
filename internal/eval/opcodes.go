@@ -42,6 +42,7 @@ const (
 	OpMakeArray             // R[A] = [R[B] .. R[B+C])            (C = element count)
 	OpMakeMap               // R[A] = {pairs in R[B .. B+2C)}     (C = pair count; an unhashable key -> Err)
 	OpMakeRange             // R[A] = R[B]..R[C]                  (non-int bounds -> Err)
+	OpMakeRegex             // R[A] = compiled regex from Consts[B] (pattern string; bad pattern -> Err)
 	OpIndex                 // R[A] = R[B][R[C]]
 	OpField                 // R[A] = R[B].(Consts[C])
 	OpResolveLocalContainer // autoviv local slot A as a container of kindFor(R[B]); name=Consts[C] (errors)

@@ -18,6 +18,7 @@ const (
 	STRING // "..."  and qq{...} / interpolating heredocs (parser interpolates)
 	RAWSTR // q{...} and '...'-style heredocs: literal, no interpolation
 	QW     // qw{...}: whitespace-split word list (parser builds an array)
+	QR     // qr{...}: compiled-regex literal (Lit = pattern, inline flags baked in)
 
 	// keywords
 	FN
@@ -89,6 +90,7 @@ var names = [...]string{
 	STRING:    "STRING",
 	RAWSTR:    "RAWSTR",
 	QW:        "QW",
+	QR:        "QR",
 	FN:        "FN",
 	RETURN:    "RETURN",
 	IF:        "IF",

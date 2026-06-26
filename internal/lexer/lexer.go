@@ -436,7 +436,7 @@ func assembleHeredoc(lines []string, dedent bool) string {
 // whether a following newline should be turned into a NEWLINE terminator.
 func terminates(k token.Kind) bool {
 	switch k {
-	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING, token.RAWSTR, token.QW,
+	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING, token.RAWSTR, token.QW, token.QR,
 		token.TRUE, token.FALSE, token.RETURN, token.BREAK, token.NEXT,
 		token.RPAREN, token.RBRACE, token.RBRACKET, token.QUESTION:
 		return true
@@ -444,8 +444,27 @@ func terminates(k token.Kind) bool {
 	return false
 }
 
-// isQuoteOp reports whether id is a q/qq/qw quote operator keyword.
-func isQuoteOp(id string) bool { return id == "q" || id == "qq" || id == "qw" }
+// isQuoteOp reports whether id is a q/qq/qw/qr quote operator keyword.
+func isQuoteOp(id string) bool {
+	return id == "q" || id == "qq" || id == "qw" || id == "qr"
+}
+
+// readRegexFlags reads trailing regex flag letters after qr/.../ — i (case
+// insensitive), m (multi-line ^$), s (dotall), U (ungreedy). ok=false on an
+// unknown flag letter.
+func (l *Lexer) readRegexFlags() (string, bool) {
+	var b strings.Builder
+	for isLetter(l.ch) {
+		switch l.ch {
+		case 'i', 'm', 's', 'U':
+			b.WriteByte(l.ch)
+		default:
+			return "", false
+		}
+		l.advance()
+	}
+	return b.String(), true
+}
 
 // quoteOpener reports whether c can open a quote body and returns the matching
 // closing delimiter (the same char for non-paired delimiters).
@@ -469,7 +488,8 @@ func quoteOpener(c byte) (close byte, ok bool) {
 // delimiters ( [ { nest; same-char delimiters / | run to the next occurrence. The
 // body is taken literally (no backslash escaping of the delimiter) — choose a
 // delimiter the content avoids, or use a nesting paired one. qq bodies are
-// interpolated by the parser like "..."; q is literal; qw is split into words.
+// interpolated by the parser like "..."; q is literal; qw is split into words;
+// qr is a literal regex pattern (with trailing flags baked in as Go inline flags).
 //
 // Nesting counts raw delimiter bytes only; it is NOT aware of strings or ${...}
 // inside a qq body, so a closing brace inside an interpolation (qq{ ${ "}" } })
@@ -502,6 +522,15 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 		return token.Token{Kind: token.QW, Lit: content, Line: line, Col: col}
 	case "q":
 		return token.Token{Kind: token.RAWSTR, Lit: content, Line: line, Col: col}
+	case "qr":
+		flags, ok := l.readRegexFlags()
+		if !ok {
+			return token.Token{Kind: token.ILLEGAL, Lit: "invalid regex flag after qr//", Line: line, Col: col}
+		}
+		if flags != "" {
+			content = "(?" + flags + ")" + content // bake flags as Go inline flags
+		}
+		return token.Token{Kind: token.QR, Lit: content, Line: line, Col: col}
 	default: // qq
 		return token.Token{Kind: token.STRING, Lit: content, Line: line, Col: col}
 	}

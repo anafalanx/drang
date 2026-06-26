@@ -25,6 +25,7 @@ const (
 	Chan  // heap object: a channel (shared rendezvous)
 	Task  // heap object: a spawned task handle
 	Proc  // heap object: a started external process handle
+	Regex // heap object: a compiled, immutable regex
 )
 
 // Obj is a heap-backed value referenced by a Value.
@@ -171,7 +172,7 @@ func Equal(l, r Value) bool {
 		return l.s == r.s
 	case Err:
 		return l.s == r.s && l.n == r.n
-	case Arr, Map, Range, Func, Chan, Task, Proc:
+	case Arr, Map, Range, Func, Chan, Task, Proc, Regex:
 		return l.ref != nil && r.ref != nil && l.ref.Equal(r.ref)
 	}
 	return false

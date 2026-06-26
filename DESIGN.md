@@ -1482,3 +1482,46 @@ documentation rather than behavior changes:
    Documented as a limitation.
 
 Net: the quote/heredoc machinery is solid; no real defects, no parity issues.
+
+## 37. Build progress (2026-06-26) — first-class regexes (the good parts of Perl, none of the warts)
+
+Regexes are now a first-class value, deliberately taking Perl/Python/Go's good
+ideas and skipping the criticized corners (Perl's `/`-ambiguity and magic capture
+globals; JS's stateful/mutable RegExp):
+
+```
+$id := qr/[a-z]\w*/i          # compiled-regex literal, with flags
+matches($s, $id)              # builtins accept a regex OR a string pattern
+match("k=42", qr{(\w+)=(\d+)})# capture groups returned as an array (no $1 globals)
+$re := re("$prefix\d+")      # re() compiles a dynamic pattern into a regex value
+```
+
+What avoids the warts:
+- **Immutable value.** A `Regex` wraps Go's `*regexp.Regexp`, which is immutable and
+  concurrency-safe, so the value is *shared* (its `DeepCopy` returns itself) and
+  carries no per-match state — no JS `lastIndex` foot-gun. `pmap` hands the same
+  compiled regex to every worker safely.
+- **`qr/.../` syntax** via the quote-operator machinery — no `/`-vs-division
+  ambiguity. Flags `i m s U` are baked in as Go inline flags (`qr/foo/i` → `(?i)foo`).
+- **No magic globals** — `match` already returns captures as an explicit array.
+- **Bad pattern → a catchable `Err`** (consistent with first-class errors), not a
+  crash; an invalid flag is a clean parse error.
+
+Why it fit the grain (the "stop if it fights the design" bar was never hit):
+- `value.go` changed by **two lines**: a `Regex` tag and adding it to `Equal`'s
+  delegating case. `Truthy` (heap default true), `DeepCopyValue` (generic), and
+  `TypeName`/`Display` (delegate to the `Obj`) needed nothing — a regex slots in
+  exactly like `Func`/`Proc`. `normalizeKey` already rejects it as a map key.
+- A `regexObj` implements the existing `Obj` interface; equality is by source
+  (flags included). `value` never imports `regexp`.
+- A shared compile **cache** (`sync.Map`, race-safe) memoizes compilation — the
+  "compile once" win for both `qr//` and string-pattern builtins.
+- The VM gets one opcode, `OpMakeRegex` (same family as `OpMakeArray`/`OpMakeMap`),
+  building the regex from a *string* constant at runtime via the cache — so the
+  constant pool stays scalar (no `constKey` coupling) and is symmetric with the
+  walker. Both backends call `makeRegex`, so parity holds.
+- The dual "string or regex" acceptance is centralized in one `regexArg` helper, so
+  the builtins don't each grow a branch.
+
+Verified by walker-vs-VM parity cases, `TestRegexValue`, `-race`, the full suite,
+and edge checks (pmap concurrency, map-key rejection, interpolation, truthiness).

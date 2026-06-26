@@ -348,12 +348,17 @@ func TestRepeatHugeIsCatchable(t *testing.T) {
 }
 
 func TestRegexArgErrorMessage(t *testing.T) {
-	_, err := builtins["matches"]([]value.Value{str("a"), value.MakeInt(5)})
-	if err == nil {
-		t.Fatal("matches with a non-string pattern should abort")
+	// A non-string, non-regex pattern is a catchable Err value (type errors are
+	// recoverable with //, matching the builtin convention), not an abort.
+	got, err := builtins["matches"]([]value.Value{str("a"), value.MakeInt(5)})
+	if err != nil {
+		t.Fatalf("matches type error should be a value, not an abort: %v", err)
 	}
-	if strings.Contains(err.Error(), "path") || !strings.Contains(err.Error(), "must be a string") {
-		t.Errorf("regex arg error message should not mention paths: %q", err.Error())
+	if !got.IsErr() {
+		t.Fatalf("matches with a non-string/regex pattern should yield an Err, got %v", got)
+	}
+	if msg := got.ErrMsg(); strings.Contains(msg, "path") || !strings.Contains(msg, "must be a string") {
+		t.Errorf("regex arg error message should mention strings, not paths: %q", msg)
 	}
 }
 

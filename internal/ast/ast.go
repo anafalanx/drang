@@ -212,6 +212,16 @@ type StringLit struct {
 func (e *StringLit) String() string { return strconv.Quote(e.Value) }
 func (*StringLit) exprNode()        {}
 
+// RegexLit is a compiled-regex literal: qr/pattern/flags. Pattern already has any
+// trailing flags baked in as Go inline flags (e.g. qr/foo/i -> "(?i)foo").
+type RegexLit struct {
+	Pos
+	Pattern string
+}
+
+func (e *RegexLit) String() string { return "(regex " + strconv.Quote(e.Pattern) + ")" }
+func (*RegexLit) exprNode()        {}
+
 // BoolLit is a boolean literal.
 type BoolLit struct {
 	Pos
