@@ -213,8 +213,8 @@ Why the parallel version is race-free: `scan_file` touches no shared mutable sta
 ## 7. Packaging & platform (Windows 11+ first)
 
 **CLI:**
-- `drang run foo.l3` — interpret.
-- `drang build foo.l3 -o foo.exe` — produce a standalone executable.
+- `drang run foo.dr` — interpret.
+- `drang build foo.dr -o foo.exe` — produce a standalone executable.
 
 **Exe mechanism:** runtime stub + **appended frozen bytecode image** (overlay). At startup the binary inspects its own tail: overlay present → run it; absent → act as the interpreter/CLI. One binary, two modes — the same mechanism `els.exe` uses (appended zipfs payload), and what Deno/Bun `compile` do. Chosen over transpile-to-Go (toolchain dependency, slow) and AOT codegen (years of work).
 
@@ -243,7 +243,7 @@ Still open:
 - Integer overflow policy (promote to float? error? wrap?) — `[OPEN]`
 - Operator set: keep `//` (defined-or), `x` (repeat), `<=>`, `cmp`? — `[OPEN]`
 - `for`-loop destructuring (`for $k, $v in $h`) vs `pairs()` — `[OPEN]`
-- File extension (`.l3`?) and final name — `[OPEN]`
+- File extension (`.dr`?) and final name — `[OPEN]`
 
 ---
 
@@ -419,7 +419,7 @@ Implementation underway in Go: stdlib-only, `module github.com/anafalanx/drang`,
 
 **Build order from here:** control flow (`if/else`, `while`, `for`-in) + blocks +
 assignment → user functions (`fn`) → the `?`/must-use error model → orchestration
-builtins (`run`/`capture`/`glob`/…) on it → `dispatch`. Target: run a real `tasks.l3`.
+builtins (`run`/`capture`/`glob`/…) on it → `dispatch`. Target: run a real `tasks.dr`.
 
 ---
 
@@ -482,7 +482,7 @@ and it's the fiddly part. Errors are plain values: Go's model minus the verbosit
 
 Exit-code plumbing **shipped**: a top-level `?` aborts with the failing Err's code
 (`ExitCode`/`clampCode`), and `dispatch` exits with a task's `result.ErrCode()`. The
-tasks.l3 port (§27) confirmed this fully covers subprocess exit-code propagation —
+tasks.dr port (§27) confirmed this fully covers subprocess exit-code propagation —
 the block-form `or { … }` (binding the error to read `.code`/`.message`) turned out
 **not** to be needed for it, so it stays deferred until a real use demands it.
 Static checking: not planned.
@@ -547,7 +547,7 @@ covered by two-var `for` and `0..len-1`); char ranges (`'a'..'z'` — no char
 literals yet); `break`/`continue`; lambdas; `{name}` map-key shorthand.
 
 **NEXT:** orchestration builtins — `run`/`capture`/`glob`/path/`mkdir`/`newer`
-→ `dispatch` (takes a map of tasks) → a real `tasks.l3`.
+→ `dispatch` (takes a map of tasks) → a real `tasks.dr`.
 
 ## 19. Build progress (2026-06-25) — orchestration core (run/capture, fs, dispatch)
 
@@ -587,7 +587,7 @@ gate is **`newer`/`mtime` plus a `stale` helper**.
   `--list` lists tasks (exit 0); unknown → exit 2; a task's `?`-propagated or
   returned `Err` → process exit code. Inner `dispatchResolve` is os.Exit-free for
   unit testing. Tasks call each other as ordinary fns (no DAG).
-- A working **`examples/tasks.l3`** drives build/test(dep)/ver(capture)/clean/
+- A working **`examples/tasks.dr`** drives build/test(dep)/ver(capture)/clean/
   unknown(2)/fails(propagates 5).
 - Go tests for path helpers, the fs family (`t.TempDir`), `newer`/`stale`,
   `exec` arg-flatten/env-merge/exit-code, and `dispatchResolve`.
@@ -726,7 +726,7 @@ Before building parallelism on top of it, validated the whole stack against a
 `.toolchain` for the components `els` needs; report presence + version). It runs
 cleanly against the actual toolchain — exercising `capture`+stdin, `read_file`,
 regex, maps, `map`/`reduce`/`each`/`filter`/`count`, `format`, and the error model
-on genuinely real data (`examples/toolcheck.l3`).
+on genuinely real data (`examples/toolcheck.dr`).
 
 **One real bug, fixed:** a multi-line block body inside a call argument (e.g.
 `each(|$c| { …newline-separated stmts… })`) lost statement termination — the lexer
@@ -1050,10 +1050,10 @@ fallbacks:
   to stay within three operands.
 
 Result: **every AST node type now compiles** — no expression or statement falls
-back. A `TestVMCompilesExamples` probe confirms both real scripts (`toolcheck.l3`,
-`tasks.l3`) compile top-to-bottom with **zero** functions tree-walking. The CLI
+back. A `TestVMCompilesExamples` probe confirms both real scripts (`toolcheck.dr`,
+`tasks.dr`) compile top-to-bottom with **zero** functions tree-walking. The CLI
 (`RunProgramWithArgs`) now runs on the VM by default (walker kept as the fallback
-for any future uncompilable node and as the test oracle); `toolcheck.l3` end-to-end
+for any future uncompilable node and as the test oracle); `toolcheck.dr` end-to-end
 output is byte-identical before/after the switch. ~70 parity programs, the full
 ~150-test suite, and `-race` all green.
 
@@ -1109,7 +1109,7 @@ grain; left alone.
 ## 27. Build progress (2026-06-26) — displacement: porting the els task runner
 
 The first real-world displacement: porting `_els`'s flagship Tcl task runner
-(`tools/tasks.tcl`, ~300 lines) to a drang `tools/tasks.l3`. Chosen over abstract
+(`tools/tasks.tcl`, ~300 lines) to a drang `tools/tasks.dr`. Chosen over abstract
 feature work because the language is feature-complete and fast — value now comes
 from carrying a real daily workload, not more engine.
 
@@ -1230,7 +1230,7 @@ line, column, and a caret under the offending token.
 
 ```
 drang: cannot use int and string with '*' (stringy coercion is a later slice)
-  at build.l3:2:6
+  at build.dr:2:6
       $w * $h
          ^
 ```
@@ -1394,7 +1394,7 @@ loop control, CLI hygiene. The only remaining track item is an optional REPL.
 The last item. Running `drang` with no program on an interactive terminal starts a
 read-eval-print loop — which is also what double-clicking the executable does (a
 console app's stdin is a character device, so it's detected as interactive). Piped
-input (`cat foo.l3 | drang`) is instead read and run as a program; `--repl` forces
+input (`cat foo.dr | drang`) is instead read and run as a program; `--repl` forces
 the loop regardless.
 
 ```

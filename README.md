@@ -31,7 +31,7 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [16, 4]
 ```
 go build -o drang ./cmd/drang
 
-./drang app.l3              # run a file
+./drang app.dr              # run a file
 ./drang -e 'say("hello")'  # run inline
 echo 'say(6 * 7)' | ./drang # run from stdin
 ./drang                     # start the REPL

@@ -1,5 +1,5 @@
 # Mandelbrot escape-iteration sum — sequential (map over rows). Identical to
-# mandel_par.l3 except map instead of pmap, so the speedup from pmap is isolated.
+# mandel_par.dr except map instead of pmap, so the speedup from pmap is isolated.
 
 $W := 700
 $H := 500

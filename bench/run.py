@@ -1,6 +1,6 @@
 """drang vs Python benchmark harness.
 
-Runs each bench/<name>.l3 and bench/<name>.py as a subprocess, checks they print
+Runs each bench/<name>.dr and bench/<name>.py as a subprocess, checks they print
 the same result (equivalence), and reports the min wall-clock over N repeats.
 
 Usage:  python run.py [repeats]   (default 3)
@@ -32,7 +32,7 @@ def best(cmd):
 
 def main():
     names = open(os.path.join(HERE, "order.txt")).read().split()
-    l3_base = best([LANG3, os.path.join(HERE, "_empty.l3")])[0]
+    l3_base = best([LANG3, os.path.join(HERE, "_empty.dr")])[0]
     py_base = best([PY, os.path.join(HERE, "_empty.py")])[0]
 
     print(f"drang : {LANG3}")
@@ -45,7 +45,7 @@ def main():
 
     rows = []
     for name in names:
-        l3ms, l3out, l3err, l3rc = best([LANG3, os.path.join(HERE, name + ".l3")])
+        l3ms, l3out, l3err, l3rc = best([LANG3, os.path.join(HERE, name + ".dr")])
         pyms, pyout, pyerr, pyrc = best([PY, os.path.join(HERE, name + ".py")])
         match = l3out == pyout and l3rc == 0 and pyrc == 0
         ratio = l3ms / pyms if pyms else 0.0
