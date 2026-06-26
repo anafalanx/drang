@@ -1602,3 +1602,40 @@ Verified by `TestJSON` and `TestJSONEdgeCases` (round-trip, key-order, int/float
 pretty indent, HTML chars, malformed/trailing/non-encodable/deep-nesting/invalid-
 UTF-8 → Err, integral-float stability), the manual's JSON section examples, and a
 direct rerun of the original crash input (now an Err); full `-race` suite green.
+
+## 40. Build progress (2026-06-26) — CLI tooling, slice 1: stderr + exit (`warn` / `exit` / `die`)
+
+First slice of the "tooling style" a zmal-native language needs (the rest —
+argument parsing, table formatting — is deferred pending an API design pass, to
+avoid bloating the language's center). Perl-flavored names beside `say`/`fail`:
+- `warn(x...)` — print to stderr (same `Display`/separator/`outMu` lock as `say`).
+- `exit(code?)` — end the program with a code (default 0, clamped 0–255).
+- `die(x...)` — `warn` then `exit(1)`, the fatal-error convention.
+
+`exit`/`die` are a new control-flow signal, `exitSignal`, modeled on the existing
+`returnSignal`/`errSignal`: it unwinds past function boundaries, loops, `?`, and
+`//` to the top, where the CLI (`runProgram` and the REPL loop) recognizes it via
+`eval.ExitRequested` and calls `os.Exit` with no error report. Two integration
+points matter: the VM's deferred `posError` wrapper had to add `exitSignal` to its
+skip set (so exit isn't tagged as a positioned runtime error and stays
+recognizable), and `vmCallFunction`/`callFunction` already convert only
+`errSignal`/`returnSignal`, so `exitSignal` propagates untouched. `//` operates on
+Err *values*, not Go errors, so it can't absorb an exit.
+
+Edge: `exit` inside a detached `spawn(...)` task terminates that task — its request
+surfaces at `await` as an Err `"exit(N) inside a spawned task"` (code preserved)
+rather than killing the process, since a detached task can't unilaterally exit.
+
+An adversarial review found a critical bug here: `pmap` recorded a single "first
+failure" via `sync.Once`, so one worker's Err *value* could win the race and mask
+another worker's `exit`/`die` (or a runtime abort), which was then silently
+downgraded to a value — the program continued and exited 0. Fixed by recording a
+worker's Go error (control-flow signal or abort) separately from an Err-value
+result and giving it absolute priority, so an executed `exit` can never be masked.
+(When fail-loud cancellation pre-empts the exit's callback before it runs, no exit
+occurs at all — inherent to parallel fail-loud, and acceptable.)
+
+Verified by `TestWarn`/`TestExit`/`TestExitWalker`/`TestExitInPmap` (codes,
+clamping, unwinding past functions/loops/`//`/`?` on both backends, stderr routing,
+and an exit unwinding out of a `pmap` worker), plus live checks (exit winning 20/20
+against a competing `fail` whenever its callback runs); full `-race` suite green.

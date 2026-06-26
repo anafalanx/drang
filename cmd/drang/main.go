@@ -186,6 +186,9 @@ func runProgram(src, origin string, argv []string) {
 		os.Exit(1)
 	}
 	if err := eval.RunProgramWithArgs(prog, eval.NewEnv(), argv); err != nil {
+		if code, ok := eval.ExitRequested(err); ok {
+			os.Exit(code) // explicit exit()/die(): no error report
+		}
 		reportRuntimeError(src, origin, err)
 		os.Exit(eval.ExitCode(err))
 	}
@@ -287,6 +290,9 @@ func replLoop(in io.Reader, out io.Writer) {
 
 		v, err := eval.EvalREPL(prog, env)
 		if err != nil {
+			if code, ok := eval.ExitRequested(err); ok {
+				os.Exit(code) // exit()/die() from the REPL ends the session
+			}
 			replError(out, src, err)
 			continue
 		}

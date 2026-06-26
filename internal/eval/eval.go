@@ -172,6 +172,14 @@ type errSignal struct{ e value.Value }
 
 func (s errSignal) Error() string { return s.e.ErrMsg() }
 
+// exitSignal carries an explicit exit() up to the top of the program — past
+// function boundaries, loops, ?, and // — to be recognized only by the CLI, which
+// ends the process with the given code. Like the other signals it is never wrapped
+// in a posError.
+type exitSignal struct{ code int }
+
+func (exitSignal) Error() string { return "exit outside of a program" }
+
 // posError tags a runtime (aborting) error with the source position where it
 // occurred, so the CLI can point at the offending line and column. It is a leaf
 // error — only the formatter inspects it, and the control-flow signals
@@ -259,6 +267,15 @@ func ExitCode(err error) int {
 		return clampCode(es.e.ErrCode())
 	}
 	return 1
+}
+
+// ExitRequested reports whether err is an explicit exit()/die() and its code, so
+// the CLI can end the process cleanly without printing an error.
+func ExitRequested(err error) (code int, ok bool) {
+	if es, ok := err.(exitSignal); ok {
+		return es.code, true
+	}
+	return 0, false
 }
 
 func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
@@ -1178,7 +1195,10 @@ func safeBuiltin(name string, b builtin, args []value.Value) (v value.Value, err
 
 var builtins = map[string]builtin{
 	"say":      builtinSay,
+	"warn":     builtinWarn,
 	"fail":     builtinFail,
+	"die":      builtinDie,
+	"exit":     builtinExit,
 	"int":      builtinInt,
 	"is_err":   builtinIsErr,
 	"err_code": builtinErrCode,

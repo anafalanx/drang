@@ -529,18 +529,34 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 	close(jobs)
 
 	var (
-		once        sync.Once
-		firstErr    error
-		firstErrVal value.Value
+		mu          sync.Mutex
+		firstErr    error       // a control-flow signal (exit/die) or runtime abort from a worker
+		firstErrVal value.Value // the first Err-VALUE result
+		haveErrVal  bool
 		cancelled   atomic.Bool
 		wg          sync.WaitGroup
 	)
-	fail := func(goErr error, errVal value.Value) {
-		once.Do(func() {
-			firstErr = goErr
-			firstErrVal = errVal
-			cancelled.Store(true)
-		})
+	// A Go error (exit/die, or a runtime abort) must never be downgraded to a value,
+	// so it is recorded separately from an Err-value result and WINS regardless of
+	// which worker failed first — otherwise a racing Err value could swallow an
+	// exit. Either kind cancels the remaining work (fail-loud); a sibling's
+	// cancellation may pre-empt a not-yet-run callback, which is inherent to
+	// parallel fail-loud execution.
+	recordGoErr := func(e error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = e
+		}
+		mu.Unlock()
+		cancelled.Store(true)
+	}
+	recordErrVal := func(v value.Value) {
+		mu.Lock()
+		if !haveErrVal {
+			firstErrVal, haveErrVal = v, true
+		}
+		mu.Unlock()
+		cancelled.Store(true)
 	}
 	wg.Add(workers)
 	for w := 0; w < workers; w++ {
@@ -548,15 +564,15 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 			defer wg.Done()
 			for i := range jobs {
 				if cancelled.Load() {
-					continue // an error was recorded: drain the rest without running callbacks
+					continue // a failure was recorded: drain the rest without running callbacks
 				}
 				v, err := applyPmap(fn, src[i], i)
 				if err != nil {
-					fail(err, value.MakeNil())
+					recordGoErr(err)
 					continue
 				}
 				if v.IsErr() {
-					fail(nil, v)
+					recordErrVal(v)
 					continue
 				}
 				out[i] = v // distinct index per worker — no shared write
@@ -565,9 +581,9 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return value.MakeNil(), firstErr
+		return value.MakeNil(), firstErr // exit/die/abort unwinds; never masked by an Err value
 	}
-	if firstErrVal.IsErr() {
+	if haveErrVal {
 		return firstErrVal, nil
 	}
 	return value.MakeArray(out), nil
