@@ -1,4 +1,4 @@
-# lang3 — Language Manual
+# drang — Language Manual
 
 *A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration — implemented in Go.*
 
@@ -21,7 +21,7 @@
 
 ## Introduction
 
-lang3 is a small, Perl-inspired scripting language for **text processing and system glue** — the niche awk, sed, and Perl one-liners have always owned — implemented in Go. Its tagline is *"reads like Ruby, thinks like Perl, runs like Go."* It is a personal daily-driver: the language you reach for to wrangle text, shell out to other programs, and orchestrate small jobs.
+drang is a small, Perl-inspired scripting language for **text processing and system glue** — the niche awk, sed, and Perl one-liners have always owned — implemented in Go. Its tagline is *"reads like Ruby, thinks like Perl, runs like Go."* It is a personal daily-driver: the language you reach for to wrangle text, shell out to other programs, and orchestrate small jobs.
 
 Four ideas define it:
 
@@ -30,47 +30,49 @@ Four ideas define it:
 - **First-class errors.** Failures are ordinary values you can inspect (`is_err`, `err_msg`, `err_code`) or propagate with a trailing `?`. There is no `$@` global and no exceptions-by-default; a dropped failure is a deliberate choice, not an accident.
 - **Complete via Go.** The standard library is a curated binding over Go's — strings, files, `os/exec`, regex (RE2) — not a from-scratch reimplementation.
 
-Under the hood lang3 runs on a tree-walking interpreter alongside a register bytecode VM kept byte-for-byte in lockstep with it, but that is an implementation detail — the language behaves identically either way.
+Under the hood drang runs on a tree-walking interpreter alongside a register bytecode VM kept byte-for-byte in lockstep with it, but that is an implementation detail — the language behaves identically either way.
 
 ### Running programs
 
-lang3 reads a program from one of four places.
+drang reads a program from one of four places.
 
 **A file** (`.dr` extension):
 
 ```
-lang3 app.dr
+drang app.dr
 ```
 
 **Inline**, with `-e`:
 
 ```
-lang3 -e 'say("hello, world")'
+drang -e 'say("hello, world")'
 ```
 
 ```
 hello, world
 ```
 
-**Piped stdin** — when stdin is not a terminal, lang3 runs it as the program, so `cat foo.dr | lang3` works:
+**Piped stdin** — when stdin is not a terminal, drang runs it as the program, so `cat foo.dr | drang` works:
 
 ```
-echo 'say("from stdin")' | lang3
+echo 'say("from stdin")' | drang
 ```
 
 ```
 from stdin
 ```
 
-**The REPL** — run `lang3` with no program on an interactive terminal (this is also what double-clicking the executable does), or force it with `lang3 --repl`. State persists across submissions:
+**The REPL** — run `drang` with no program on an interactive terminal (this is also what double-clicking the executable does), or force it with `drang --repl`. State persists across submissions:
 
 ```
-lang3> $x := 21
+drang> $x := 21
 21
-lang3> $x * 2
+drang> $x * 2
 42
-lang3> exit
+drang> exit
 ```
+
+Finally, **a standalone executable**: `drang build app.dr -o app` compiles a script into a single self-contained binary — the drang runtime with your program embedded — that needs no separate interpreter. Running it executes the embedded program, with arguments exposed as `$ARGV`. The build validates that the script parses and refuses to overwrite the source or the running interpreter; Windows and Linux are supported natively, and on macOS it best-effort ad-hoc re-signs the result.
 
 ### Flags
 
@@ -87,7 +89,7 @@ Leading flags are consumed up to the first non-flag token (the program); everyth
 `--tokens` and `--ast` are debugging windows onto the front end:
 
 ```
-lang3 --ast -e 'say(1+2)'
+drang --ast -e 'say(1+2)'
 ```
 
 ```
@@ -100,7 +102,7 @@ lang3 --ast -e 'say(1+2)'
 Arguments after the program are exposed as the array `$ARGV`; the process environment is the hash `$ENV`.
 
 ```
-lang3 -e 'say($ARGV[0], $ARGV[1])' foo bar
+drang -e 'say($ARGV[0], $ARGV[1])' foo bar
 ```
 
 ```
@@ -108,7 +110,7 @@ foo bar
 ```
 
 ```
-lang3 -e 'say($ENV["FOO"])'    # with FOO=bar in the environment
+drang -e 'say($ENV["FOO"])'    # with FOO=bar in the environment
 ```
 
 ```
@@ -119,7 +121,7 @@ bar
 
 Variables are declared with `:=` (a lexical) or `::=` (a frozen top-level constant); plain `=` reassigns. Builtins are called with parentheses, strings interpolate bare `$var` (or `${ expr }` for anything complex), and data nests transparently with `.` and `[]`:
 
-```lang3
+```drang
 $d := {users: [{name: "ada"}, {name: "alan"}]}
 say($d.users[1].name)
 say("count: ${len($d.users)}")
@@ -132,14 +134,14 @@ count: 2
 
 Subroutines use `fn`, are first-class values, and pair with the higher-order combinators (`map`, `filter`, `reduce`, …) using `|args| body` lambdas. Loops are `for`-in over ranges, with postfix modifiers for one-liners:
 
-```lang3
+```drang
 $xs := [1, 2, 3, 4]
 say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))
 for $n in 1..5 { say($n) if $n % 2 == 1 }
 ```
 
 ```
-[16, 4]
+[4, 16]
 1
 3
 5
@@ -147,7 +149,7 @@ for $n in 1..5 { say($n) if $n % 2 == 1 }
 
 And the headline trick — counting words across files **in parallel**, propagating any read failure with `?`, with no locks and no threads to manage:
 
-```lang3
+```drang
 fn wc($path) { len(split(trim(read_file($path)?), " ")) }
 $files ::= ["a.txt", "b.txt"]
 $counts := pmap($files, wc)
@@ -168,7 +170,7 @@ This section covers the surface syntax: how a program is broken into statements,
 
 A `#` begins a comment that runs to the end of the line. There is no block-comment form.
 
-```lang3
+```drang
 # a full-line comment
 $x := 10   # a trailing comment
 ```
@@ -177,7 +179,7 @@ $x := 10   # a trailing comment
 
 A newline ends a statement whenever the line *could* end there — that is, when the previous token is something that can finish an expression (a literal, a `$var`, an identifier, a closing `)` `}` `]`, or a `?`). Inside `(` or `[`, newlines are insignificant, so long calls and pipelines wrap freely; inside `{` blocks and at top level they terminate. A `;` also separates statements, letting you put several on one line:
 
-```lang3
+```drang
 $a := 1; $b := 2; say($a + $b)
 ```
 
@@ -189,7 +191,7 @@ $a := 1; $b := 2; say($a + $b)
 
 Introduce a name with `:=` (mutable) or `::=` (constant). Once declared, a plain `=` reassigns it.
 
-```lang3
+```drang
 $count := 0      # mutable binding
 $count = $count + 1
 $pi ::= 3.14     # constant binding
@@ -197,7 +199,7 @@ $pi ::= 3.14     # constant binding
 
 In practice every binding is a `$`-name:
 
-```lang3
+```drang
 $count := 0
 $count = $count + 1
 $pi ::= 3.14
@@ -210,13 +212,13 @@ say($count, $pi)
 
 Reassigning a constant is an error:
 
-```lang3
+```drang
 $k ::= 1
 $k = 2
 ```
 
 ```
-lang3: cannot assign to constant $k
+drang: cannot assign to constant $k
   at <-e>:2:6
     $k = 2
          ^
@@ -240,7 +242,7 @@ lang3: cannot assign to constant $k
 
 (The concurrency section adds channel, task, and process handles.) `nil` is a real runtime value but has no source literal — writing `nil` yields `undefined: nil`. You obtain it from, e.g., an absent map key:
 
-```lang3
+```drang
 $m := {}
 say($m["absent"])
 ```
@@ -249,7 +251,7 @@ say($m["absent"])
 nil
 ```
 
-```lang3
+```drang
 say(42)
 say(3.5)
 say([1, 2, 3])
@@ -269,7 +271,7 @@ say(1..3)
 
 Falsy: `nil`, `false`, `0`, `0.0`, `""`, and **empty** containers (`[]`, `{}`, and an empty range). Everything else is truthy — including non-empty containers, functions, and *error values*.
 
-```lang3
+```drang
 fn t($v) { if $v { say("truthy") } else { say("falsy") } }
 $m := {}
 t($m["missing"]); t(false); t(0); t(0.0); t(""); t([]); t({})
@@ -294,7 +296,7 @@ truthy
 
 An error is truthy, so an `if` on it takes the true branch — use `is_err` to test for errors rather than truthiness:
 
-```lang3
+```drang
 $e := fail("boom")
 if $e { say("err is truthy") }
 say(is_err($e))
@@ -309,7 +311,7 @@ true
 
 **Arithmetic** `+ - * / %`. With two ints, `+ - * %` stay int. The big gotcha: `/` between two ints yields a **float** — there is **no integer-division operator**. For a truncated integer quotient, wrap with `int(...)`.
 
-```lang3
+```drang
 say(7 + 2, 7 - 2, 7 * 2, 7 % 2)   # int in, int out
 say(7 / 2)                        # / always produces a float
 say(int(7 / 2))                   # truncate back to int
@@ -325,7 +327,7 @@ say(int(7 / 2))                   # truncate back to int
 
 **String concat** `~`:
 
-```lang3
+```drang
 say("foo" ~ "bar" ~ "!")
 ```
 
@@ -335,7 +337,7 @@ foobar!
 
 **Comparisons** `== != < <= > >=` (numbers compare numerically, strings lexicographically) and the **spaceship** `<=>`, which returns `-1`, `0`, or `1`:
 
-```lang3
+```drang
 say(1 < 2, 2 <= 2, "a" < "b")
 say(1 <=> 2, 2 <=> 2, 3 <=> 2)
 ```
@@ -347,7 +349,7 @@ true true true
 
 **Logical** `and` / `or` / `not` (and `!` as a prefix synonym for `not`). `and`/`or` short-circuit — the right side is not evaluated when the left already decides the result:
 
-```lang3
+```drang
 fn boom() { say("boom ran"); true }
 say(false and boom())
 say(true or boom())
@@ -364,7 +366,7 @@ false true
 
 **Compound assignment** `+= -= *= /=`. Note that `/=` follows `/`'s float rule:
 
-```lang3
+```drang
 $n := 10
 $n += 5    # 15
 $n -= 2    # 13
@@ -379,7 +381,7 @@ say($n)
 
 **Ranges** `lo..hi` are inclusive of both ends:
 
-```lang3
+```drang
 say(len(1..5))
 ```
 
@@ -396,16 +398,17 @@ These are deliberate omissions — each is a parse error, not a missing feature 
 - **No bitwise** operators (`&`, `|`, `^`, `<<`, `>>`).
 - **No increment/decrement** `++` / `--` — use `+= 1` / `-= 1`.
 
-```lang3
+```drang
 say(2 ** 3)
 ```
 
 ```
 # parse errors in <-e>
 line 1: unexpected STAR "*"
+line 1: expected end of statement, got INT "3"
 ```
 
-```lang3
+```drang
 $x := 1
 $x++
 ```
@@ -419,13 +422,13 @@ line 2: unexpected PLUS "+"
 
 ## Strings
 
-lang3 strings are UTF-8 text. The most common form is a double-quoted literal, which both processes escapes and interpolates `$` expressions. Several quote operators and heredocs give you raw, interpolated, and word-list variants.
+drang strings are UTF-8 text. The most common form is a double-quoted literal, which both processes escapes and interpolates `$` expressions. Several quote operators and heredocs give you raw, interpolated, and word-list variants.
 
 ### String literals and the lenient escape policy
 
 Inside `"..."`, exactly five escapes are decoded: `\n`, `\t`, `\r`, `\\`, and `\"`. Any other backslash escape is **left intact** — the backslash and the following character are kept verbatim. This "lenient" policy is deliberate: it makes regex classes and Windows paths far less painful, since you don't have to double every backslash.
 
-```lang3
+```drang
 say("a\tb\nc")
 say("\d+")
 ```
@@ -440,7 +443,7 @@ The unknown escape `\d` survives as `\d`, ready to hand to a regex builtin.
 
 Watch out for the one trap this creates with Windows paths: `\n`, `\t`, and `\r` are still real escapes, so a path segment that begins with `n`, `t`, or `r` gets mangled:
 
-```lang3
+```drang
 say("C:\dir\new")
 ```
 
@@ -455,7 +458,7 @@ Here `\d` stayed literal but `\new` became `\` + a newline + `ew`. For paths use
 
 A `$name` splices a variable's value; `${expr}` splices any expression. Escape a literal dollar with `\$`.
 
-```lang3
+```drang
 $x := 42
 say("x is $x")
 say("sum=${$x + 4}")
@@ -465,12 +468,12 @@ say("\$x stays literal, $x splices")
 ```
 x is 42
 sum=46
-$x stays literal, 5 splices
+$x stays literal, 42 splices
 ```
 
 `${...}` can hold arithmetic, calls, and indexing:
 
-```lang3
+```drang
 $a := [10, 20, 30]
 say("second is ${$a[1]}")
 ```
@@ -481,7 +484,7 @@ second is 20
 
 One limitation: a `${...}` body cannot itself contain a double-quoted string while inside a `"..."` literal — the nested `"` confuses brace matching and you get an `unterminated ${...}` parse error. Reach for `qq{...}` (a different delimiter) when the interpolated expression needs a string literal:
 
-```lang3
+```drang
 say(qq{up is ${upper("hi")}})
 ```
 
@@ -497,7 +500,7 @@ Three quote operators avoid escaping gymnastics. The delimiter follows the opera
 - **`qq{...}`** — interpolated, exactly like `"..."`.
 - **`qw{...}`** — whitespace-split word list, producing an **array**.
 
-```lang3
+```drang
 $x := 9
 say(q{no $x interp, \n stays literal})
 say(qq{x=$x and a \t tab})
@@ -512,7 +515,7 @@ x=9 and a 	 tab
 
 `q{...}` is the clean way to write a Windows path or a regex with backslashes:
 
-```lang3
+```drang
 say(q(C:\Users\new\tmp))
 ```
 
@@ -522,7 +525,7 @@ C:\Users\new\tmp
 
 Nesting and alternate delimiters:
 
-```lang3
+```drang
 say(q{outer {inner} done})
 say(qq|x is ${3 + 4}|)
 ```
@@ -534,7 +537,7 @@ x is 7
 
 `qw{...}` is a real array — splits on runs of whitespace and works with the usual array tools:
 
-```lang3
+```drang
 $w := qw{one  two   three}
 say(len($w))
 say($w[1])
@@ -557,7 +560,7 @@ A heredoc starts with `<<TAG` and runs on the following lines until a line equal
 - **`<<'END'`** — raw, like `q`.
 - **`<<~END`** — strips the common leading indentation of the body (the terminator may be indented too).
 
-```lang3
+```drang
 $name := "world"
 $msg := <<END
 Hello, $name!
@@ -580,7 +583,7 @@ Literal $name and \n here.
 
 (A non-empty body keeps a trailing newline, which is why a blank line follows each block above.) The dedenting form `<<~END` removes the smallest shared indent; extra indentation is preserved relative to it:
 
-```lang3
+```drang
 $body := <<~END
     line one
       line two (extra indent)
@@ -611,7 +614,7 @@ line three
 | `lines` | `(s)` | CRLF-normalized; drops one trailing newline; `""` → `[]` |
 | `format` | `(template, args...)` | `{}` placeholders; counts must match |
 
-```lang3
+```drang
 say(upper("Hi"))
 say("[" ~ trim("  hi  ") ~ "]")
 say(trim("xxhix", "x"))
@@ -646,7 +649,7 @@ Note `join` is polymorphic: `join(array, sep)` is the string join shown above, b
 
 `format` substitutes each `{}` placeholder with the next argument. Use `{{` and `}}` for literal braces.
 
-```lang3
+```drang
 say(format("{} + {} = {}", 2, 3, 5))
 say(format("set {{x}} to {}", 9))
 ```
@@ -658,7 +661,7 @@ set {x} to 9
 
 The number of `{}` placeholders must equal the number of arguments — otherwise `format` returns an **error value** rather than silently dropping or emitting literal braces. This deliberately catches the printf habit (`%s` has no `{}`):
 
-```lang3
+```drang
 say(format("{} and {}", 1))
 say(format("%s", 5))
 ```
@@ -668,15 +671,15 @@ error: format: template has 2 "{}" placeholder(s) but got 1 argument(s)
 error: format: template has 0 "{}" placeholder(s) but got 1 argument(s)
 ```
 
-The result is a regular error value (the program does not crash); it propagates through `?` like any other lang3 error — see the error-handling section.
+The result is a regular error value (the program does not crash); it propagates through `?` like any other drang error — see the error-handling section.
 
 ---
 
 ## Control flow
 
-Control flow in lang3 is built from *statements*, not expressions. `if`, `while`, and `for` produce no value, so you cannot bind one to a variable:
+Control flow in drang is built from *statements*, not expressions. `if`, `while`, and `for` produce no value, so you cannot bind one to a variable:
 
-```lang3
+```drang
 $x := if 1 { 2 } else { 3 }
 ```
 
@@ -692,7 +695,7 @@ Use a plain assignment inside the branches instead.
 
 `if cond { ... }` runs its block when the condition is truthy. An optional `else` block, or an `else if` chain, handles the rest. The condition is bare (no parentheses) and the braces are mandatory.
 
-```lang3
+```drang
 $g := 75
 if $g >= 90 { say("A") } else if $g >= 70 { say("B") } else { say("C") }
 ```
@@ -711,7 +714,7 @@ The `else` may sit on the same line as the closing `}` or on the next line.
 
 `while cond { ... }` loops while the condition stays truthy:
 
-```lang3
+```drang
 $i := 0
 while $i < 3 { say($i); $i += 1 }
 ```
@@ -730,7 +733,7 @@ Like `unless`, `until` has no block form — it is postfix-only. For a negated b
 
 **Over an array** — one variable is the element, two are index + element:
 
-```lang3
+```drang
 for $i, $x in ["a", "b"] { say($i ~ ":" ~ $x) }
 ```
 
@@ -743,7 +746,7 @@ for $i, $x in ["a", "b"] { say($i ~ ":" ~ $x) }
 
 **Over a map** — one variable iterates *values*, two iterate *key then value*:
 
-```lang3
+```drang
 for $v in {"a": 1, "b": 2} { say($v) }
 ```
 
@@ -752,7 +755,7 @@ for $v in {"a": 1, "b": 2} { say($v) }
 2
 ```
 
-```lang3
+```drang
 for $k, $v in {"a": 1, "b": 2} { say($k ~ "=" ~ $v) }
 ```
 
@@ -763,7 +766,7 @@ b=2
 
 **Over an integer range** `lo..hi` — inclusive of both ends; two variables give index + value:
 
-```lang3
+```drang
 for $n in 1..4 { say($n) }
 ```
 
@@ -778,7 +781,7 @@ A descending range such as `5..1` yields no iterations.
 
 **Over a string** — character by character (by rune, so multibyte characters stay intact):
 
-```lang3
+```drang
 for $c in "héy" { say($c) }
 ```
 
@@ -792,7 +795,7 @@ y
 
 `break` exits the innermost enclosing loop; `next` skips to its next iteration. They bind to the *innermost* loop only.
 
-```lang3
+```drang
 for $n in 1..5 {
   if $n == 3 { next }
   if $n == 5 { break }
@@ -808,7 +811,7 @@ for $n in 1..5 {
 
 These are checked at parse time: `break` or `next` outside any loop is a parse error, not a runtime one.
 
-```lang3
+```drang
 break
 ```
 
@@ -819,7 +822,7 @@ line 1: 'break' outside a loop
 
 Crucially, the loop nesting count resets at every function and lambda boundary. So `break`/`next` inside a lambda or `fn` — even one that is itself nested inside a loop — cannot escape to the outer loop, and is likewise a parse error:
 
-```lang3
+```drang
 for $n in 1..3 {
   each([10, 20], |$x| { break })
 }
@@ -834,7 +837,7 @@ line 2: 'break' outside a loop
 
 Any simple statement may take a single trailing modifier: `if`, `unless`, `while`, `until`, or `for`. This is the only form `unless` and `until` come in.
 
-```lang3
+```drang
 $x := 5
 say("yes") if $x > 3
 say("ok") unless 0
@@ -847,7 +850,7 @@ ok
 
 `while` / `until` re-run the statement until the condition flips:
 
-```lang3
+```drang
 $i := 0
 $i += 1 while $i < 3
 say($i)
@@ -857,7 +860,7 @@ say($i)
 3
 ```
 
-```lang3
+```drang
 $i := 0
 $i += 1 until $i >= 3
 say($i)
@@ -869,7 +872,7 @@ say($i)
 
 Postfix `for` iterates a collection, binding each element to the implicit variable `$_`:
 
-```lang3
+```drang
 say($_) for [10, 20, 30]
 ```
 
@@ -887,7 +890,7 @@ say($_) for [10, 20, 30]
 
 Define a named function with `fn`, a parameter list of sigil variables, and a brace body:
 
-```lang3
+```drang
 fn add($a, $b) { $a + $b }
 
 fn greet($name) {
@@ -909,7 +912,7 @@ hi sam
 
 A function returns the value of its **last expression** — no `return` needed. Because `if`/`else` is itself an expression, the branch value falls straight out:
 
-```lang3
+```drang
 fn classify($n) {
   if $n < 0 { "negative" }
   else { "non-negative" }
@@ -926,7 +929,7 @@ non-negative
 
 Use explicit `return` for early exits. There is also a postfix `return … if` form:
 
-```lang3
+```drang
 fn abs($n) {
   return -$n if $n < 0
   $n
@@ -945,7 +948,7 @@ say(abs(9))
 
 An anonymous function is written with pipe-delimited parameters followed by **either** a single expression **or** a `{ … }` block (the block also returns its last expression). Zero parameters is `||`:
 
-```lang3
+```drang
 $sq := |$x| $x * $x
 say($sq(5))
 
@@ -968,7 +971,7 @@ The body parses at the lowest precedence, so a lambda absorbs operators and `|>`
 
 Both named functions and lambdas are closures: they capture the variables of the scope where they are defined.
 
-```lang3
+```drang
 fn make_adder($n) {
   |$x| $x + $n
 }
@@ -986,7 +989,7 @@ say($add100(5))
 
 Crucially, **each iteration of a `for` loop captures its own binding** of the loop variable — closures made in different iterations do not share one mutable slot:
 
-```lang3
+```drang
 $fns := []
 for $i in [1, 2, 3] {
   push($fns, || $i)
@@ -1008,7 +1011,7 @@ for $f in $fns {
 
 `x |> f(args)` desugars to `f(x, args)` — the left side is threaded in as the **first** argument. Chains read left-to-right, which is the natural reading order for glue code:
 
-```lang3
+```drang
 fn double($x) { $x * 2 }
 fn add($a, $b) { $a + $b }
 
@@ -1027,7 +1030,7 @@ say(3 |> double() |> add(1))   # add(double(3), 1)
 
 To spread a pipeline across lines, put `|>` at the **end** of each line (a trailing `|>` continues the statement; a *leading* `|>` on a fresh line is read as a new statement and fails). Inside `(` or `[`, newlines are suppressed, so a leading `|>` is also fine when the whole chain is parenthesized:
 
-```lang3
+```drang
 $words := ["apple", "fig", "banana", "kiwi"]
 
 $result := $words |>
@@ -1045,7 +1048,7 @@ APPLE BANANA KIWI
 
 `map`, `filter`, `reject`, `reduce`, and friends are built in and **array-first**, precisely so they compose under `|>`. (Full coverage of the toolkit lives in the Collections section.)
 
-```lang3
+```drang
 $xs := [1, 2, 3, 4, 5]
 say($xs |> map(|$x| $x * $x))
 say($xs |> filter(|$x| $x % 2 == 0))
@@ -1064,7 +1067,7 @@ Callbacks are arity-flexible: a one-parameter lambda receives the element; a two
 
 A **named user function** can be passed point-free:
 
-```lang3
+```drang
 fn shout($s) { upper($s) }
 say(["a", "b"] |> map(shout))
 ```
@@ -1075,13 +1078,13 @@ say(["a", "b"] |> map(shout))
 
 A **builtin**, however, is not yet a first-class value, so passing its bare name fails:
 
-```lang3
-say(["A.txt", "B.txt"] |> map(basename))   # error: undefined: basename
+```drang
+say(["A.txt", "B.txt"] |> map(basename))   # drang: undefined: basename
 ```
 
 Wrap the builtin in a lambda instead:
 
-```lang3
+```drang
 $paths := ["/a/b/foo.txt", "/c/d/bar.txt"]
 say($paths |> map(|$p| basename($p)))
 ```
@@ -1094,13 +1097,13 @@ say($paths |> map(|$p| basename($p)))
 
 ## Arrays, Maps, and the Collection Toolkit
 
-lang3 has two built-in container types: ordered **arrays** (`[..]`) and insertion-ordered **maps** (`{k: v}`). Both work directly with the same higher-order toolkit (`map`, `filter`, `sort`, ...), which is the workhorse for text and glue scripts.
+drang has two built-in container types: ordered **arrays** (`[..]`) and insertion-ordered **maps** (`{k: v}`). Both work directly with the same higher-order toolkit (`map`, `filter`, `sort`, ...), which is the workhorse for text and glue scripts.
 
 ### Arrays
 
 An array literal is a comma-separated list in square brackets. Elements may be any value and may be mixed:
 
-```lang3
+```drang
 say([10, 20, 30])
 say([1, "two", [3, 4]])
 ```
@@ -1112,7 +1115,7 @@ say([1, "two", [3, 4]])
 
 **Indexing** is zero-based with `arr[i]`. **Negative indices** count from the end (`-1` is the last element):
 
-```lang3
+```drang
 say([10, 20, 30][1])     # 20
 say([10, 20, 30][-1])    # 30
 say([10, 20, 30][-2])    # 20
@@ -1120,20 +1123,20 @@ say([10, 20, 30][-2])    # 20
 
 **Out-of-bounds** access is a catchable error value, not a crash, and the same applies to a negative index that reaches before the start:
 
-```lang3
+```drang
 say([1, 2][5])           # error: index 5 out of range (len 2)
 say([10, 20, 30][-4])    # error: index -4 out of range (len 3)
 ```
 
 `len` returns the element count (and works on maps, ranges, and strings too):
 
-```lang3
+```drang
 say(len([1, 2, 3]))      # 3
 ```
 
 **`push` and `pop`** mutate the array in place. `push` appends one or more values and returns the same array; `pop` removes and returns the last element, erroring on an empty array:
 
-```lang3
+```drang
 $a := [1, 2]
 push($a, 3, 4)
 say($a)                  # [1, 2, 3, 4]
@@ -1147,7 +1150,7 @@ say(pop([]))             # error: pop from empty array
 
 **`take` / `drop` / `uniq`** return *new* arrays and never mutate. `take(arr, n)` keeps the first `n`; `drop(arr, n)` skips the first `n`; both clamp `n` to the array's length. `uniq` removes duplicates (by structural equality), preserving first-seen order:
 
-```lang3
+```drang
 say(take([1, 2, 3, 4, 5], 2))    # [1, 2]
 say(take([1, 2], 9))             # [1, 2]   (clamped)
 say(drop([1, 2, 3, 4, 5], 2))    # [3, 4, 5]
@@ -1158,7 +1161,7 @@ say(uniq([1, 1, 2, 3, 3, 3, 1])) # [1, 2, 3]
 
 A map literal is `{key: value, ...}`. Keys may be barewords (treated as strings) or any scalar expression; iteration follows **insertion order**:
 
-```lang3
+```drang
 $m := {name: "ada", age: 36}
 say($m)                  # {name: ada, age: 36}
 say({z: 1, a: 2, m: 3})  # {z: 1, a: 2, m: 3}   (order preserved, not sorted)
@@ -1166,7 +1169,7 @@ say({z: 1, a: 2, m: 3})  # {z: 1, a: 2, m: 3}   (order preserved, not sorted)
 
 Access a value with **dot syntax** `$m.field` (field name as a string key) or **bracket syntax** `$m[key]` (any key expression). A **missing key reads as `nil`**, not an error:
 
-```lang3
+```drang
 $m := {name: "ada"}
 say($m.name)             # ada
 say($m["name"])          # ada
@@ -1176,7 +1179,7 @@ say($m.zzz)              # nil
 
 Assign into a map (creating or updating the key) with `$m[key] = value`:
 
-```lang3
+```drang
 $m := {}
 $m["x"] = 9
 say($m)                  # {x: 9}
@@ -1184,7 +1187,7 @@ say($m)                  # {x: 9}
 
 **Inspection and mutation builtins:**
 
-```lang3
+```drang
 $m := {a: 1, b: 2}
 say(has($m, "a"), has($m, "z"))   # true false
 say(keys($m))                     # [a, b]
@@ -1196,7 +1199,7 @@ say($m)                           # {b: 2}
 
 `keys`, `values`, and `pairs` all return fresh arrays in insertion order, which makes iteration straightforward:
 
-```lang3
+```drang
 $m := {a: 1, b: 2}
 for $p in pairs($m) {
   say(format("{} = {}", $p[0], $p[1]))
@@ -1210,7 +1213,7 @@ b = 2
 
 **Only scalar keys are hashable.** Integers and strings are fine; an array (or other container) used as a key is a catchable error:
 
-```lang3
+```drang
 $m := {1: "one", 2: "two"}
 say($m[1])               # one
 
@@ -1224,27 +1227,27 @@ These functions operate on arrays and take a callback written as a closure `|$x|
 
 **`map`** — transform each element into a new array:
 
-```lang3
+```drang
 say([1, 2, 3] |> map(|$x| $x * $x))      # [1, 4, 9]
 ```
 
 **`filter`** / **`reject`** — keep / drop elements matching a predicate:
 
-```lang3
+```drang
 say([1, 2, 3, 4, 5, 6] |> filter(|$x| $x % 2 == 0))   # [2, 4, 6]
 say([1, 2, 3, 4, 5, 6] |> reject(|$x| $x % 2 == 0))   # [1, 3, 5]
 ```
 
 **`find`** — the first matching element, or `nil` if none match:
 
-```lang3
+```drang
 say([3, 8, 5, 12, 2] |> find(|$x| $x > 10))   # 12
 say([1, 2] |> find(|$x| $x > 10))             # nil
 ```
 
 **`any`** / **`all`** / **`count`** — predicate aggregates:
 
-```lang3
+```drang
 say([1, 2, 3] |> any(|$x| $x > 2))            # true
 say([2, 4, 6] |> all(|$x| $x % 2 == 0))       # true
 say([1, 2, 3, 4, 5] |> count(|$x| $x % 2 == 1))  # 3
@@ -1252,13 +1255,13 @@ say([1, 2, 3, 4, 5] |> count(|$x| $x % 2 == 1))  # 3
 
 **`flat_map`** — map then concatenate the resulting arrays one level deep:
 
-```lang3
+```drang
 say([1, 2, 3] |> flat_map(|$x| [$x, $x * 10]))   # [1, 10, 2, 20, 3, 30]
 ```
 
 **`reduce(arr, init, fn)`** — fold left with an explicit initial accumulator (note the 3-argument call form, not a pipe target's natural shape):
 
-```lang3
+```drang
 say(reduce([1, 2, 3, 4], 0, |$acc, $x| $acc + $x))   # 10
 ```
 
@@ -1266,21 +1269,21 @@ say(reduce([1, 2, 3, 4], 0, |$acc, $x| $acc + $x))   # 10
 
 `sort` returns a new array in natural ascending order (numbers numerically, strings lexicographically):
 
-```lang3
+```drang
 say(sort([3, 1, 2, 10, 5]))                  # [1, 2, 3, 5, 10]
 say(sort(["banana", "apple", "cherry"]))     # [apple, banana, cherry]
 ```
 
 For a custom order, pass a **comparator** `|$a, $b| ...` that returns a negative number, `0`, or a positive number. The **`<=>` (spaceship) operator** computes exactly that three-way comparison, so it pairs naturally with `sort`:
 
-```lang3
+```drang
 say(1 <=> 2, 2 <=> 2, 3 <=> 2)               # -1 0 1
 say(sort([3, 1, 2], |$a, $b| $b <=> $a))     # [3, 2, 1]   (descending)
 ```
 
 `sort_by`, `min_by`, and `max_by` take a **key function** instead of a comparator and order by the computed key (`sort_by` computes each key once). `min_by`/`max_by` return the extreme element, or `nil` for an empty array:
 
-```lang3
+```drang
 say(sort_by(["ccc", "a", "bb"], |$s| len($s)))   # [a, bb, ccc]
 say(min_by(["ccc", "a", "bb"], |$s| len($s)))    # a
 say(max_by(["ccc", "a", "bb"], |$s| len($s)))    # ccc
@@ -1289,7 +1292,7 @@ say(min_by([], |$x| $x))                         # nil
 
 Because every collection function returns a value (a new array, or `nil`), they chain end to end:
 
-```lang3
+```drang
 say([5, 3, 8, 1, 9, 2] |> filter(|$x| $x > 2) |> sort() |> take(3))   # [3, 5, 8]
 ```
 
@@ -1297,7 +1300,7 @@ say([5, 3, 8, 1, 9, 2] |> filter(|$x| $x > 2) |> sort() |> take(3))   # [3, 5, 8
 
 ## Errors as Values
 
-In lang3 an error is not an exception — it is an ordinary value with a tag, like an int or a string. A fallible operation returns either its normal result or an **Err** value carrying a message and an integer code. Nothing unwinds on its own; you decide what to do with the Err: inspect it, recover from it, or propagate it.
+In drang an error is not an exception — it is an ordinary value with a tag, like an int or a string. A fallible operation returns either its normal result or an **Err** value carrying a message and an integer code. Nothing unwinds on its own; you decide what to do with the Err: inspect it, recover from it, or propagate it.
 
 Three pieces make up the model: the `?` postfix operator (propagate), the `//` operator (recover with a fallback), and the inspectors `is_err` / `err_code` / `err_msg`. You create errors with `fail`.
 
@@ -1305,7 +1308,7 @@ Three pieces make up the model: the `?` postfix operator (propagate), the `//` o
 
 `is_err(x)` reports whether `x` is an Err value. `err_code(x)` and `err_msg(x)` pull out its code and message. On a *non*-error they return the neutral values `0` and `""`, so `err_code(run(cmd))` reads naturally as "the exit code, 0 on success."
 
-```lang3
+```drang
 $r := fail("boom")
 say(is_err($r), err_code($r), err_msg($r))
 say(err_code(42), err_msg(42) == "")
@@ -1318,7 +1321,7 @@ true 1 boom
 
 An Err value prints through `say` as `error: <msg>`:
 
-```lang3
+```drang
 say(int("x"))
 ```
 
@@ -1330,7 +1333,7 @@ error: cannot parse "x" as int
 
 `fail(msg)` builds an Err with the given message and code `1`. Called with no argument it uses the message `"failed"`.
 
-```lang3
+```drang
 $r := fail()
 say(is_err($r), err_msg($r), err_code($r))
 ```
@@ -1345,7 +1348,7 @@ Note: `fail` only honors a message — it does not take a second code argument, 
 
 `risky() // fallback` evaluates `risky()`; if the result is an Err value **or** `nil`, it evaluates and returns `fallback` instead. Otherwise the original value passes through. This is the workhorse for "try, but have a default."
 
-```lang3
+```drang
 say(int("100") // 0, int("oops") // 0)
 ```
 
@@ -1355,7 +1358,7 @@ say(int("100") // 0, int("oops") // 0)
 
 `//` triggers *only* on Err or nil — other falsy values (`0`, `""`, `false`) are real results and pass straight through:
 
-```lang3
+```drang
 say(0 // 99, "" // "x", false // "y")
 ```
 
@@ -1367,7 +1370,7 @@ say(0 // 99, "" // "x", false // "y")
 
 The `?` postfix operator is the early-exit half of the model. `expr?` evaluates `expr`; if it is an Err, `?` propagates that error out of the **enclosing function**. If it is not an Err, the value flows through unchanged. This lets you write the happy path without per-call checks:
 
-```lang3
+```drang
 fn parse($s) {
   $n := int($s)?      # bail out of parse() if $s isn't an int
   return $n * 2
@@ -1381,7 +1384,7 @@ say(parse("21"))
 
 The key rule: `?` propagates only to the nearest call boundary. When the propagated error reaches the point where the function was called, it turns back into an ordinary Err **value** — it does not keep unwinding. So a caller can simply recover it:
 
-```lang3
+```drang
 fn parse($s) {
   $n := int($s)?
   return $n * 2
@@ -1396,15 +1399,15 @@ true cannot parse "xx" as int
 still running
 ```
 
-At the **top level** there is no enclosing function, so a `?` that fires there aborts the whole program. The process exits with the Err's code (clamped to `1..255`), printing `lang3: <msg>` to stderr:
+At the **top level** there is no enclosing function, so a `?` that fires there aborts the whole program. The process exits with the Err's code (clamped to `1..255`), printing `drang: <msg>` to stderr:
 
-```lang3
+```drang
 fail("nope")?
 say("unreached")
 ```
 
 ```
-lang3: nope
+drang: nope
 ```
 
 ```
@@ -1420,7 +1423,7 @@ Builtins distinguish two kinds of wrongness:
 - A wrong **argument count** is a programmer error — a hard abort that `?`/`//` cannot intercept. It stops the program with a source location.
 - A wrong **type** or **bad value** is a runtime condition — a catchable Err value you can recover.
 
-```lang3
+```drang
 say(is_err(int([1, 2])))   # wrong type -> catchable Err
 ```
 
@@ -1428,12 +1431,12 @@ say(is_err(int([1, 2])))   # wrong type -> catchable Err
 true
 ```
 
-```lang3
+```drang
 say(int(1, 2) // 99)       # wrong arg count -> hard abort, // can't save it
 ```
 
 ```
-lang3: int expects 1 argument, got 2
+drang: int expects 1 argument, got 2
   at <-e>:1:5
     say(int(1, 2) // 99)
         ^
@@ -1445,7 +1448,7 @@ So `int("x") // 0` is safe and idiomatic, but `int() // 0` (or `int(1,2) // 0`) 
 
 Subprocess builtins follow the same value-result convention, and they are where non-1 codes appear. `run(...)` returns `true` on success or a catchable Err carrying the child's exit code (`127` if the command could not be started). `capture(...)` returns the child's trimmed stdout, or an Err on failure.
 
-```lang3
+```drang
 $r := run("cmd", "/c", "exit 3")
 say(is_err($r), err_code($r))
 ```
@@ -1456,7 +1459,7 @@ true 3
 
 Recover a missing or failing command with `//`:
 
-```lang3
+```drang
 say(run("definitely-not-a-real-cmd") // "could not run")
 say(capture("cmd", "/c", "exit 1") // "default")
 ```
@@ -1468,7 +1471,7 @@ default
 
 Because the Err carries the real exit code, you can branch on it — e.g. treating `grep`'s exit 1 ("no match") differently from a genuine error:
 
-```lang3
+```drang
 $r := capture("cmd", "/c", "exit 1")
 if is_err($r) {
   if err_code($r) == 1 { say("no match") } else { say("error:", err_msg($r)) }
@@ -1483,12 +1486,12 @@ no match
 
 And `?` plumbs a command's exit code straight through to the process when it propagates to the top level:
 
-```lang3
+```drang
 run("cmd", "/c", "exit 3")?
 ```
 
 ```
-lang3: cmd exited with code 3
+drang: cmd exited with code 3
 ```
 
 ```
@@ -1499,7 +1502,7 @@ exit status 3
 
 A guard that returns an Err, propagated or recovered by the caller's choice:
 
-```lang3
+```drang
 fn checked_div($a, $b) {
   if $b == 0 { return fail("divide by zero") }
   return $a / $b
@@ -1519,13 +1522,13 @@ The shape to internalize: `fail` and failing builtins *make* Err values; `?` *mo
 
 ## Regular expressions
 
-lang3's regex engine is Go's [RE2](https://github.com/google/re2/wiki/Syntax): matching is **linear-time** with no catastrophic backtracking, but in exchange the pattern syntax has **no backreferences** (`\1` inside a pattern) and no lookaround. Patterns come in two forms — a `qr//` literal that the lexer turns into a compiled, first-class `regex` value, or a plain string that the regex builtins compile on demand. Compiled regexes are immutable, cached, and safe to share across `pmap` workers.
+drang's regex engine is Go's [RE2](https://github.com/google/re2/wiki/Syntax): matching is **linear-time** with no catastrophic backtracking, but in exchange the pattern syntax has **no backreferences** (`\1` inside a pattern) and no lookaround. Patterns come in two forms — a `qr//` literal that the lexer turns into a compiled, first-class `regex` value, or a plain string that the regex builtins compile on demand. Compiled regexes are immutable, cached, and safe to share across `pmap` workers.
 
 ### `qr//` literals
 
 A `qr` literal compiles a pattern at lex time into a reusable `regex` value:
 
-```lang3
+```drang
 say(qr/\d+/)
 ```
 
@@ -1537,7 +1540,7 @@ The body is taken **literally** — backslashes are passed straight through to R
 
 **Flags** follow the closing delimiter: `i` (case-insensitive), `m` (multi-line `^`/`$`), `s` (dotall — `.` matches newline), `U` (ungreedy — swaps greedy/lazy). They are baked into the pattern as Go inline flags, which is visible when you print the value:
 
-```lang3
+```drang
 say(qr/foo/i)
 say(qr/foo/ims)
 ```
@@ -1547,7 +1550,7 @@ qr/(?i)foo/
 qr/(?ims)foo/
 ```
 
-```lang3
+```drang
 say(matches("a\nb", qr/a.b/s))   # dotall on: . spans the newline
 say(matches("a\nb", qr/a.b/))    # off: . won't cross \n
 say(match("<a><b>", qr/<.+>/U))  # ungreedy: stops at first >
@@ -1561,18 +1564,19 @@ false
 
 An unknown flag letter is a **parse error**, caught before the program runs:
 
-```lang3
+```drang
 say(qr/foo/x)
 ```
 
 ```
 # parse errors in <-e>
 line 1: unexpected ILLEGAL "invalid regex flag after qr//"
+line 1: expected end of statement, got IDENT "x"
 ```
 
 **Delimiters.** Besides `/`, you may open a `qr` literal with `|`, `(`, `[`, or `{`. Same-char delimiters (`/`, `|`) run to the next occurrence; paired delimiters (`(...)`, `[...]`, `{...}`) **nest**, which lets the pattern contain unbalanced copies of the delimiter char. Pick a delimiter your pattern avoids:
 
-```lang3
+```drang
 say(matches("a/b", qr|/|))          # pattern contains a slash → use | delimiter
 say(match("ab", qr((a)(b))))        # ( ) nest around the groups
 say(find_all("aaa", qr{a{1}}))      # { } nest around the quantifier
@@ -1588,7 +1592,7 @@ true
 
 `qr//` is a literal; when the pattern is built at runtime (e.g. interpolated), use `re()` to compile a string into a reusable `regex` value. An already-compiled regex passes straight through:
 
-```lang3
+```drang
 $p := "\d+"
 $rx := re($p)
 say(matches("a9", $rx))
@@ -1613,7 +1617,7 @@ Every regex builtin takes the pattern as **either a string or a compiled `regex`
 | `find_all(s, p)` | array of every (full) match, in order |
 | `gsub(s, p, repl)` | `s` with every match replaced by `repl` |
 
-```lang3
+```drang
 say(matches("Hello World", qr/world/i))
 say(match("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/))
 say(match("nope", qr/\d+/))
@@ -1629,7 +1633,7 @@ nil
 
 String and `qr//` pattern arguments are equivalent — note the string form needs the backslash that the literal form does not:
 
-```lang3
+```drang
 say(find_all("a1b2", "\d"))
 say(find_all("a1b2", qr/\d/))
 ```
@@ -1643,7 +1647,7 @@ say(find_all("a1b2", qr/\d/))
 
 In `gsub`, the **replacement** string uses Go's `$1` / `${name}` substitution (this is replacement-side substitution, not a pattern backreference — RE2 has none of those):
 
-```lang3
+```drang
 say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))
 ```
 
@@ -1651,9 +1655,9 @@ say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))
 26/06/2026
 ```
 
-For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. Beware: a `"..."` double-quoted replacement is interpolated by lang3 first, so use a non-interpolating literal (`q{...}`) to keep the `${...}` intact for `gsub`:
+For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. Beware: a `"..."` double-quoted replacement is interpolated by drang first, so use a non-interpolating literal (`q{...}`) to keep the `${...}` intact for `gsub`:
 
-```lang3
+```drang
 say(gsub("john smith", qr/(?P<first>\w+) (?P<last>\w+)/, q{${last}, ${first}}))
 ```
 
@@ -1665,7 +1669,7 @@ smith, john
 
 A malformed **string** pattern is not a crash — it surfaces as a first-class `Err` value the program can inspect with `is_err`:
 
-```lang3
+```drang
 $e := matches("x", "(")
 say(is_err($e))
 ```
@@ -1676,7 +1680,7 @@ true
 
 The same `Err` flows out of `re()`, and uncaught it prints the RE2 diagnostic:
 
-```lang3
+```drang
 say(re("("))
 ```
 
@@ -1686,19 +1690,19 @@ error: bad regex "(": error parsing regexp: missing closing ): `(`
 
 Because the engine is RE2, a backreference inside the **pattern** is simply not valid syntax and produces such an `Err`:
 
-```lang3
+```drang
 say(re("(a)\1"))
 ```
 
 ```
-error: bad regex "(a)\1": error parsing regexp: invalid escape sequence: `\1`
+error: bad regex "(a)\\1": error parsing regexp: invalid escape sequence: `\1`
 ```
 
 ---
 
 ## External Commands & Concurrency
 
-lang3 is a glue language, so running other programs and doing work in parallel are
+drang is a glue language, so running other programs and doing work in parallel are
 first-class. External commands go through `os/exec` directly — **no shell is
 involved** and arguments are passed verbatim (no word-splitting, no glob
 expansion). Failures are values: a failed command returns a catchable `Err`
@@ -1706,17 +1710,17 @@ carrying the child's exit code, which you propagate with `?`, recover with `//`,
 or inspect with `is_err`/`err_code`/`err_msg`.
 
 > All examples below were run on Windows, so they shell out to `cmd /c`,
-> `findstr`, `ping`, etc. The lang3 surface is identical on any platform — only
+> `findstr`, `ping`, etc. The drang surface is identical on any platform — only
 > the command names differ. Examples deliberately use short, non-destructive
 > commands.
 
 ### `run` — execute and stream stdio
 
 `run(cmd, args..., {opts}?)` runs a command with the child's stdin/stdout/stderr
-wired straight through to lang3's. It returns `true` on success (so it composes
+wired straight through to drang's. It returns `true` on success (so it composes
 with `if` and `//`) or an `Err` on failure.
 
-```lang3
+```drang
 $ok := run("cmd", "/c", "exit 0")
 say("success returns true: $ok")
 $bad := run("cmd", "/c", "exit 5")
@@ -1736,7 +1740,7 @@ splat it: `run("git", ["log", "--oneline"])`.
 on success, or an `Err` (with the child's stderr folded into the message) on
 failure.
 
-```lang3
+```drang
 $ver := capture("cmd", "/c", "ver")
 say($ver)
 $where := capture("where", "cmd")
@@ -1754,7 +1758,7 @@ the next stage's stdin through real OS pipes (streamed, not buffered between
 stages). Each stage is an array. It returns the **last stage's trimmed stdout**.
 This is native `os/exec` wiring — there is still no shell.
 
-```lang3
+```drang
 $out := pipe(["cmd", "/c", "echo apple& echo banana& echo cherry"],
              ["findstr", "an"])
 say("pipe -> $out")
@@ -1773,7 +1777,7 @@ A trailing map sets per-command options on `run`, `capture`, `pipe`, and
 case-insensitively, per Windows); `timeout` is in **milliseconds** and `0` means
 no limit.
 
-```lang3
+```drang
 $dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
 say("cwd -> $dir")
 $e := capture("cmd", "/c", "echo", "%GREETING%", {env: {GREETING: "hi there"}})
@@ -1796,7 +1800,7 @@ Two exit codes are synthesized, matching GNU `timeout`/shell conventions. On
 **timeout** the whole process *tree* is killed (not just the direct child, so a
 `cmd /c <spawner>` whose grandchild holds the pipe can't keep the call blocked):
 
-```lang3
+```drang
 $r := run("cmd", "/c", "ping -n 5 127.0.0.1 >NUL", {timeout: 300})
 say("is_err: ${is_err($r)}  code: ${err_code($r)}")
 ```
@@ -1807,7 +1811,7 @@ is_err: true  code: 124
 When a command **cannot be started** (not found, not executable), the code is
 `127`:
 
-```lang3
+```drang
 $r := run("no_such_program_xyz")
 say("code: ${err_code($r)}  msg: ${err_msg($r)}")
 ```
@@ -1825,7 +1829,7 @@ line of stdout **as it arrives** (not buffered), ideal for build logs or tails.
 It returns `true` on success or an `Err` (exit code / `124` timeout) once the
 command finishes.
 
-```lang3
+```drang
 $n := 0
 each_line("cmd", "/c", "echo one& echo two& echo three", |$line| {
   $n = $n + 1
@@ -1847,7 +1851,7 @@ total lines: 3
 on it: `pid(p)` reads the PID, `await(p)` blocks for its exit status (`true`, or
 an `Err` with the code), and `kill(p)` terminates the whole tree.
 
-```lang3
+```drang
 $p := start("cmd", "/c", "exit 3")
 say("pid > 0: ${pid($p) > 0}")
 $status := await($p)
@@ -1860,7 +1864,7 @@ await -> is_err: true  code: 3
 
 `kill` works on a still-running process; its pending `await` then yields an error:
 
-```lang3
+```drang
 $p := start("cmd", "/c", "ping -n 30 127.0.0.1 >NUL")
 kill($p)
 say("after kill, is_err: ${is_err(await($p))}")
@@ -1873,19 +1877,19 @@ after kill, is_err: true
 
 ## In-language concurrency
 
-lang3 has **real multi-core parallelism with no GIL** — goroutine-backed, made
+drang has **real multi-core parallelism with no GIL** — goroutine-backed, made
 safe by *subtraction*: top-level bindings are frozen constants, scoping is
 lexical-only, strings are immutable, and there is no shared mutable global state.
 With almost nothing shared, parallel execution needs no locks.
 
 ### `spawn` / `await` — tasks
 
-`spawn(fn, args...)` runs a lang3 function on its own goroutine (args are
+`spawn(fn, args...)` runs a drang function on its own goroutine (args are
 deep-copied in — copy-on-send) and returns a `Task`. `await(task)` blocks for the
 result. (`await` accepts a `Task` *or* a process handle from `start` — one "await
 any async handle".)
 
-```lang3
+```drang
 fn work($n) { $n * 2 }
 $tasks := [1, 2, 3, 4] |> map(|$n| spawn(work, $n))
 $results := $tasks |> map(|$t| await($t))
@@ -1898,7 +1902,7 @@ fan-out: [2, 4, 6, 8]
 An error inside a spawned task (returned, `?`-propagated, or panicked) is captured
 and surfaced by `await`, so `await($t)?` propagates and `await($t) // x` recovers:
 
-```lang3
+```drang
 fn boom() { fail("worker failed") }
 $res := await(spawn(boom))
 say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")
@@ -1916,7 +1920,7 @@ once the channel is closed and drained); `recv2` returns `[value, ok]`; `close`
 is idempotent; `drain` collects every remaining value into an array, blocking
 until the channel is closed.
 
-```lang3
+```drang
 $c := chan(3)
 fn produce($ch) {
   for $i in 1..3 { send($ch, $i * 10) }
@@ -1931,7 +1935,7 @@ say("drained: $all")
 drained: [10, 20, 30]
 ```
 
-```lang3
+```drang
 $c := chan()
 fn worker($ch) {
   send($ch, "first")
@@ -1960,7 +1964,7 @@ after close, undef: true
 results in **input order**; fail-loud on the first `Err`), but fanned across a
 bounded `NumCPU` worker pool for **true parallelism**.
 
-```lang3
+```drang
 $squares := [1, 2, 3, 4, 5] |> pmap(|$x| $x * $x)
 say("pmap squares: $squares")
 ```
@@ -1981,7 +1985,7 @@ top-level constants and its own parameters, but it must not mutate shared captur
 state. Each element is **deep-copied to its worker**, so mutating the element only
 affects that worker's private copy:
 
-```lang3
+```drang
 $rows := [[1], [2], [3]]
 $out := pmap($rows, |$row| {
   push($row, 99)   # mutates the worker's COPY
@@ -2002,7 +2006,7 @@ container* from a parallel callback is documented-undefined — keep callbacks p
 Like `map`, `pmap` is **fail-loud**: the first `Err` a callback produces becomes
 the whole result and stops further work.
 
-```lang3
+```drang
 $r := pmap([1, 2, 3], |$x| {
   if $x == 2 { fail("boom on 2") } else { $x }
 })
@@ -2015,7 +2019,7 @@ is_err: true  msg: boom on 2
 Parallel subprocesses are just `pmap` over commands — each call gets its own
 `{timeout}`/`cwd`/`env` and runs lock-free:
 
-```lang3
+```drang
 $versions := ["git", "go", "node"] |> pmap(|$tool| capture($tool, "--version") // "(missing)")
 ```
 
@@ -2023,7 +2027,7 @@ $versions := ["git", "go", "node"] |> pmap(|$tool| capture($tool, "--version") /
 
 ## Files and Paths
 
-lang3 treats paths as plain strings and leans on Go's `os`/`filepath` underneath.
+drang treats paths as plain strings and leans on Go's `os`/`filepath` underneath.
 The builtins fall into four groups: **file I/O** (`read_file`, `write_file`,
 `lines`), **filesystem ops** (`exists`, `isdir`, `mkdir`, `glob`, `rename`, `rm`,
 `copy`, `size`), **pure path transforms** (`dirname`, `basename`, `ext`, `stem`,
@@ -2034,9 +2038,9 @@ A guided tour — everything below was run end to end. It builds a scratch
 directory under the system temp, writes a file, reads it back, globs it, and
 cleans up:
 
-```lang3
+```drang
 # A scratch dir under the system temp, cleaned up at the end.
-$dir := join($ENV["TEMP"], "lang3_fs_tour")
+$dir := join($ENV["TEMP"], "drang_fs_tour")
 rm($dir)              # idempotent: no error if absent
 mkdir($dir)          # mkdir -p semantics
 
@@ -2075,20 +2079,20 @@ catchable `Err` value (exit code 1). You handle it three ways:
 - `expr // fallback` — recover: substitute `fallback` when `expr` is an `Err`.
 - let the `Err` flow as an ordinary value.
 
-```lang3
+```drang
 $txt := read_file("does_not_exist_xyz.txt") // "DEFAULT"
 say("recovered: " ~ $txt)            # recovered: DEFAULT
 ```
 
 The `?` form aborts with the underlying OS error and a non-zero exit:
 
-```lang3
+```drang
 read_file("nope_missing.txt")?
 say("unreached")
 ```
 
 ```
-lang3: read_file nope_missing.txt: open nope_missing.txt: The system cannot find the file specified.
+drang: read_file nope_missing.txt: open nope_missing.txt: The system cannot find the file specified.
 ```
 
 `exists` and `isdir` are the exception: they always return a plain `bool`, so
@@ -2105,7 +2109,7 @@ they drop straight into `if`/`unless` without recovery plumbing.
 `lines` normalizes CRLF to LF and drops a single trailing newline, so
 `"a\nb\n"` yields two elements and `""` yields an empty array:
 
-```lang3
+```drang
 say(len(lines("")))        # 0
 say(len(lines("a\nb\n")))  # 2   (trailing newline dropped)
 say(len(lines("a\nb")))    # 2
@@ -2129,8 +2133,8 @@ say(len(lines("a\nb")))    # 2
   error if absent). It is named `rm` because `delete` is the map-key remover.
 - `size(p)` → file size in bytes as an int, or `Err` if the path is missing.
 
-```lang3
-$dir := join($ENV["TEMP"], "lang3_fs_demo2")
+```drang
+$dir := join($ENV["TEMP"], "drang_fs_demo2")
 rm($dir)
 mkdir($dir)
 
@@ -2149,14 +2153,14 @@ rm($dir)
 `glob` with `**` walks subdirectories (results are sorted; the walk root itself
 is never yielded):
 
-```lang3
+```drang
 $all := glob(join($dir, "**", "*.go"))
 for $m in $all { say(slash($m)) }
 ```
 
 ```
-C:/Users/anafa/AppData/Local/Temp/lang3_fs_demo4/sub/deep.go
-C:/Users/anafa/AppData/Local/Temp/lang3_fs_demo4/top.go
+C:/Users/anafa/AppData/Local/Temp/drang_fs_demo4/sub/deep.go
+C:/Users/anafa/AppData/Local/Temp/drang_fs_demo4/top.go
 ```
 
 ### Pure path helpers
@@ -2174,13 +2178,13 @@ separator unless noted.
 | `abs(p)` | `foo/bar.txt` | absolute path against the CWD |
 | `slash(p)` | `C:\a\b` | `C:/a/b` (forward slashes) |
 
-```lang3
-$f := "C:/Users/anafa/AppData/Local/Temp/lang3_fs_demo/notes.txt"
-say(dirname($f))   # C:\Users\anafa\AppData\Local\Temp\lang3_fs_demo
+```drang
+$f := "C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt"
+say(dirname($f))   # C:\Users\anafa\AppData\Local\Temp\drang_fs_demo
 say(basename($f))  # notes.txt
 say(ext($f))       # .txt
 say(stem($f))      # notes
-say(slash($f))     # C:/Users/anafa/AppData/Local/Temp/lang3_fs_demo/notes.txt
+say(slash($f))     # C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt
 ```
 
 Note `dirname` returns the path with the platform separator; reach for `slash`
@@ -2197,8 +2201,8 @@ These power the classic "rebuild only if stale" pattern.
   `target` is missing **or** older than any source. `sources` may be a single
   path or an array of paths. A *missing source* is a real `Err`.
 
-```lang3
-$dir := join($ENV["TEMP"], "lang3_fresh")
+```drang
+$dir := join($ENV["TEMP"], "drang_fresh")
 mkdir($dir)
 $src := join($dir, "main.c")
 $obj := join($dir, "main.o")
@@ -2210,12 +2214,12 @@ say(stale($obj, $src))   # true  — target missing, build it
 After building the object and later editing the source, `stale` flips back to
 true and `newer` agrees:
 
-```lang3
+```drang
 say(stale($obj, $src))    # true   — source edited after obj built
 say(newer($src, $obj))    # true
 ```
 
-```lang3
+```drang
 $obj := "build/app.o"
 $srcs := glob("src/**/*.c")
 if stale($obj, $srcs) {
@@ -2234,7 +2238,7 @@ script run.
 
 ## Quick reference: builtins
 
-Every builtin in lang3, grouped by area. Signatures use `?` for an optional
+Every builtin in drang, grouped by area. Signatures use `?` for an optional
 argument and `...` for variadic. Builtins follow one error convention: a wrong
 argument **count** aborts the program (an uncatchable Go error), while a wrong
 argument **type** or a runtime failure becomes a first-class **Err** value you
@@ -2396,27 +2400,27 @@ reference types; values are deep-copied on send and on `await`.
 
 ## Not Yet — Known Gaps and Surprises
 
-lang3 is a personal daily-driver under active construction, not a finished language. This section is the honest inventory of what is missing or behaves unexpectedly, so you don't waste time reaching for something that isn't there. Everything below was confirmed against the binary.
+drang is a personal daily-driver under active construction, not a finished language. This section is the honest inventory of what is missing or behaves unexpectedly, so you don't waste time reaching for something that isn't there. Everything below was confirmed against the binary.
 
 ### Whole capability areas with no builtins
 
 There is no JSON, HTTP, math, date/time, randomness, hashing, or text-encoding support. The functions you might expect simply don't exist, and calling one is an `unknown function` error:
 
 ```
-lang3 -e 'say(json(1))'
-# lang3: unknown function json
+drang -e 'say(json(1))'
+# drang: unknown function json
 
-lang3 -e 'say(sqrt(9))'
-# lang3: unknown function sqrt
+drang -e 'say(sqrt(9))'
+# drang: unknown function sqrt
 
-lang3 -e 'say(now())'
-# lang3: unknown function now
+drang -e 'say(now())'
+# drang: unknown function now
 
-lang3 -e 'say(rand())'
-# lang3: unknown function rand
+drang -e 'say(rand())'
+# drang: unknown function rand
 
-lang3 -e 'say(base64("x"))'
-# lang3: unknown function base64
+drang -e 'say(base64("x"))'
+# drang: unknown function base64
 ```
 
 The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math family (`sin`, `cos`, `floor`, `ceil`, `abs` as a number op — note `abs` *does* exist but is the path-absolutize builtin, not a numeric absolute value). These are all planned as thin bindings over Go's stdlib, but none have landed.
@@ -2425,7 +2429,7 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 - **No integer-division operator.** `/` is always float division. Use `int()` to truncate:
 
-  ```lang3
+  ```drang
   say(10 / 4)        # 2.5
   say(int(10 / 4))   # 2
   ```
@@ -2439,10 +2443,9 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 - **Structs are designed but not implemented.** The `struct` keyword from DESIGN.md does not parse yet (`struct Foo { ... }` → parse error). Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
 - **No module / import system.** `import "x"` and `use "x"` are both parse errors. Everything lives in one file; there is no way to split or load code.
-- **No `lang3 build`.** Producing a standalone `.exe` (the overlay-payload mechanism in DESIGN.md) is future work. lang3 only interprets — `lang3 -e '...'` or `lang3 file.dr`.
 - **No automatic stringy coercion.** Despite being on the roadmap, `"5" + 3` is currently an error, not `8`. Convert explicitly with `int()`:
 
-  ```lang3
+  ```drang
   say("5" + 3)        # error: cannot use string and int with '+'
   say(int("5") + 3)   # 8
   ```
@@ -2451,20 +2454,20 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 - **`int` is 64-bit and overflow wraps silently** — no error, no promotion to float:
 
-  ```lang3
+  ```drang
   say(9223372036854775807 + 1)
   # -9223372036854775808
   ```
 
 - **`format()` uses `{}` placeholders, not `%`-style verbs.** Each `{}` consumes one argument; passing more arguments than placeholders is an error, so a `printf`-style template fails:
 
-  ```lang3
+  ```drang
   say(format("{} and {}", 1, 2))   # 1 and 2
-  say(format("%d", 5))             # error: 0 "{}" placeholder(s) but got 1 argument(s)
+  say(format("%d", 5))             # error: format: template has 0 "{}" placeholder(s) but got 1 argument(s)
   ```
 
   There is no `sprintf` (`unknown function`); `format` is the only string-formatting builtin.
 
 ### Also absent (from DESIGN.md, not yet built)
 
-`sort` / `sort_by` / `min_by` / `max_by` (no comparator operator `<=>`/`cmp` yet), first-class builtin values (you must wrap a builtin in a lambda to pass it: `map($xs, |$f| f($f))`), `sh()` shell escape, `BEGIN`/`END` autoloop blocks, regex literals (`/re/` — use the `re`/`match`/`gsub` builtins instead), char ranges (`'a'..'z'`), the register bytecode VM, and the cross-machine/distribution growth paths. These are tracked in DESIGN.md as deferred or planned, not shipped.
+first-class builtin values (you must wrap a builtin in a lambda to pass it: `map($xs, |$f| f($f))`), `sh()` shell escape, `BEGIN`/`END` autoloop blocks, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md as deferred or planned, not shipped.

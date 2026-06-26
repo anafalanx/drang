@@ -9,14 +9,14 @@ Usage: python run.py [repeats]   (default 3)
 import subprocess, time, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LANG3 = r"C:\zmal\_drang\drang.exe"
+DRANG = r"C:\zmal\_drang\drang.exe"
 PY = sys.executable
 REPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 TIMEOUT = 600
 
 CONFIGS = [
-    ("drang seq (map)",    [LANG3, os.path.join(HERE, "mandel_seq.dr")]),
-    ("drang par (pmap)",   [LANG3, os.path.join(HERE, "mandel_par.dr")]),
+    ("drang seq (map)",    [DRANG, os.path.join(HERE, "mandel_seq.dr")]),
+    ("drang par (pmap)",   [DRANG, os.path.join(HERE, "mandel_par.dr")]),
     ("python seq",         [PY, os.path.join(HERE, "mandel.py"), "seq"]),
     ("python threads",     [PY, os.path.join(HERE, "mandel.py"), "threads"]),
     ("python mp",          [PY, os.path.join(HERE, "mandel.py"), "mp"]),
@@ -37,7 +37,7 @@ def best(cmd):
 
 def main():
     print(f"cores: {os.cpu_count()}   repeat={REPEAT} (min wall-clock ms)")
-    print(f"drang : {LANG3}")
+    print(f"drang : {DRANG}")
     print(f"python: {PY}\n")
     res = {}
     checks = set()
