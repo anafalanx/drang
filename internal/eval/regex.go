@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // regexObj is a compiled, first-class regex value. It is immutable: the wrapped
@@ -62,7 +62,7 @@ func compilePattern(pat string) (*regexp.Regexp, error) {
 }
 
 // makeRegex compiles pat into a regex Value, or a catchable Err value on failure
-// (a bad pattern is data-level error, consistent with lang3's first-class errors).
+// (a bad pattern is data-level error, consistent with drang's first-class errors).
 func makeRegex(pat string) value.Value {
 	re, err := compilePattern(pat)
 	if err != nil {

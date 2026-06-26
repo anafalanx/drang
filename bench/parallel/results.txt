@@ -1,11 +1,11 @@
 cores: 12   repeat=3 (min wall-clock ms)
-lang3 : C:\zmal\_lang3\lang3.exe
+drang : C:\zmal\_drang\drang.exe
 python: C:\zmal\r\python\cpython-3.14.6-windows-x86_64-none\python.exe
 
 config                      ms  vs py-seq
 -----------------------------------------
-lang3 seq (map)         9563.9          —
-lang3 par (pmap)        1665.5          —
+drang seq (map)         9563.9          —
+drang par (pmap)        1665.5          —
 python seq              2649.7      1.00x
 python threads          2874.4      1.08x
 python mp               1193.7      0.45x
@@ -13,11 +13,11 @@ python mp               1193.7      0.45x
 all 5 produced the same checksum: 13574374
 
 speedup from going parallel (higher = better):
-  lang3   map -> pmap        : 5.7x
+  drang   map -> pmap        : 5.7x
   python  seq -> threads     : 0.9x   (GIL: ~1x expected)
   python  seq -> processes   : 2.2x
 
-lang3 pmap vs Python, wall-clock (lower lang3 = better):
+drang pmap vs Python, wall-clock (lower drang = better):
   vs python seq     : 0.63x
   vs python threads : 0.58x
   vs python mp      : 1.40x

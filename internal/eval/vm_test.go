@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/parser"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/parser"
 )
 
 // vmSubset holds programs that the v1 compiler is expected to compile fully (no
@@ -112,7 +112,7 @@ say(reassign(5))`,
 	// error inspection: read an error's details as values
 	`say(is_err(int("x")), is_err("ok"), err_code("ok"), err_msg("ok") == "")`,
 	// string interpolation: $name, ${expr}, escaped \$, and a Display'd value
-	`$who := "lang3"
+	`$who := "drang"
 $n := 6
 say("hi $who, ${$n * 7} and a literal \$n = $n")`,
 	`$xs := [1, 2, 3]

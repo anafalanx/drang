@@ -1,4 +1,4 @@
-// Package ast defines the lang3 abstract syntax tree.
+// Package ast defines the drang abstract syntax tree.
 //
 // Each node's String method renders an S-expression form used by the --ast
 // dump, which makes operator precedence, |> desugaring, and control flow easy
@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anafalanx/lang3/internal/token"
+	"github.com/anafalanx/drang/internal/token"
 )
 
 // Pos is a 1-based source position, embedded in every node. A zero Line means

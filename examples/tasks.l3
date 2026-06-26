@@ -1,7 +1,7 @@
-# tasks.l3 — a small lang3 task runner, demonstrating the orchestration core.
-# Run:  lang3 tasks.l3 <task> [args...]   (no task lists them)
+# tasks.l3 — a small drang task runner, demonstrating the orchestration core.
+# Run:  drang tasks.l3 <task> [args...]   (no task lists them)
 
-$root ::= "C:/zmal/_lang3/_taskdemo"
+$root ::= "C:/zmal/_drang/_taskdemo"
 
 fn build($args) {
   mkdir($root)?

@@ -1,8 +1,8 @@
 package eval
 
 import (
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // Op is a VM opcode. The register machine is 3-address: most ops read operand

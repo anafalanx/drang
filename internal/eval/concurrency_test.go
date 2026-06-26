@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anafalanx/lang3/internal/parser"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/parser"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 func runWithEnv(t *testing.T, env *Env, src string) string {

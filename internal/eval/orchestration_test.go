@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anafalanx/lang3/internal/parser"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/parser"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 func str(s string) value.Value { return value.MakeStr(s) }
@@ -210,14 +210,14 @@ func TestExecArgFlatten(t *testing.T) {
 }
 
 func TestMergeEnvCaseInsensitive(t *testing.T) {
-	os.Setenv("LANG3_TESTVAR", "orig")
-	defer os.Unsetenv("LANG3_TESTVAR")
+	os.Setenv("DRANG_TESTVAR", "orig")
+	defer os.Unsetenv("DRANG_TESTVAR")
 	overlay := value.MakeMap().Obj().(*value.OrderedMap)
-	overlay.Set(str("lang3_testvar"), str("new")) // different case on purpose
+	overlay.Set(str("drang_testvar"), str("new")) // different case on purpose
 	env := mergeEnv(overlay)
 	count, val := 0, ""
 	for _, e := range env {
-		if i := strings.IndexByte(e, '='); i >= 0 && strings.EqualFold(e[:i], "LANG3_TESTVAR") {
+		if i := strings.IndexByte(e, '='); i >= 0 && strings.EqualFold(e[:i], "DRANG_TESTVAR") {
 			count++
 			val = e[i+1:]
 		}

@@ -1,4 +1,4 @@
-// Package token defines the lexical tokens of lang3.
+// Package token defines the lexical tokens of drang.
 package token
 
 import "strconv"

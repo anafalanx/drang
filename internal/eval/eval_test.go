@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anafalanx/lang3/internal/parser"
+	"github.com/anafalanx/drang/internal/parser"
 )
 
 // run executes src and returns everything say printed.

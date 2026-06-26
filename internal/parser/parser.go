@@ -1,4 +1,4 @@
-// Package parser builds an AST from lang3 source using a Pratt expression parser.
+// Package parser builds an AST from drang source using a Pratt expression parser.
 //
 // Statements: declarations ($x := e), assignments ($x = e), expression
 // statements, block-form if/else (with else-if) and while, and the postfix
@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/lexer"
-	"github.com/anafalanx/lang3/internal/token"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/lexer"
+	"github.com/anafalanx/drang/internal/token"
 )
 
 // Binding-power levels, lowest to highest.

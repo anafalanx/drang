@@ -1,4 +1,4 @@
-# lang3 — Language Design
+# drang — Language Design
 
 *Working name (provisional). A simpler, parallel, Perl-inspired text-processing language, implemented in Go.*
 
@@ -16,7 +16,7 @@ Last updated: 2026-06-25.
 
 ## 1. Vision
 
-lang3 is a small scripting language for **text processing and system glue** — the niche Perl/awk/sed own — rebuilt for the modern world:
+drang is a small scripting language for **text processing and system glue** — the niche Perl/awk/sed own — rebuilt for the modern world:
 
 - **Simpler than Perl.** Keep Perl's *soul* (first-class regex, terse one-liners, sigils, interpolation, autovivification) without its warts (scalar/list context, `bless`, typeglobs, the punctuation-variable zoo, string `eval`).
 - **Fast.** A register bytecode VM over an unboxed value representation, with variables resolved to slots at compile time.
@@ -143,7 +143,7 @@ pmap($xs, |$x| …)  parallel map                    [PROPOSED API]
 ## 5. Worked example — access-log analyzer
 
 ```ruby
-#!/usr/bin/env lang3
+#!/usr/bin/env drang
 
 # 1.2.3.4 - - [10/Oct/2024:13:55:36] "GET /api HTTP/1.1" 200 1234
 let $LINE = /^(\S+) .* "[^"]*" (\d+) (\d+)/        # first-class regex value, compiled once
@@ -189,7 +189,7 @@ report( reduce(pmap($ARGV, |$f| scan_file($f)), Stats(), merge) )
 One-liner form (needs the proposed `END`):
 
 ```
-lang3 -ne '$c[$1]++ if /^(\S+)/; END { for $ip in keys($c) { say "${$c[$ip]}\t$ip" } }' access.log
+drang -ne '$c[$1]++ if /^(\S+)/; END { for $ip in keys($c) { say "${$c[$ip]}\t$ip" } }' access.log
 ```
 
 Why the parallel version is race-free: `scan_file` touches no shared mutable state; each returns a `Stats` partial that copy-on-send isolates; the `reduce`/`merge` runs serially on the main goroutine. The language offers no shared accumulator to mutate, so the racy version is unwriteable.
@@ -213,8 +213,8 @@ Why the parallel version is race-free: `scan_file` touches no shared mutable sta
 ## 7. Packaging & platform (Windows 11+ first)
 
 **CLI:**
-- `lang3 run foo.l3` — interpret.
-- `lang3 build foo.l3 -o foo.exe` — produce a standalone executable.
+- `drang run foo.l3` — interpret.
+- `drang build foo.l3 -o foo.exe` — produce a standalone executable.
 
 **Exe mechanism:** runtime stub + **appended frozen bytecode image** (overlay). At startup the binary inspects its own tail: overlay present → run it; absent → act as the interpreter/CLI. One binary, two modes — the same mechanism `els.exe` uses (appended zipfs payload), and what Deno/Bun `compile` do. Chosen over transpile-to-Go (toolchain dependency, slow) and AOT codegen (years of work).
 
@@ -289,13 +289,13 @@ Still open:
 ## 11. Update (2026-06-25) — direction locked + decision backlog
 
 ### Project direction: **C — personal daily-driver**
-lang3's purpose is to be *the author's own language* — the tool reached for **instead of Python** for glue, text, and one-off scripting. Broad adoption is explicitly **not** a near-term goal. Two later evolutions are noted but not pursued yet:
+drang's purpose is to be *the author's own language* — the tool reached for **instead of Python** for glue, text, and one-off scripting. Broad adoption is explicitly **not** a near-term goal. Two later evolutions are noted but not pursued yet:
 
 - **A** — specialize the *pitch* around one vertical. Leading candidate: **ops / observability glue** (scan logs across cores, match, alert, expose `/metrics` — one static binary).
 - **B** — add a *categorical* capability. Leading candidate: **distributed / multi-machine execution**, extending the concurrency model from multicore to multi-host over Go's net stack.
 
 **Implications**
-- **Success metric:** "Do I reach for lang3 instead of Python?" The eval set is the author's *real* Python scripts (the dependency-light glue ones — lang3 does not replace the PyPI ecosystem).
+- **Success metric:** "Do I reach for drang instead of Python?" The eval set is the author's *real* Python scripts (the dependency-light glue ones — drang does not replace the PyPI ecosystem).
 - **Open questions resolve by personal taste, fast, revised on friction** — not by abstract correctness.
 - **The path to value is short:** a tree-walk interpreter + the stdlib bindings actually used is enough to start. The VM, exe-gen, parallelism, and distribution are the A/B growth, *not* the entry.
 
@@ -317,7 +317,7 @@ lang3's purpose is to be *the author's own language* — the tool reached for **
 - Templating (`render`, text/html template)
 - Crypto / hash / uuid / base64
 - Filesystem walk / glob (+ watch)
-- Test runner (`test "…" { assert }`, `lang3 test`)
+- Test runner (`test "…" { assert }`, `drang test`)
 - Signal handling (`on_signal`)
 - Config / flag binding via reflection
 - `--profile` pprof output (freebie)
@@ -351,7 +351,7 @@ Go's value-error grain + gen-2's must-use gem + the orchestration re-centering a
 
 ### Lineage harvest (the few gems, Go-shaped)
 - **Examples-as-tests** — gen-2's inline `example 2 3 => 5`, run on definition via the test machinery (Go has testable examples natively). `[PROPOSED]`
-- **Frozen constants** — already in lang3; lineage-validated, doubles as the parallelism foundation.
+- **Frozen constants** — already in drang; lineage-validated, doubles as the parallelism foundation.
 - **Dev vs run/build mode** — gen-1's development-image vs release-image: REPL/dev is mutable & redefinable; run/build is the frozen, goroutine-shareable image. `[PROPOSED]`
 - **Stay rejected:** static typing, agent-first, prefix `[head args]`, length taxonomy, declaration noise, no-truthiness.
 
@@ -382,7 +382,7 @@ The orchestration re-centering is combed end to end.
 - Paths are plain strings (Go `filepath`/`os` bindings); `glob` eager, `walk` lazy; reads/writes fallible.
 
 ### Examples-as-tests (lineage gem, adopted)
-- Inline **`example f(args) == result`** / **`example f(bad) fails`** clauses, run on definition (instant REPL feedback) and collected by `lang3 test`. Standalone `test "name" { }` blocks kept for integration tests. `[LOCKED]`
+- Inline **`example f(args) == result`** / **`example f(bad) fails`** clauses, run on definition (instant REPL feedback) and collected by `drang test`. Standalone `test "name" { }` blocks kept for integration tests. `[LOCKED]`
 
 ### Dev vs run/build mode (lineage gem, adopted)
 - **REPL/dev:** mutable, redefinable top-level; **every eval runs from clean state** (code-only image, no persistent mutable heap) — redefine freely, reproducible runs.
@@ -395,9 +395,9 @@ Truthiness rule · implicit return · integer-overflow policy · operator set ·
 
 ## 14. Build progress (2026-06-25) — the walking skeleton runs
 
-Implementation underway in Go: stdlib-only, `module github.com/anafalanx/lang3`,
+Implementation underway in Go: stdlib-only, `module github.com/anafalanx/drang`,
 `go 1.26`, vendored toolchain (`r/go/1.26.4`). Layout mirrors `_kuu`:
-`cmd/lang3` + `internal/{token,lexer,ast,parser,value,eval}`.
+`cmd/drang` + `internal/{token,lexer,ast,parser,value,eval}`.
 
 **DONE — runs end to end (lexer → parser → tree-walk eval):**
 - **lexer** with Go-style automatic terminator insertion: a newline ends a
@@ -408,7 +408,7 @@ Implementation underway in Go: stdlib-only, `module github.com/anafalanx/lang3`,
 - **value:** tagged unboxed struct (nil/bool/int64/float64/string), no `interface{}`.
 - **eval:** `let`/`$var` (lexical scope), arithmetic, concat, comparison, prefix
   `-`/`!`, the `say` builtin. Runs and prints; runtime errors reported and exit 1.
-- **CLI:** `lang3 [--run|--ast|--tokens] (-e '<src>' | <file>)`; `--run` is default.
+- **CLI:** `drang [--run|--ast|--tokens] (-e '<src>' | <file>)`; `--run` is default.
 
 **Decisions resolved while building:**
 - Calls require parentheses — `f(args)`; no paren-less command calls. `[LOCKED]`
@@ -566,7 +566,7 @@ Built in five verified sub-slices, then an adversarial review.
 gate is **`newer`/`mtime` plus a `stale` helper**.
 
 **DONE (verified):**
-- **Foundation:** `$ARGV` / `$ENV` globals; CLI `lang3 [flags] <prog> [args...]`
+- **Foundation:** `$ARGV` / `$ENV` globals; CLI `drang [flags] <prog> [args...]`
   (mode flags consumed only up to the first non-flag, so flags after the program
   reach `$ARGV`); top-level `?` now sets the **process exit code** from the
   failing `Err`'s code (the bit §17 deferred "until `run`").
@@ -722,7 +722,7 @@ already-built cycle-safe `DeepCopy` hook to channel-send / goroutine isolation.
 ## 22. Build progress (2026-06-25) — real-task validation + boolean operators
 
 Before building parallelism on top of it, validated the whole stack against a
-**real task**: a lang3 port of `_els/tools/toolcheck.tcl` (probe the project-local
+**real task**: a drang port of `_els/tools/toolcheck.tcl` (probe the project-local
 `.toolchain` for the components `els` needs; report presence + version). It runs
 cleanly against the actual toolchain — exercising `capture`+stdin, `read_file`,
 regex, maps, `map`/`reduce`/`each`/`filter`/`count`, `format`, and the error model
@@ -855,7 +855,7 @@ channels; per-task timeouts (`within(5s)`); `pfor`; a `freeze()` hatch.
 
 ## 25. Build progress (2026-06-26) — a steerable GC knob
 
-From a user question (a RAM↔speed pragma). lang3 has no GC of its own — it rides
+From a user question (a RAM↔speed pragma). drang has no GC of its own — it rides
 Go's — and Go's GC is directly steerable, so this is a tiny addition: a single
 `gc()` builtin (no CLI flag, by request).
 
@@ -869,7 +869,7 @@ Measured on 400k allocation-heavy iterations: `relaxed` ~1.09s vs `lean` ~1.46s 
 **~25% faster** with less-frequent collection. Honest nuance: `off` can *backfire*
 on a long churning loop (the heap balloons → cache/page pressure outweighs the GC
 savings), so `relaxed` is the safer general "more RAM for speed" setting; `off`
-shines for short runs and long-lived data. lang3 is GC-light by design anyway
+shines for short runs and long-lived data. drang is GC-light by design anyway
 (immutable shared strings, frozen top-level constants, unboxed scalars), so this is
 a secondary lever — the register-VM rewrite remains the big speed item.
 
@@ -1109,7 +1109,7 @@ grain; left alone.
 ## 27. Build progress (2026-06-26) — displacement: porting the els task runner
 
 The first real-world displacement: porting `_els`'s flagship Tcl task runner
-(`tools/tasks.tcl`, ~300 lines) to a lang3 `tools/tasks.l3`. Chosen over abstract
+(`tools/tasks.tcl`, ~300 lines) to a drang `tools/tasks.l3`. Chosen over abstract
 feature work because the language is feature-complete and fast — value now comes
 from carrying a real daily workload, not more engine.
 
@@ -1119,7 +1119,7 @@ Reading the actual code, only **one new orchestration primitive** was truly need
 plus a small path helper:
 - **`start(cmd, args…)`** — launch a detached background/GUI child (the `exec … &`
   case for `z run`/`z colors`), returning its PID; stdio detached, handle released.
-  Distinct from `spawn` (a lang3 function in a goroutine).
+  Distinct from `spawn` (a drang function in a goroutine).
 - **`cwd()`** — current working directory, for root discovery (the `z` front door
   runs from the project root; tasks.tcl used `[info script]`).
 
@@ -1144,12 +1144,12 @@ subprocesses — a pure-Go console language can't host them, and shouldn't try.
 probes gcc 16.1.0 / tcl 9.0.3 (via `capture` with `{stdin, env}`); `z toolcheck`
 output is **byte-identical** to the Tcl runner with matching exit code; a failing
 child propagates its exit code (`run` → `?` → `dispatch` → exit 7); an unknown task
-exits 2. The lang3 runner is a drop-in for the orchestration spine; wiring `z.json`
-to it is the user's switch to flip when ready. lang3 is now carrying real work.
+exits 2. The drang runner is a drop-in for the orchestration spine; wiring `z.json`
+to it is the user's switch to flip when ready. drang is now carrying real work.
 
 ## 28. Build progress (2026-06-26) — error inspection (the read side)
 
-Closing the one real tool-invocation gap from the "is lang3 good at tool
+Closing the one real tool-invocation gap from the "is drang good at tool
 invocation?" review: a script could *propagate* (`?`) or *recover from* (`//`) an
 error, but couldn't *read* its details — so it couldn't branch on a command's
 specific exit code (e.g. grep's 1-for-no-match vs 2-for-error) or parse a tool's
@@ -1229,7 +1229,7 @@ First of the "finish the language" items. Runtime errors now point at the source
 line, column, and a caret under the offending token.
 
 ```
-lang3: cannot use int and string with '*' (stringy coercion is a later slice)
+drang: cannot use int and string with '*' (stringy coercion is a later slice)
   at build.l3:2:6
       $w * $h
          ^
@@ -1379,9 +1379,9 @@ the DX track: `--version`/`--help`, optional REPL.
 
 ## 34. Build progress (2026-06-26) — CLI hygiene: --version / --help
 
-Standard CLI manners. `lang3 --version` (or `-V`) prints `lang3 0.1.0` and exits 0;
-`lang3 --help` (or `-h`) prints full usage and exits 0; bare `lang3` prints a short
-usage plus "try 'lang3 --help'" and exits 2. The version is a `var version`
+Standard CLI manners. `drang --version` (or `-V`) prints `drang 0.1.0` and exits 0;
+`drang --help` (or `-h`) prints full usage and exits 0; bare `drang` prints a short
+usage plus "try 'drang --help'" and exits 2. The version is a `var version`
 (default "0.1.0", the first usable release) so a build can stamp it via
 `-ldflags "-X main.version=..."`. The new flags are recognized in the existing
 leading-flag loop, so `-e`, the mode flags, and `$ARGV` pass-through are unchanged.
@@ -1391,22 +1391,22 @@ loop control, CLI hygiene. The only remaining track item is an optional REPL.
 
 ## 35. Build progress (2026-06-26) — the REPL (DX track complete)
 
-The last item. Running `lang3` with no program on an interactive terminal starts a
+The last item. Running `drang` with no program on an interactive terminal starts a
 read-eval-print loop — which is also what double-clicking the executable does (a
 console app's stdin is a character device, so it's detected as interactive). Piped
-input (`cat foo.l3 | lang3`) is instead read and run as a program; `--repl` forces
+input (`cat foo.l3 | drang`) is instead read and run as a program; `--repl` forces
 the loop regardless.
 
 ```
-lang3 0.1.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
-lang3> $x := 10
+drang 0.1.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+drang> $x := 10
 10
-lang3> fn sq($n) {
+drang> fn sq($n) {
   ...> $n * $n
   ...> }
-lang3> sq($x)
+drang> sq($x)
 100
-lang3> "answer is ${sq($x) - 58}"
+drang> "answer is ${sq($x) - 58}"
 answer is 42
 ```
 
@@ -1459,7 +1459,7 @@ resumes. Interpolated bodies reuse the same `interpolate` path as `qq`/`"..."`.
 
 Everything desugars to existing string/array AST, so walker-vs-VM parity holds for
 free (added to the parity corpus). Unterminated quotes/heredocs error cleanly (no
-hang). Regex literals stay deferred: lang3's regex builtins take string patterns,
+hang). Regex literals stay deferred: drang's regex builtins take string patterns,
 raw `q(\d+)` patterns avoid escape-doubling, and lenient string escapes already
 make `"\d+"` a valid pattern — a `/.../`literal would add the slash-vs-division
 ambiguity for little gain without a new compiled-regex value type.

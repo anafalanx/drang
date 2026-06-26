@@ -1,4 +1,4 @@
-"""lang3 vs Python benchmark harness.
+"""drang vs Python benchmark harness.
 
 Runs each bench/<name>.l3 and bench/<name>.py as a subprocess, checks they print
 the same result (equivalence), and reports the min wall-clock over N repeats.
@@ -8,7 +8,7 @@ Usage:  python run.py [repeats]   (default 3)
 import subprocess, time, sys, os, math, statistics
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LANG3 = r"C:\zmal\_lang3\lang3.exe"
+LANG3 = r"C:\zmal\_drang\drang.exe"
 PY = sys.executable
 REPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 TIMEOUT = 300
@@ -35,11 +35,11 @@ def main():
     l3_base = best([LANG3, os.path.join(HERE, "_empty.l3")])[0]
     py_base = best([PY, os.path.join(HERE, "_empty.py")])[0]
 
-    print(f"lang3 : {LANG3}")
+    print(f"drang : {LANG3}")
     print(f"python: {PY}")
     print(f"repeat={REPEAT} (min wall-clock ms, lower=faster), timeout={TIMEOUT}s")
-    print(f"startup baseline: lang3 {l3_base:.1f} ms | python {py_base:.1f} ms\n")
-    hdr = f"{'benchmark':<14}{'lang3 ms':>11}{'python ms':>11}{'ratio':>8}  status"
+    print(f"startup baseline: drang {l3_base:.1f} ms | python {py_base:.1f} ms\n")
+    hdr = f"{'benchmark':<14}{'drang ms':>11}{'python ms':>11}{'ratio':>8}  status"
     print(hdr)
     print("-" * (len(hdr) + 6))
 
@@ -64,7 +64,7 @@ def main():
     if oks:
         ratios = [r[3] for r in oks]
         geo = math.prod(ratios) ** (1.0 / len(ratios))
-        print(f"\n{len(oks)}/{len(rows)} matched.  lang3 is this many times Python's wall-clock:")
+        print(f"\n{len(oks)}/{len(rows)} matched.  drang is this many times Python's wall-clock:")
         print(f"  min {min(ratios):.1f}x   median {statistics.median(ratios):.1f}x   "
               f"geomean {geo:.1f}x   max {max(ratios):.1f}x")
     if len(oks) != len(rows):
