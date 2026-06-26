@@ -1,0 +1,5 @@
+$funcs := []
+for $i in 1..100000 { push($funcs, |$x| $x + $i) }
+$sum := 0
+for $f in $funcs { $sum = $sum + $f(10) }
+say($sum)

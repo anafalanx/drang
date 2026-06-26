@@ -1,0 +1,7 @@
+$rx := qr/\d{3,}/
+$count := 0
+for $i in 1..200000 {
+  $line := "item-" ~ ($i % 1000) ~ "-end"
+  if matches($line, $rx) { $count = $count + 1 }
+}
+say($count)

@@ -1,0 +1,9 @@
+$n := 100000
+$recs := []
+$seed := 999
+for $i in 1..$n {
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  push($recs, {id: $i, key: $seed % 100000})
+}
+$sorted := sort_by($recs, |$r| $r.key)
+say($sorted[0].key + $sorted[$n - 1].key)

@@ -1,0 +1,15 @@
+$n := 1000000
+$sieve := []
+for $i in 0..$n { push($sieve, true) }
+$count := 0
+for $i in 2..$n {
+  if $sieve[$i] {
+    $count = $count + 1
+    $j := $i * $i
+    while $j <= $n {
+      $sieve[$j] = false
+      $j = $j + $i
+    }
+  }
+}
+say($count)
