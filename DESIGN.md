@@ -1426,3 +1426,59 @@ interpolation, ordering (`<=>`/sort/sort_by/min_by/max_by), loop control
 (break/next), CLI hygiene (`--version`/`--help`), and the REPL. The language is now
 a genuinely usable daily driver. Deferred "Perl soul" lexer extras (regex literals,
 qw//, q//qq//, heredocs) remain optional future work.
+
+## 36. Build progress (2026-06-26) — Perl-soul quote operators + heredocs
+
+Quote operators and heredocs — the deferred "Perl soul" text features.
+
+```
+qw(red green blue)            # -> ["red", "green", "blue"]
+q{C:\Users\me\n literal}      # raw string: no interpolation, no escapes
+qq{she said "hi", ${1 + 2}}   # interpolated, flexible delimiters (no quote-escaping)
+
+$readme := <<~END             # heredoc; <<~ strips common indentation
+    # $project
+    version $ver
+    END
+```
+
+Design: one lexer hook does the quote operators — after reading an identifier, if
+it is `q`/`qq`/`qw` and is *immediately* followed by a delimiter, the body is read
+to the matching close (`( [ {` nest by depth; `/ |` run to the next one; no
+delimiter escaping by design — pick a non-conflicting or nesting delimiter).
+`qw`→`QW` token (parser splits on whitespace into an array), `q`→`RAWSTR` (literal
+StringLit), `qq`→`STRING` (reuses the existing interpolation path, so it behaves
+exactly like `"..."`). Because the trigger requires an immediately-following
+delimiter, `$qw` variables and identifiers like `queue` are unaffected.
+
+Heredocs (`<<TAG`) read the following lines up to a line equal to `TAG`: `<<TAG`/
+`<<"TAG"` interpolate, `<<'TAG'` is raw, `<<~TAG` strips the smallest common
+indentation (relative indentation preserved). The opener must be last on its line;
+after the terminator a NEWLINE is emitted so the statement closes and normal lexing
+resumes. Interpolated bodies reuse the same `interpolate` path as `qq`/`"..."`.
+
+Everything desugars to existing string/array AST, so walker-vs-VM parity holds for
+free (added to the parity corpus). Unterminated quotes/heredocs error cleanly (no
+hang). Regex literals stay deferred: lang3's regex builtins take string patterns,
+raw `q(\d+)` patterns avoid escape-doubling, and lenient string escapes already
+make `"\d+"` a valid pattern — a `/.../`literal would add the slash-vs-division
+ambiguity for little gain without a new compiled-regex value type.
+
+### 36a. Adversarial review of quote operators + heredocs
+
+A 5-reviewer adversarial pass (250 programs; walker-vs-VM parity agent found zero
+divergence across 64 programs) surfaced two minor edge cases, both resolved as
+documentation rather than behavior changes:
+
+1. **Empty heredoc body is "" (not "\n").** This is correct — it matches Perl/Ruby
+   and the line-based model (each body line carries a newline; zero lines → ""; one
+   blank line → "\n"). The misleading "always a trailing newline" comments were
+   corrected; a `TestQuoteHeredocEdges` test locks the behavior in.
+2. **Brace-delimited `qq{ ${ "}" } }` mis-nests.** The lexer counts raw `{`/`}`
+   bytes and isn't aware of strings/`${...}` inside a qq body, so a brace inside an
+   interpolation closes the quote early. A proper fix would duplicate the parser's
+   interpolation-aware brace matching into the lexer — not worth it for a narrow
+   case with a trivial workaround (use a non-brace delimiter: `qq[ ${ "}" } ]`).
+   Documented as a limitation.
+
+Net: the quote/heredoc machinery is solid; no real defects, no parity issues.
