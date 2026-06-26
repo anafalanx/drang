@@ -8,7 +8,7 @@ Usage:  python run.py [repeats]   (default 3)
 import subprocess, time, sys, os, math, statistics
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LANG3 = r"C:\zmal\_drang\drang.exe"
+DRANG = r"C:\zmal\_drang\drang.exe"
 PY = sys.executable
 REPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 TIMEOUT = 300
@@ -32,10 +32,10 @@ def best(cmd):
 
 def main():
     names = open(os.path.join(HERE, "order.txt")).read().split()
-    l3_base = best([LANG3, os.path.join(HERE, "_empty.dr")])[0]
+    l3_base = best([DRANG, os.path.join(HERE, "_empty.dr")])[0]
     py_base = best([PY, os.path.join(HERE, "_empty.py")])[0]
 
-    print(f"drang : {LANG3}")
+    print(f"drang : {DRANG}")
     print(f"python: {PY}")
     print(f"repeat={REPEAT} (min wall-clock ms, lower=faster), timeout={TIMEOUT}s")
     print(f"startup baseline: drang {l3_base:.1f} ms | python {py_base:.1f} ms\n")
@@ -45,7 +45,7 @@ def main():
 
     rows = []
     for name in names:
-        l3ms, l3out, l3err, l3rc = best([LANG3, os.path.join(HERE, name + ".dr")])
+        l3ms, l3out, l3err, l3rc = best([DRANG, os.path.join(HERE, name + ".dr")])
         pyms, pyout, pyerr, pyrc = best([PY, os.path.join(HERE, name + ".py")])
         match = l3out == pyout and l3rc == 0 and pyrc == 0
         ratio = l3ms / pyms if pyms else 0.0

@@ -8,7 +8,7 @@ like Go.*
 
 ```
 $xs := [1, 2, 3, 4]
-say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [16, 4]
+say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
 ```
 
 ## Highlights
