@@ -15,7 +15,9 @@ const (
 	VAR    // $name — the single sigil; Lit holds the name without '$'
 	INT    // 123
 	FLOAT  // 1.5
-	STRING // "..."
+	STRING // "..."  and qq{...} / interpolating heredocs (parser interpolates)
+	RAWSTR // q{...} and '...'-style heredocs: literal, no interpolation
+	QW     // qw{...}: whitespace-split word list (parser builds an array)
 
 	// keywords
 	FN
@@ -85,6 +87,8 @@ var names = [...]string{
 	INT:       "INT",
 	FLOAT:     "FLOAT",
 	STRING:    "STRING",
+	RAWSTR:    "RAWSTR",
+	QW:        "QW",
 	FN:        "FN",
 	RETURN:    "RETURN",
 	IF:        "IF",

@@ -178,6 +178,19 @@ while $i < 10 {
   $i = $i + 100
 }
 say($i)`,
+	// quote operators: qw word list, q raw string, qq interpolated string
+	`say(qw(alpha beta gamma))
+$w := "W"
+say(q(raw $w stays))
+say(qq{interp $w and ${2 * 21}})`,
+	// heredoc: interpolated body, then normal code resumes after the terminator
+	`$who := "Sam"
+$msg := <<END
+hi $who
+the answer is ${6 * 7}
+END
+say($msg)
+say("after")`,
 	// ? inside a function: a propagated error becomes the function's result, then
 	// // recovers it at the call site
 	`fn doubler($s) {
@@ -515,6 +528,27 @@ func TestLoopControlParseGating(t *testing.T) {
 		p.ParseProgram()
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Errorf("unexpected parse error for %q: %v", src, errs)
+		}
+	}
+}
+
+func TestQuoteHeredocEdges(t *testing.T) {
+	cases := []struct{ src, want string }{
+		// empty heredoc body is "" (Perl/Ruby line-based model); a blank line is "\n"
+		{"$x := <<END\nEND\nsay(len($x))", "0\n"},
+		{"$x := <<END\n\nEND\nsay(len($x))", "1\n"},
+		{"$x := <<END\nhi\nEND\nsay(len($x))", "3\n"}, // "hi\n"
+		// a non-brace delimiter handles a brace inside a ${...} interpolation
+		{"say(qq[x${ \"}\" }y])", "x}y\n"},
+	}
+	for _, c := range cases {
+		got, err := runBackend(t, c.src, true)
+		if err != nil {
+			t.Errorf("%q: unexpected error: %v", c.src, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%q: got %q, want %q", c.src, got, c.want)
 		}
 	}
 }

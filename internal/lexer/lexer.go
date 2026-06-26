@@ -5,9 +5,11 @@
 // $var, ident, ')', '}', ']', or '?') and we are not inside '(' or '[' (so long
 // expressions and |> pipelines wrap across lines freely). ';' also terminates.
 //
-// String interpolation ("$x"/"${expr}") is supported: readString returns the raw
-// body and the parser decodes escapes + interpolation together. Deliberately
-// deferred (TODO): regex literals, qw// and q//qq// quote operators, heredocs.
+// Supported: string interpolation ("$x"/"${expr}"); the q/qq/qw quote operators
+// (raw / interpolated / word-list, with ( [ { / | delimiters); and heredocs
+// (<<TAG, <<"TAG", <<'TAG', <<~TAG). Deliberately deferred (TODO): regex literals
+// (a dedicated /.../ or qr// — the existing regex builtins + raw q// patterns and
+// lenient string escapes cover the need without a new compiled-regex value type).
 package lexer
 
 import (
@@ -105,6 +107,13 @@ func (l *Lexer) scan() token.Token {
 		return token.Token{Kind: token.EOF, Line: line, Col: col}
 	case isLetter(l.ch):
 		id := l.readIdent()
+		// q/qq/qw quote operators: only when the keyword is immediately followed by
+		// a delimiter (no space), so `qw` as a plain identifier is unaffected.
+		if isQuoteOp(id) {
+			if _, ok := quoteOpener(l.ch); ok {
+				return l.readQuoteLike(id, line, col)
+			}
+		}
 		return token.Token{Kind: token.Lookup(id), Lit: id, Line: line, Col: col}
 	case l.ch == '$':
 		l.advance()
@@ -148,6 +157,9 @@ func (l *Lexer) scan() token.Token {
 				return mk(token.SPACESHIP, "<=>")
 			}
 			return mk(token.LE, "<=")
+		}
+		if l.peek() == '<' {
+			return l.readHeredoc(line, col) // <<TAG, <<'TAG', <<~TAG
 		}
 		l.advance()
 		return mk(token.LT, "<")
@@ -287,16 +299,212 @@ func (l *Lexer) skipTrivia() bool {
 	}
 }
 
+// readHeredoc reads a heredoc introduced by <<. Forms: <<TAG and <<"TAG"
+// interpolate (like qq/"..."); <<'TAG' is literal; a leading ~ (<<~TAG) strips the
+// common leading indentation of the body. The <<TAG must be the last thing on its
+// line; the body runs on the following lines up to a line equal to TAG (TAG may be
+// indented for <<~). Each body line carries a trailing newline (so a non-empty body
+// ends in "\n"); a body with no lines is "" (matching Perl/Ruby). The result is a
+// STRING (the parser interpolates it) or a RAWSTR.
+func (l *Lexer) readHeredoc(line, col int) token.Token {
+	bad := func(msg string) token.Token {
+		return token.Token{Kind: token.ILLEGAL, Lit: msg, Line: line, Col: col}
+	}
+	l.advance() // first '<'
+	l.advance() // second '<'
+	dedent := false
+	if l.ch == '~' {
+		dedent = true
+		l.advance()
+	}
+	raw := false
+	var tag string
+	switch {
+	case l.ch == '"':
+		l.advance()
+		tag = l.readUntilByte('"')
+		if l.ch != '"' {
+			return bad("unterminated heredoc tag")
+		}
+		l.advance()
+	case l.ch == '\'':
+		l.advance()
+		tag = l.readUntilByte('\'')
+		if l.ch != '\'' {
+			return bad("unterminated heredoc tag")
+		}
+		l.advance()
+		raw = true
+	case isLetter(l.ch):
+		tag = l.readIdent()
+	default:
+		return bad("expected a heredoc tag after <<")
+	}
+	if tag == "" {
+		return bad("empty heredoc tag")
+	}
+	// The opener must be the last thing on its line.
+	for l.ch == ' ' || l.ch == '\t' || l.ch == '\r' {
+		l.advance()
+	}
+	if l.ch != '\n' && l.ch != 0 {
+		return bad("heredoc <<" + tag + " must be the last thing on its line")
+	}
+	if l.ch == '\n' {
+		l.advance() // first body line
+	}
+	var lines []string
+	terminated := false
+	for l.ch != 0 {
+		text := l.readLineRaw() // leaves l.ch at the '\n' (or 0)
+		match := text
+		if dedent {
+			match = strings.TrimLeft(text, " \t")
+		}
+		if match == tag {
+			terminated = true // leave l.ch at the terminator's '\n' -> next scan emits NEWLINE
+			break
+		}
+		lines = append(lines, text)
+		if l.ch == '\n' {
+			l.advance()
+		}
+	}
+	if !terminated {
+		return bad("unterminated heredoc <<" + tag)
+	}
+	body := assembleHeredoc(lines, dedent)
+	if raw {
+		return token.Token{Kind: token.RAWSTR, Lit: body, Line: line, Col: col}
+	}
+	return token.Token{Kind: token.STRING, Lit: body, Line: line, Col: col}
+}
+
+// readUntilByte reads up to (not including) end or a newline/EOF.
+func (l *Lexer) readUntilByte(end byte) string {
+	var b strings.Builder
+	for l.ch != 0 && l.ch != end && l.ch != '\n' {
+		b.WriteByte(l.ch)
+		l.advance()
+	}
+	return b.String()
+}
+
+// readLineRaw reads to (not including) the next newline or EOF, dropping a trailing
+// carriage return so CRLF sources match heredoc terminators. l.ch is left at '\n'/0.
+func (l *Lexer) readLineRaw() string {
+	var b strings.Builder
+	for l.ch != 0 && l.ch != '\n' {
+		b.WriteByte(l.ch)
+		l.advance()
+	}
+	return strings.TrimRight(b.String(), "\r")
+}
+
+// assembleHeredoc joins body lines, each terminated by a newline (so a non-empty
+// body ends in "\n"; no body lines yields ""). For <<~ it strips the smallest
+// leading indentation shared by the non-blank lines.
+func assembleHeredoc(lines []string, dedent bool) string {
+	if dedent {
+		indent := -1
+		for _, ln := range lines {
+			t := strings.TrimLeft(ln, " \t")
+			if t == "" {
+				continue // blank lines don't constrain the indent
+			}
+			if lead := len(ln) - len(t); indent < 0 || lead < indent {
+				indent = lead
+			}
+		}
+		if indent > 0 {
+			for i, ln := range lines {
+				if len(ln) >= indent {
+					lines[i] = ln[indent:]
+				} else {
+					lines[i] = strings.TrimLeft(ln, " \t")
+				}
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 // terminates reports whether a token of kind k can end a statement, and thus
 // whether a following newline should be turned into a NEWLINE terminator.
 func terminates(k token.Kind) bool {
 	switch k {
-	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING,
+	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING, token.RAWSTR, token.QW,
 		token.TRUE, token.FALSE, token.RETURN, token.BREAK, token.NEXT,
 		token.RPAREN, token.RBRACE, token.RBRACKET, token.QUESTION:
 		return true
 	}
 	return false
+}
+
+// isQuoteOp reports whether id is a q/qq/qw quote operator keyword.
+func isQuoteOp(id string) bool { return id == "q" || id == "qq" || id == "qw" }
+
+// quoteOpener reports whether c can open a quote body and returns the matching
+// closing delimiter (the same char for non-paired delimiters).
+func quoteOpener(c byte) (close byte, ok bool) {
+	switch c {
+	case '(':
+		return ')', true
+	case '[':
+		return ']', true
+	case '{':
+		return '}', true
+	case '/':
+		return '/', true
+	case '|':
+		return '|', true
+	}
+	return 0, false
+}
+
+// readQuoteLike reads a q/qq/qw body delimited by the char at l.ch. Paired
+// delimiters ( [ { nest; same-char delimiters / | run to the next occurrence. The
+// body is taken literally (no backslash escaping of the delimiter) — choose a
+// delimiter the content avoids, or use a nesting paired one. qq bodies are
+// interpolated by the parser like "..."; q is literal; qw is split into words.
+//
+// Nesting counts raw delimiter bytes only; it is NOT aware of strings or ${...}
+// inside a qq body, so a closing brace inside an interpolation (qq{ ${ "}" } })
+// needs a non-brace delimiter (qq[ ${ "}" } ] works).
+func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
+	open := l.ch
+	closeCh, _ := quoteOpener(open) // caller verified it opens
+	paired := open != closeCh
+	l.advance() // past the opener
+	var b strings.Builder
+	depth := 1
+	for l.ch != 0 {
+		if paired && l.ch == open {
+			depth++
+		} else if l.ch == closeCh {
+			if depth--; depth == 0 {
+				break
+			}
+		}
+		b.WriteByte(l.ch)
+		l.advance()
+	}
+	if l.ch == 0 {
+		return token.Token{Kind: token.ILLEGAL, Lit: "unterminated " + id + "// quote", Line: line, Col: col}
+	}
+	l.advance() // past the closer
+	content := b.String()
+	switch id {
+	case "qw":
+		return token.Token{Kind: token.QW, Lit: content, Line: line, Col: col}
+	case "q":
+		return token.Token{Kind: token.RAWSTR, Lit: content, Line: line, Col: col}
+	default: // qq
+		return token.Token{Kind: token.STRING, Lit: content, Line: line, Col: col}
+	}
 }
 
 func (l *Lexer) readIdent() string {

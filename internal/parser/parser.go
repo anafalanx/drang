@@ -568,6 +568,18 @@ func (p *Parser) parsePrefix() ast.Expr {
 		raw := p.tok.Lit
 		p.next()
 		return p.interpolate(raw, pos)
+	case token.RAWSTR:
+		s := p.tok.Lit
+		p.next()
+		return &ast.StringLit{Pos: pos, Value: s} // q{...}: literal, no interpolation
+	case token.QW:
+		words := strings.Fields(p.tok.Lit)
+		p.next()
+		elems := make([]ast.Expr, len(words))
+		for i, w := range words {
+			elems[i] = &ast.StringLit{Pos: pos, Value: w}
+		}
+		return &ast.ArrayLit{Pos: pos, Elems: elems}
 	case token.TRUE:
 		p.next()
 		return &ast.BoolLit{Pos: pos, Value: true}
