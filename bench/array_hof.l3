@@ -1,0 +1,4 @@
+$a := []
+for $i in 1..500000 { push($a, $i) }
+$r := reduce(filter(map($a, |$x| $x * 2), |$x| $x % 3 == 0), 0, |$acc, $x| $acc + $x)
+say($r)

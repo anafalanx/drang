@@ -1,0 +1,8 @@
+n = 200000
+a = []
+seed = 12345
+for i in range(n):
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    a.append(seed)
+s = sorted(a)
+print(s[0] + s[n - 1])

@@ -1,0 +1,8 @@
+$line := "alpha,beta,gamma,delta,epsilon,zeta"
+$total := 0
+for $i in 1..100000 {
+  $parts := split($line, ",")
+  $joined := join(map($parts, |$p| upper($p)), "-")
+  $total = $total + len($joined)
+}
+say($total)

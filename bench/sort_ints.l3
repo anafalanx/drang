@@ -1,0 +1,9 @@
+$n := 200000
+$a := []
+$seed := 12345
+for $i in 1..$n {
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  push($a, $seed)
+}
+$sorted := sort($a)
+say($sorted[0] + $sorted[$n - 1])

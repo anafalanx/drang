@@ -1,0 +1,25 @@
+lang3 : C:\zmal\_lang3\lang3.exe
+python: C:\zmal\r\python\cpython-3.14.6-windows-x86_64-none\python.exe
+repeat=3 (min wall-clock ms, lower=faster), timeout=300s
+startup baseline: lang3 17.2 ms | python 44.9 ms
+
+benchmark        lang3 ms  python ms   ratio  status
+----------------------------------------------------------
+fib                1060.7      225.8    4.7x  ok
+loop_sum           2352.0      373.8    6.3x  ok
+sieve              2713.7      411.6    6.6x  ok
+string_join         192.6       99.6    1.9x  ok
+array_hof           691.0      199.4    3.5x  ok
+wordcount           398.8       93.5    4.3x  ok
+sort_ints           713.6      193.8    3.7x  ok
+sort_records        532.0      198.8    2.7x  ok
+regex_count         317.4      219.5    1.4x  ok
+nested_loop        3689.6      612.0    6.0x  ok
+closures            264.0      165.3    1.6x  ok
+collatz            7237.9     1563.9    4.6x  ok
+dict_lookup         435.4      271.7    1.6x  ok
+str_ops             408.6      164.6    2.5x  ok
+tak                 639.8      138.8    4.6x  ok
+
+15/15 matched.  lang3 is this many times Python's wall-clock:
+  min 1.4x   median 3.7x   geomean 3.3x   max 6.6x

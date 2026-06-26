@@ -1,0 +1,11 @@
+$words := qw(apple banana cherry date apple fig banana apple grape cherry)
+$counts := {}
+$total := 200000
+for $i in 0..($total - 1) {
+  $w := $words[$i % len($words)]
+  if has($counts, $w) { $counts[$w] = $counts[$w] + 1 }
+  else { $counts[$w] = 1 }
+}
+$sum := 0
+for $k, $v in $counts { $sum = $sum + $v }
+say(len($counts), $sum)

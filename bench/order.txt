@@ -1,0 +1,15 @@
+fib
+loop_sum
+sieve
+string_join
+array_hof
+wordcount
+sort_ints
+sort_records
+regex_count
+nested_loop
+closures
+collatz
+dict_lookup
+str_ops
+tak

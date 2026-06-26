@@ -1,0 +1,11 @@
+$n := 100000
+$m := {}
+for $i in 1..$n { $m["k" ~ $i] = $i }
+$sum := 0
+$seed := 7
+for $q in 1..$n {
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  $key := "k" ~ (($seed % $n) + 1)
+  if has($m, $key) { $sum = $sum + $m[$key] }
+}
+say($sum)
