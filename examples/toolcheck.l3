@@ -1,0 +1,74 @@
+# toolcheck.l3 — a lang3 port of _els/tools/toolcheck.tcl (shallow check).
+# Probes the project-local .toolchain for the components els needs, reporting
+# each one's presence + version. Exits non-zero if a CORE piece is missing/broken.
+#   run:  lang3 toolcheck.l3 [project-root]
+
+$root ::= $ARGV[0] // "C:/zmal/_els"
+$tc ::= join($root, ".toolchain")
+
+# Each component: where it lives, the probe path segments under it, whether it's
+# core, the wanted version ("" = any), and how to read its version.
+$components ::= [
+  {name: "Tcl/Tk 9 (shared)",     loc: "tc", probe: ["tcl9", "bin", "tclsh90.exe"],              kind: "core", want: "9.0.3", ver: "tcl"},
+  {name: "Tk 9 wish",             loc: "tc", probe: ["tcl9", "bin", "wish90.exe"],               kind: "core", want: "",      ver: ""},
+  {name: "gcc / C23 (UCRT64)",    loc: "tc", probe: ["msys64", "ucrt64", "bin", "gcc.exe"],      kind: "core", want: "",      ver: "gcc"},
+  {name: "windres",               loc: "tc", probe: ["msys64", "ucrt64", "bin", "windres.exe"],  kind: "core", want: "",      ver: ""},
+  {name: "Tcl/Tk 9 headers",      loc: "tc", probe: ["tcl9", "include", "tcl.h"],                kind: "core", want: "",      ver: ""},
+  {name: "twapi",                 loc: "tc", probe: ["twapi-dl", "twapi-5.2.0", "pkgIndex.tcl"], kind: "core", want: "",      ver: "twapi"},
+  {name: "Tcl/Tk + C-API manual", loc: "tc", probe: ["manual", "INDEX.md"],                      kind: "opt",  want: "",      ver: ""},
+]
+
+fn base_for($c) {
+  if $c.loc == "root" { return $root }
+  $tc
+}
+
+fn probe_path($c) {
+  reduce($c.probe, base_for($c), |$acc, $seg| join($acc, $seg))
+}
+
+fn version_of($c) {
+  if $c.ver == "tcl" { return capture(probe_path($c), {stdin: "puts [info patchlevel]"}) // "ERROR" }
+  if $c.ver == "gcc" { return capture(probe_path($c), "-dumpversion") // "ERROR" }
+  if $c.ver == "twapi" {
+    $txt := read_file(probe_path($c)) // ""
+    return (match($txt, "package ifneeded\s+twapi\s+(\S+)") // ["", ""])[1]
+  }
+  ""
+}
+
+fn status_of($c) {
+  if !exists(probe_path($c)) { return {state: "missing", note: ""} }
+  $v := version_of($c)
+  if starts_with($v, "ERROR") { return {state: "broken", note: $v} }
+  if $c.want != "" and $v != $c.want {
+    return {state: "update", note: format("have {}, want {}", $v, $c.want)}
+  }
+  {state: "ok", note: $v}
+}
+
+fn pad($s, $n) {
+  if len($s) >= $n { return $s }
+  $s ~ repeat(" ", $n - len($s))
+}
+
+fn check() {
+  say("")
+  say(format("els toolcheck  —  .toolchain at {}", $tc))
+  say("")
+  say("  " ~ pad("COMPONENT", 28) ~ pad("STATUS", 9) ~ "VERSION / NOTE")
+  say("  " ~ repeat("-", 60))
+  $rows := $components |> map(|$c| ({comp: $c, st: status_of($c)}))
+  $rows |> each(|$r| {
+    say("  " ~ pad($r.comp.name, 28) ~ pad(upper($r.st.state), 9) ~ $r.st.note)
+  })
+  $issues := $rows |> count(|$r| $r.comp.kind == "core" and $r.st.state != "ok")
+  say("")
+  if $issues > 0 {
+    say(format("  {} core issue(s) — restore the project-local .toolchain.", $issues))
+    return fail(format("toolcheck: {} core issue(s)", $issues))
+  }
+  say("  all core components present and current.")
+}
+
+check()?
