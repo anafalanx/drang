@@ -103,7 +103,9 @@ func builtinEndsWith(args []value.Value) (value.Value, error) {
 }
 
 // builtinFormat substitutes each {} placeholder with the next argument (rendered
-// like say); {{ and }} are literal braces. Missing args render as a literal {}.
+// like say); {{ and }} are literal braces. The placeholder count must equal the
+// argument count, otherwise it returns a catchable Err (so a printf-style
+// format("%s", x), which has no {}, fails loudly instead of dropping the arg).
 func builtinFormat(args []value.Value) (value.Value, error) {
 	if len(args) < 1 {
 		return value.MakeNil(), fmt.Errorf("format expects at least a format string")
@@ -113,7 +115,7 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 	}
 	f := args[0].AsStr()
 	rest := args[1:]
-	ai := 0
+	ai, holes := 0, 0
 	var b strings.Builder
 	for i := 0; i < len(f); i++ {
 		switch c := f[i]; c {
@@ -122,10 +124,9 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 				b.WriteByte('{')
 				i++
 			} else if i+1 < len(f) && f[i+1] == '}' {
+				holes++
 				if ai < len(rest) {
 					b.WriteString(rest[ai].Display())
-				} else {
-					b.WriteString("{}")
 				}
 				ai++
 				i++
@@ -142,6 +143,12 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 		default:
 			b.WriteByte(c)
 		}
+	}
+	// Strict arity: a {} placeholder per argument and vice versa. Catches the common
+	// printf habit (format("%s", x) has no {} placeholders) and over/under-supply,
+	// as a catchable Err rather than silently dropping or emitting literal "{}".
+	if holes != len(rest) {
+		return value.MakeErr(fmt.Sprintf("format: template has %d %q placeholder(s) but got %d argument(s)", holes, "{}", len(rest)), 1), nil
 	}
 	return value.MakeStr(b.String()), nil
 }
