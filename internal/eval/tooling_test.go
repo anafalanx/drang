@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/anafalanx/drang/internal/parser"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 func TestWarnGoesToStderr(t *testing.T) {
@@ -82,6 +83,51 @@ func TestExitInPmap(t *testing.T) {
 	}
 	if code, ok := ExitRequested(RunProgramVM(prog, NewEnv())); !ok || code != 9 {
 		t.Errorf("exit in pmap: code=%d ok=%v, want 9 true", code, ok)
+	}
+}
+
+// TestParseArgs locks in the flat-map parsing; to_json gives a deterministic,
+// order-preserving snapshot of the result.
+func TestParseArgs(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"flags", `say(to_json(parse_args(["--verbose", "--debug"])))`, "{\"verbose\":true,\"debug\":true,\"_\":[]}\n"},
+		{"eq-value", `say(to_json(parse_args(["--out=r.txt"])))`, "{\"out\":\"r.txt\",\"_\":[]}\n"},
+		{"space-value-with-opts", `say(to_json(parse_args(["--out", "r.txt"], ["out"])))`, "{\"out\":\"r.txt\",\"_\":[]}\n"},
+		{"space-value-without-opts", `say(to_json(parse_args(["--out", "r.txt"])))`, "{\"out\":true,\"_\":[\"r.txt\"]}\n"},
+		{"short", `say(to_json(parse_args(["-v", "-n=2"])))`, "{\"v\":true,\"n\":\"2\",\"_\":[]}\n"},
+		{"terminator", `say(to_json(parse_args(["a", "--", "--b", "-c"])))`, "{\"_\":[\"a\",\"--b\",\"-c\"]}\n"},
+		{"lone-dash", `say(to_json(parse_args(["-"])))`, "{\"_\":[\"-\"]}\n"},
+		{"empty", `say(to_json(parse_args([])))`, "{\"_\":[]}\n"},
+		{"mixed", `say(to_json(parse_args(["--verbose", "--out=r", "in1", "in2"])))`, "{\"verbose\":true,\"out\":\"r\",\"_\":[\"in1\",\"in2\"]}\n"},
+		{"value-opt-at-end", `say(to_json(parse_args(["--out"], ["out"])))`, "{\"out\":\"\",\"_\":[]}\n"},
+
+		// ergonomic access of the flat result
+		{"field-access", `say(parse_args(["--verbose"]).verbose)`, "true\n"},
+		{"positional-index", `say(parse_args(["a", "b"])["_"][1])`, "b\n"},
+
+		// "_" is reserved for positionals: a literal --_ is preserved, never dropped
+		{"reserved-underscore-eq", `say(to_json(parse_args(["--_=hello", "pos"])))`, "{\"_\":[\"--_=hello\",\"pos\"]}\n"},
+		{"reserved-underscore-flag", `say(to_json(parse_args(["--_"])))`, "{\"_\":[\"--_\"]}\n"},
+		// a value-option never swallows the -- terminator, but does take a lone - or another option
+		{"value-opt-stops-at-terminator", `say(to_json(parse_args(["--out", "--", "p"], ["out"])))`, "{\"out\":\"\",\"_\":[\"p\"]}\n"},
+		{"value-opt-takes-lone-dash", `say(to_json(parse_args(["--out", "-"], ["out"])))`, "{\"out\":\"-\",\"_\":[]}\n"},
+		{"value-opt-permissive-next-option", `say(to_json(parse_args(["--out", "--verbose"], ["out"])))`, "{\"out\":\"--verbose\",\"_\":[]}\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := run(t, c.src); got != c.want {
+				t.Errorf("%s\n got %q\nwant %q", c.src, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseArgsRejectsNonString verifies argv elements must be strings (so a
+// negative number can't be coerced into a phantom flag).
+func TestParseArgsRejectsNonString(t *testing.T) {
+	argv := value.MakeArray([]value.Value{value.MakeInt(-5)})
+	if _, err := builtinParseArgs([]value.Value{argv}); err == nil {
+		t.Error("parse_args with a non-string argv element should abort")
 	}
 }
 

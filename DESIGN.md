@@ -1639,3 +1639,28 @@ Verified by `TestWarn`/`TestExit`/`TestExitWalker`/`TestExitInPmap` (codes,
 clamping, unwinding past functions/loops/`//`/`?` on both backends, stderr routing,
 and an exit unwinding out of a `pmap` worker), plus live checks (exit winning 20/20
 against a competing `fail` whenever its callback runs); full `-race` suite green.
+
+## 41. Build progress (2026-06-27) — CLI tooling: argument parsing (`parse_args`)
+
+`parse_args(argv, value_opts?)` parses an argv array into a FLAT map (chosen over a
+nested `{opts, args}` shape): `--flag`/`-f` → `true`, `--key=val` (or `--key val`
+when `key` is named in the optional value_opts array) → a string, and positionals —
+plus everything after a `--` terminator and a lone `-` — collect under the `"_"`
+key. Permissive: unknown options aren't errors and duplicates keep the last value.
+Example: `parse_args($ARGV, ["out"])` on `--verbose --out=build a.dr` →
+`{verbose: true, out: "build", "_": ["a.dr"]}`. Scope was kept to this one helper
+(table formatting deferred) to avoid bloating the language's center; `--json` output
+needs no new code — it's the convention `say(to_json(result))`.
+
+An adversarial review found three real issues, all fixed: (HIGH) an option literally
+named `_` collided with the positionals key — `--_ x` could make tokens vanish; now
+`"_"` is reserved and a literal `--_` is kept as a positional. (MEDIUM) non-string
+argv elements were `Display`-coerced, so `-5` became a phantom flag `5`; argv
+elements are now required to be strings (abort otherwise), matching the value_opts
+check. (MEDIUM) a value-option swallowed the `--` terminator as its value; it now
+stops at `--` (value missing) while still taking a lone `-` (stdin) or, permissively,
+a following option.
+
+Verified by `TestParseArgs` (flags, `=`/space values, short, terminator, lone dash,
+empty, mixed, reserved `_`, value-opt edges) and `TestParseArgsRejectsNonString`,
+plus a live tool front-end; full `-race` suite green.
