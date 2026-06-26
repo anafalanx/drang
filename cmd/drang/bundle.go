@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 
@@ -147,12 +148,50 @@ func buildStandalone(args []string) {
 	if real, e := filepath.EvalSymlinks(exe); e == nil {
 		exe = real
 	}
+	// Never clobber the source or the running interpreter — an easy, irrecoverable
+	// mistake (e.g. an `-o` that points back at the script).
+	if sameFile(outPath, srcPath) {
+		fmt.Fprintf(os.Stderr, "drang build: refusing to overwrite the source file %s — choose a different -o\n", srcPath)
+		os.Exit(1)
+	}
+	if sameFile(outPath, exe) {
+		fmt.Fprintln(os.Stderr, "drang build: refusing to overwrite the running drang binary — choose a different -o")
+		os.Exit(1)
+	}
 	n, err := writeStandalone(exe, outPath, src)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang build:", err)
 		os.Exit(1)
 	}
+	signIfDarwin(outPath)
 	fmt.Printf("built %s (%d bytes) from %s\n", outPath, n, srcPath)
+}
+
+// sameFile reports whether a and b denote the same file. It compares cleaned
+// absolute paths and, when both exist, falls back to os.SameFile (which also
+// catches symlinks, hardlinks, and case-insensitive filesystems).
+func sameFile(a, b string) bool {
+	if aa, err := filepath.Abs(a); err == nil {
+		if ab, err := filepath.Abs(b); err == nil && aa == ab {
+			return true
+		}
+	}
+	fa, ea := os.Stat(a)
+	fb, eb := os.Stat(b)
+	return ea == nil && eb == nil && os.SameFile(fa, fb)
+}
+
+// signIfDarwin best-effort ad-hoc-signs the output on macOS, where appending the
+// payload invalidates the Mach-O signature and an unsigned binary is killed on
+// Apple Silicon. On failure it prints the manual command rather than failing the
+// build. A no-op on other platforms.
+func signIfDarwin(outPath string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	if out, err := exec.Command("codesign", "--force", "--sign", "-", outPath).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "drang build: warning: could not ad-hoc sign %s (%v) — run: codesign -s - %q\n%s", outPath, err, outPath, out)
+	}
 }
 
 func defaultOutput(srcPath string) string {
@@ -167,26 +206,48 @@ func defaultOutput(srcPath string) string {
 	return base
 }
 
-// writeStandalone copies the runtime binary to outPath, then appends the packed
-// payload (compressed source + trailer). Returns the total output size.
+// writeStandalone copies the runtime binary, appends the packed payload
+// (compressed source + trailer), and atomically moves the result into place.
+// It writes to a temp file in the destination directory and renames on success,
+// so a failed or partial build never truncates an existing file. Returns the
+// total output size.
 func writeStandalone(runtimeExe, outPath string, src []byte) (int64, error) {
 	in, err := os.Open(runtimeExe)
 	if err != nil {
 		return 0, err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+
+	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".drang-build-*")
 	if err != nil {
 		return 0, err
 	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		tmp.Close()
+		if !committed {
+			os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := io.Copy(tmp, in); err != nil {
 		return 0, err
 	}
-	if _, err := out.Write(packPayload(src)); err != nil {
+	if _, err := tmp.Write(packPayload(src)); err != nil {
 		return 0, err
 	}
-	if fi, err := out.Stat(); err == nil {
+	if err := tmp.Close(); err != nil {
+		return 0, err
+	}
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmpName, outPath); err != nil {
+		return 0, err
+	}
+	committed = true
+	if fi, err := os.Stat(outPath); err == nil {
 		return fi.Size(), nil
 	}
 	return 0, nil

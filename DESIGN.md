@@ -1547,15 +1547,23 @@ Choices, against the `lana` prototype this was modeled on:
   that doesn't parse, so a built exe is guaranteed to load.
 - A present-but-corrupt or incompatible trailer is a hard error, never a silent
   fall-through to CLI mode.
+- Safe writes: the build refuses to overwrite the source script or the running
+  interpreter, and writes to a temp file renamed into place, so a failed or
+  mis-targeted build never truncates an existing file. (An adversarial review
+  caught the original truncate-before-copy: `build x.dr -o x.dr` destroyed the
+  source; on POSIX, `-o <the running drang>` would have corrupted the install.)
 
 Cross-platform: trailing bytes after the image are ignored by the Windows and
 Linux loaders, so standalones run there natively. macOS — especially Apple
 Silicon — requires a valid (even ad-hoc) signature that appending invalidates, so
-a macOS standalone needs `codesign -s - app` afterward, on a Mac; documented as a
-known limitation. `drang build` produces an executable for the OS it runs on (it
-copies the running binary).
+on darwin `drang build` best-effort ad-hoc-signs the output
+(`codesign --force --sign -`) and, if that fails, prints the exact command to run.
+`drang build` produces an executable for the OS it runs on (it copies the running
+binary).
 
-Verified by a payload round-trip unit test (`TestStandalonePayloadRoundTrip`:
-valid / plain / corrupt / version-mismatch) and end-to-end (build → run with
-args, `$ARGV`, exit-code propagation, build-time rejection of invalid scripts);
-`vet` + full suite green.
+Verified by payload round-trip and atomic-write unit tests
+(`TestStandalonePayloadRoundTrip`: valid / plain / corrupt / version-mismatch;
+`TestWriteStandaloneRoundTrip`, `TestSameFile`) and end-to-end (build → run with
+args, `$ARGV`, exit-code propagation, build-time rejection of invalid scripts,
+same-file refusal with the source intact, pmap/subprocess inside a standalone);
+`vet` + full `-race` suite green.

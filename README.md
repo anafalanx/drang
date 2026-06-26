@@ -50,10 +50,10 @@ drang build app.dr -o app   # -> ./app  (app.exe on Windows)
 ./app one two               # runs the embedded program; args become $ARGV
 ```
 
-`drang build` validates that the script parses before emitting the binary, and produces an executable
-for the platform it runs on. Windows and Linux work natively; on macOS the result must be re-signed
-once after building (`codesign -s - app`, on a Mac), because appending the payload invalidates the
-binary's code signature.
+`drang build` validates that the script parses, refuses to overwrite the source or the running
+interpreter, and writes atomically. It produces an executable for the platform it runs on: Windows and
+Linux work natively, and on macOS the build best-effort ad-hoc re-signs the result (appending the
+payload invalidates the Mach-O signature), printing the one `codesign -s -` command to run if it can't.
 
 ## Documentation
 
