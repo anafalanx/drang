@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // evalDispatch implements the argv-driven task runner. It is exit-terminal: on
@@ -36,7 +36,7 @@ func dispatchResolve(tasks *value.OrderedMap, argv []string) (int, error) {
 	name := argv[0]
 	taskVal, ok := tasks.Get(value.MakeStr(name))
 	if !ok {
-		fmt.Fprintf(stderr, "lang3: unknown task %q\n", name)
+		fmt.Fprintf(stderr, "drang: unknown task %q\n", name)
 		listTasks(stderr, tasks) // part of the error diagnostic, not output
 		return 2, nil
 	}
@@ -59,11 +59,11 @@ func dispatchResolve(tasks *value.OrderedMap, argv []string) (int, error) {
 	}
 	result, err := callFunction(fn, callArgs)
 	if err != nil {
-		fmt.Fprintln(stderr, "lang3:", err)
+		fmt.Fprintln(stderr, "drang:", err)
 		return ExitCode(err), nil
 	}
 	if result.IsErr() {
-		fmt.Fprintln(stderr, "lang3:", result.ErrMsg())
+		fmt.Fprintln(stderr, "drang:", result.ErrMsg())
 		return clampCode(result.ErrCode()), nil
 	}
 	return 0, nil

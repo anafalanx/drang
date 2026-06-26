@@ -1,5 +1,5 @@
-module github.com/anafalanx/lang3
+module github.com/anafalanx/drang
 
 go 1.26
 
-// lang3 uses the Go standard library only — no external dependencies.
+// drang uses the Go standard library only — no external dependencies.

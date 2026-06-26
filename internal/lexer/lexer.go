@@ -1,4 +1,4 @@
-// Package lexer turns lang3 source text into a token stream.
+// Package lexer turns drang source text into a token stream.
 //
 // It performs Go-style automatic terminator insertion: a newline yields a
 // NEWLINE token only when the previous token could end a statement (a literal,
@@ -15,7 +15,7 @@ package lexer
 import (
 	"strings"
 
-	"github.com/anafalanx/lang3/internal/token"
+	"github.com/anafalanx/drang/internal/token"
 )
 
 // Lexer scans source text one token at a time.

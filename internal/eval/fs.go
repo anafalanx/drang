@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // oneString validates a single string argument (wrong arity/type aborts).

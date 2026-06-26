@@ -1,6 +1,6 @@
 package eval
 
-import "github.com/anafalanx/lang3/internal/ast"
+import "github.com/anafalanx/drang/internal/ast"
 
 // registerEligible reports whether a function body can use the fast register-
 // resident-locals mode: none of its params/locals are captured by a nested

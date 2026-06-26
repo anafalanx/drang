@@ -1,4 +1,4 @@
-// Package eval is lang3's tree-walking evaluator.
+// Package eval is drang's tree-walking evaluator.
 //
 // Implemented: programs and brace blocks (lexically scoped, shadowing allowed),
 // declarations ($x := e mutable, $x ::= e constant) and assignment, if/else,
@@ -24,9 +24,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/token"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/token"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // binding is a value plus whether it is a constant.

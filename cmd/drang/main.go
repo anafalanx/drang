@@ -1,6 +1,6 @@
-// Command lang3 is the lang3 interpreter CLI.
+// Command drang is the drang interpreter CLI.
 //
-// Usage: lang3 [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]
+// Usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]
 // Leading flags are consumed up to the first non-flag token (the program);
 // everything after the program is exposed to the script as $ARGV. By default it
 // runs the program; --ast prints the parsed AST and --tokens the token stream.
@@ -14,11 +14,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/anafalanx/lang3/internal/eval"
-	"github.com/anafalanx/lang3/internal/lexer"
-	"github.com/anafalanx/lang3/internal/parser"
-	"github.com/anafalanx/lang3/internal/token"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/eval"
+	"github.com/anafalanx/drang/internal/lexer"
+	"github.com/anafalanx/drang/internal/parser"
+	"github.com/anafalanx/drang/internal/token"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // version is the release string. Declared as a var so a build can stamp it via
@@ -44,7 +44,7 @@ loop:
 			repl()
 			os.Exit(0)
 		case "--version", "-V":
-			fmt.Println("lang3", version)
+			fmt.Println("drang", version)
 			os.Exit(0)
 		case "--help", "-h":
 			help()
@@ -68,7 +68,7 @@ loop:
 	case len(rest) >= 1:
 		b, err := os.ReadFile(rest[0])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "lang3:", err)
+			fmt.Fprintln(os.Stderr, "drang:", err)
 			os.Exit(1)
 		}
 		src, origin = string(b), rest[0]
@@ -76,7 +76,7 @@ loop:
 	default:
 		// No program given. An interactive terminal gets the REPL (this is also what
 		// double-clicking the executable does); piped/redirected stdin is read and run
-		// as the program, so `cat foo.l3 | lang3` works.
+		// as the program, so `cat foo.l3 | drang` works.
 		if interactive() {
 			if mode != "run" {
 				usage()
@@ -86,7 +86,7 @@ loop:
 		}
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "lang3:", err)
+			fmt.Fprintln(os.Stderr, "drang:", err)
 			os.Exit(1)
 		}
 		src, origin = string(b), "<stdin>"
@@ -103,18 +103,18 @@ loop:
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lang3 [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]")
-	fmt.Fprintln(os.Stderr, "try 'lang3 --help' for more information")
+	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.l3>) [args...]")
+	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
 
 // help prints full usage to stdout (for an explicit --help, which exits 0).
 func help() {
-	fmt.Printf(`lang3 %s — a small, parallel, Perl-inspired scripting language
+	fmt.Printf(`drang %s — a small, parallel, Perl-inspired scripting language
 
 Usage:
-  lang3 [options] <file.l3> [args...]
-  lang3 [options] -e '<source>' [args...]
+  drang [options] <file.l3> [args...]
+  drang [options] -e '<source>' [args...]
 
 Options:
   -e <source>    run the given source string instead of a file
@@ -126,7 +126,7 @@ Options:
   --version, -V  print the version and exit
   --help, -h     print this help and exit
 
-With no program on an interactive terminal, lang3 starts the REPL; with piped
+With no program on an interactive terminal, drang starts the REPL; with piped
 input it runs stdin as the program. Arguments after the program are exposed to
 the script as $ARGV; the process environment is available as the $ENV map.
 `, version)
@@ -169,7 +169,7 @@ func runProgram(src, origin string, argv []string) {
 // reportRuntimeError prints a runtime error, with the offending source line and a
 // caret under the column when the error carries a position.
 func reportRuntimeError(src, origin string, err error) {
-	fmt.Fprintln(os.Stderr, "lang3:", err)
+	fmt.Fprintln(os.Stderr, "drang:", err)
 	line, col, ok := eval.ErrorPos(err)
 	if !ok {
 		return
@@ -195,7 +195,7 @@ func sourceLine(src string, line int) string {
 }
 
 // interactive reports whether stdin is a terminal (vs a pipe or file), which is
-// how we tell an interactive session (-> REPL) from `cat foo.l3 | lang3` (-> run).
+// how we tell an interactive session (-> REPL) from `cat foo.l3 | drang` (-> run).
 func interactive() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
@@ -214,7 +214,7 @@ func repl() { replLoop(os.Stdin, os.Stdout) }
 // are echoed. Prompts, results, and errors all go to out, so an interactive session
 // reads as one stream.
 func replLoop(in io.Reader, out io.Writer) {
-	fmt.Fprintf(out, "lang3 %s — type 'exit' (or Ctrl+D / Ctrl+Z) to quit\n", version)
+	fmt.Fprintf(out, "drang %s — type 'exit' (or Ctrl+D / Ctrl+Z) to quit\n", version)
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long lines
 	env := eval.NewREPLEnv()
@@ -224,7 +224,7 @@ func replLoop(in io.Reader, out io.Writer) {
 		if continued {
 			fmt.Fprint(out, "  ...> ")
 		} else {
-			fmt.Fprint(out, "lang3> ")
+			fmt.Fprint(out, "drang> ")
 		}
 		if !sc.Scan() {
 			fmt.Fprintln(out)

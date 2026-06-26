@@ -1,7 +1,7 @@
-# toolcheck.l3 — a lang3 port of _els/tools/toolcheck.tcl (shallow check).
+# toolcheck.l3 — a drang port of _els/tools/toolcheck.tcl (shallow check).
 # Probes the project-local .toolchain for the components els needs, reporting
 # each one's presence + version. Exits non-zero if a CORE piece is missing/broken.
-#   run:  lang3 toolcheck.l3 [project-root]
+#   run:  drang toolcheck.l3 [project-root]
 
 $root ::= $ARGV[0] // "C:/zmal/_els"
 $tc ::= join($root, ".toolchain")

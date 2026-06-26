@@ -3,9 +3,9 @@ package eval
 import (
 	"strconv"
 
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/token"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/token"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // compiler lowers an AST to a Proto. It is a single recursive pass: compileExpr

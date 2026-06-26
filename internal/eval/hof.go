@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // hofNames are the higher-order functions handled as evaluator special forms

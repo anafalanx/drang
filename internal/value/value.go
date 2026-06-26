@@ -1,4 +1,4 @@
-// Package value defines lang3's runtime value: a tagged, unboxed struct
+// Package value defines drang's runtime value: a tagged, unboxed struct
 // (no interface{} boxing of scalars, no NaN-boxing), as the design requires.
 //
 // v0 scalars: nil, bool, int64, float64, string, error. Heap-backed values
@@ -37,7 +37,7 @@ type Obj interface {
 	DeepCopy(visited map[Obj]Obj) Obj // copy-on-send hook (cycle-safe via visited)
 }
 
-// Value is a single lang3 runtime value, passed by value.
+// Value is a single drang runtime value, passed by value.
 type Value struct {
 	tag Tag
 	n   int64   // Int payload; Bool as 0/1; Err code

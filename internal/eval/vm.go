@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/anafalanx/lang3/internal/ast"
-	"github.com/anafalanx/lang3/internal/token"
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/token"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // regFrame wraps a register backing array (and a for-in iterator slice) so they

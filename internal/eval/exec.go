@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // execOpts holds the trailing {cwd, env, stdin, timeout} options for the process
@@ -118,10 +118,10 @@ func (p *Proc) Equal(o value.Obj) bool {
 }
 
 // builtinStart launches a command WITHOUT waiting — a detached background/GUI child
-// (the lang3 equivalent of `exec cmd &`). It returns a process handle for
+// (the drang equivalent of `exec cmd &`). It returns a process handle for
 // await/kill/pid, or a catchable Err (code 127) if the command cannot be started.
 // Stdio is detached (not wired to the terminal); a goroutine reaps the child and
-// records its exit status. Distinct from spawn, which runs a lang3 function.
+// records its exit status. Distinct from spawn, which runs a drang function.
 func builtinStart(args []value.Value) (value.Value, error) {
 	argv, opts, err := splitExecArgs("start", args)
 	if err != nil {

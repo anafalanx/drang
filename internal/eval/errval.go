@@ -3,7 +3,7 @@ package eval
 import (
 	"fmt"
 
-	"github.com/anafalanx/lang3/internal/value"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // Errors are first-class values; these builtins inspect one. They complete the

@@ -2,7 +2,7 @@
     python mandel.py seq      sequential
     python mandel.py threads  ThreadPoolExecutor (GIL-bound: ~no speedup for CPU work)
     python mandel.py mp       ProcessPoolExecutor (real parallelism, process overhead)
-Same arithmetic and constants as the lang3 versions, so the checksum matches.
+Same arithmetic and constants as the drang versions, so the checksum matches.
 """
 import sys
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
