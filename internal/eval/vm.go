@@ -166,7 +166,7 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			return
 		}
 		switch rerr.(type) {
-		case errSignal, returnSignal, *posError:
+		case errSignal, returnSignal, exitSignal, *posError:
 			return
 		}
 		if idx := ip - 1; idx >= 0 && idx < len(p.Positions) {

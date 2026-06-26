@@ -218,10 +218,18 @@ func evalSpawn(args []value.Value) (value.Value, error) {
 			}
 		}()
 		v, err := callFunction(worker, callArgs)
-		if err != nil {
-			t.res = value.MakeErr(err.Error(), 1)
-		} else {
+		if err == nil {
 			t.res = v
+		} else if code, ok := ExitRequested(err); ok {
+			// A detached task can't exit the whole process; surface the intent
+			// clearly (with the requested code) instead of the internal signal text.
+			ec := int64(code)
+			if ec == 0 {
+				ec = 1
+			}
+			t.res = value.MakeErr(fmt.Sprintf("exit(%d) inside a spawned task", code), ec)
+		} else {
+			t.res = value.MakeErr(err.Error(), 1)
 		}
 	}()
 	return value.MakeObj(value.Task, t), nil

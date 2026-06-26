@@ -2307,10 +2307,13 @@ evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 | Builtin | Signature | Description |
 |---|---|---|
 | `say` | `say(x...)` | Print all arguments space-separated, then a newline; returns nil. |
+| `warn` | `warn(x...)` | Like `say`, but to stderr — for diagnostics that shouldn't pollute stdout. |
 | `fail` | `fail(msg?)` | Make an Err value with message `msg` (default `"failed"`) and code 1. |
 | `is_err` | `is_err(x)` | True if `x` is an Err value. |
 | `err_code` | `err_code(x)` | The Err's code; 0 for a non-Err (so it reads as an exit code). |
 | `err_msg` | `err_msg(x)` | The Err's message; `""` for a non-Err. |
+| `exit` | `exit(code?)` | End the program with `code` (default 0, clamped 0–255), unwinding past functions, loops, `?`, and `//`. |
+| `die` | `die(x...)` | Print the message to stderr and exit with code 1 — the fatal-error convention for a tool. |
 
 ### Conversions
 
