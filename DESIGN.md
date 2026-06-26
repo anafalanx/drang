@@ -1664,3 +1664,45 @@ a following option.
 Verified by `TestParseArgs` (flags, `=`/space values, short, terminator, lone dash,
 empty, mixed, reserved `_`, value-opt edges) and `TestParseArgsRejectsNonString`,
 plus a live tool front-end; full `-race` suite green.
+
+## Roadmap — deferred (from real zmal use, 2026-06-27)
+
+A serious zmal-steering program written in drang surfaced this prioritized backlog.
+The quick wins are small, in-grain additions to existing families; the big items are
+the structural investments. Not yet started — captured here to act on later.
+
+### Quick wins (small, low-risk)
+
+- **`drang build -o`: create the output's parent directory** (or give a clearer
+  diagnostic). `drang build -o cache/x/zdr.exe` fails when `cache/x` does not exist
+  (`writeStandalone`'s `os.CreateTemp` fails). Fix: `os.MkdirAll(filepath.Dir(out), …)`
+  before writing.
+- **Standalone error locations should name the source, not the exe.** A built exe
+  reports `zdr.exe:line:col`; it should report `zdr.dr:line:col`. Embed the original
+  source basename in the payload (bump the sfx payload to v2, e.g. `[nameLen][name]
+  [source]` gzipped) and use it as the run origin instead of `standaloneOrigin()`'s
+  exe basename. Safe: a standalone always carries its matching runtime, so the
+  payload format never has to be cross-version compatible.
+- **`env(name, default?)` builtin — case-insensitive env lookup.** `$ENV["PATH"]` is
+  unreliable on Windows (it may be exposed as `Path`); the `$ENV` map is built from
+  `os.Environ()` with exact-case keys. `os.Getenv`/`os.LookupEnv` ARE case-insensitive
+  on Windows, so a thin `env()` over them fixes it (return the default/`nil` when unset).
+- **More path builtins:** `is_abs(p)`, `clean(p)`, `rel(base, p)`, `within(base, p)`,
+  `path_list_sep()` — thin `filepath` bindings (`IsAbs`/`Clean`/`Rel`, a no-`..`-escape
+  check for `within`, and `os.PathListSeparator`). Fit the existing path-helper family.
+- **`read_dir(path)`** → array of `{name, path, isdir}` (`os.ReadDir`; not-found → a
+  catchable Err). Resolver code wants this rather than `glob(join(root, "*"))`.
+- **`run`/`capture`/`pipe` `{arg0: "make"}` option** — present a different argv[0]
+  than the launched executable (needed for full `z` parity; Go can do this by setting
+  `cmd.Args[0]` after building the command).
+
+### Bigger investments
+
+- **Modules / imports** — the structural pain: the zmal program became one 801-line
+  file and wants to split into `path`, `env`, `manifest`, `resolve`, `builtins`. Needs
+  a real design pass that preserves the frozen-top-level-constants invariant that makes
+  `pmap` safe (no import-time mutation leaking across the parallelism boundary).
+- **`drang test`** — a native test runner: assertions, fixtures, and command-output /
+  exit-code checks (the golden comparisons were external to the language).
+- **`drang fmt`** — a canonical formatter; matters once scripts get large, and is
+  tractable since we own the parser/AST.
