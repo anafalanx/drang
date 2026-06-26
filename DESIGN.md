@@ -1525,3 +1525,37 @@ Why it fit the grain (the "stop if it fights the design" bar was never hit):
 
 Verified by walker-vs-VM parity cases, `TestRegexValue`, `-race`, the full suite,
 and edge checks (pmap concurrency, map-key rejection, interpolation, truthiness).
+
+## 38. Build progress (2026-06-26) — standalone executables (`drang build`)
+
+`drang build <script.dr> [-o out]` compiles a script into a self-contained
+executable. Mechanism: a self-hosting appended payload — drang copies its own
+binary, appends the gzip-compressed source, and writes a 20-byte trailer
+`[payloadLen u64][version u32][magic "DRANGsfx"]`. At startup drang inspects its
+own tail (`embeddedProgram`/`extractPayload`); a present trailer means standalone
+mode (run the embedded source, every arg → `$ARGV`), absent means the normal CLI.
+
+Choices, against the `lana` prototype this was modeled on:
+- One self-hosting binary (drang is both builder and runtime), not lana's three
+  tools (`lanac`/`bundler`/`lana-run`) with a hand-passed runtime path.
+- Embed source, not bytecode. drang has no `Proto` serializer, and one would also
+  have to serialize the AST for walker-fallback functions — leaky and version-
+  brittle. Parsing the embedded source costs well under a millisecond and startup
+  is dominated by process init anyway; source-embed is robust across versions and
+  far simpler. (A bytecode mode stays a future option behind the same trailer.)
+- Build-time validation: `drang build` parses first and refuses to build a script
+  that doesn't parse, so a built exe is guaranteed to load.
+- A present-but-corrupt or incompatible trailer is a hard error, never a silent
+  fall-through to CLI mode.
+
+Cross-platform: trailing bytes after the image are ignored by the Windows and
+Linux loaders, so standalones run there natively. macOS — especially Apple
+Silicon — requires a valid (even ad-hoc) signature that appending invalidates, so
+a macOS standalone needs `codesign -s - app` afterward, on a Mac; documented as a
+known limitation. `drang build` produces an executable for the OS it runs on (it
+copies the running binary).
+
+Verified by a payload round-trip unit test (`TestStandalonePayloadRoundTrip`:
+valid / plain / corrupt / version-mismatch) and end-to-end (build → run with
+args, `$ARGV`, exit-code propagation, build-time rejection of invalid scripts);
+`vet` + full suite green.

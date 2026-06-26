@@ -4,7 +4,9 @@
 // Leading flags are consumed up to the first non-flag token (the program);
 // everything after the program is exposed to the script as $ARGV. By default it
 // runs the program; --ast prints the parsed AST and --tokens the token stream.
-// --version and --help print and exit.
+// --version and --help print and exit. `drang build <file.dr> [-o out]` compiles
+// a script into a standalone executable (the drang binary with the source
+// appended); such an executable runs its embedded program directly.
 package main
 
 import (
@@ -26,6 +28,23 @@ import (
 var version = "0.1"
 
 func main() {
+	// A standalone executable (made by `drang build`) carries its program appended
+	// to this binary; run it directly, with every argument going to the script as
+	// $ARGV. A plain drang binary has no such payload and continues to the CLI.
+	if src, found, err := embeddedProgram(); found {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "drang: corrupt standalone payload:", err)
+			os.Exit(1)
+		}
+		runProgram(string(src), standaloneOrigin(), os.Args[1:])
+		return
+	}
+	// `drang build <script.dr> [-o out]` compiles a script into a standalone exe.
+	if len(os.Args) > 1 && os.Args[1] == "build" {
+		buildStandalone(os.Args[2:])
+		return
+	}
+
 	mode := "run"
 	args := os.Args[1:]
 
@@ -104,6 +123,7 @@ loop:
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
+	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>]")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -115,6 +135,11 @@ func help() {
 Usage:
   drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
+  drang build <file.dr> [-o <output>]
+
+Commands:
+  build          compile a script into a standalone executable (this drang binary
+                 with the source appended); the result runs its embedded program
 
 Options:
   -e <source>    run the given source string instead of a file
