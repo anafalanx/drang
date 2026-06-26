@@ -321,6 +321,8 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			} else {
 				regs[in.A] = value.MakeRange(lo.AsInt(), hi.AsInt())
 			}
+		case OpMakeRegex:
+			regs[in.A] = makeRegex(p.Consts[in.B].AsStr()) // cached; bad pattern -> Err
 		case OpIndex:
 			regs[in.A] = indexRead(regs[in.B], regs[in.C])
 		case OpField:

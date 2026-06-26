@@ -790,6 +790,8 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		return value.MakeStr(n.Value), nil
 	case *ast.BoolLit:
 		return value.MakeBool(n.Value), nil
+	case *ast.RegexLit:
+		return makeRegex(n.Pattern), nil // compiled via the shared cache
 	case *ast.Var:
 		v, ok := env.get(n.Name)
 		if !ok {
@@ -1236,6 +1238,7 @@ var builtins = map[string]builtin{
 	"repeat":      builtinRepeat,
 
 	// regex (RE2)
+	"re":       builtinRe,
 	"matches":  builtinMatches,
 	"match":    builtinMatch,
 	"find_all": builtinFindAll,

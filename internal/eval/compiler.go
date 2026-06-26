@@ -697,6 +697,11 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 		c.emit(OpLoadConst, dst, c.konst(value.MakeStr(n.Value)), 0)
 	case *ast.BoolLit:
 		c.emit(OpLoadConst, dst, c.konst(value.MakeBool(n.Value)), 0)
+	case *ast.RegexLit:
+		// The pattern is a string constant; OpMakeRegex compiles it at runtime via
+		// the shared cache (compile-once across executions), so the constant pool
+		// stays scalar and the regex value is never deduped by pattern.
+		c.emit(OpMakeRegex, dst, c.konst(value.MakeStr(n.Pattern)), 0)
 	case *ast.Var:
 		if slot, ok := c.resolveLocal(n.Name); ok {
 			if dst != slot {

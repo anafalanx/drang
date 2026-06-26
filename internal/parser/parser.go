@@ -580,6 +580,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 			elems[i] = &ast.StringLit{Pos: pos, Value: w}
 		}
 		return &ast.ArrayLit{Pos: pos, Elems: elems}
+	case token.QR:
+		pat := p.tok.Lit
+		p.next()
+		return &ast.RegexLit{Pos: pos, Pattern: pat}
 	case token.TRUE:
 		p.next()
 		return &ast.BoolLit{Pos: pos, Value: true}

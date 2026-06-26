@@ -191,6 +191,13 @@ the answer is ${6 * 7}
 END
 say($msg)
 say("after")`,
+	// regex: qr// literal + re() value, exercised by the builtins on both backends
+	`$d := qr/\d+/
+say(matches("a1b2", $d), matches("xyz", $d))
+say(find_all("a1 b2 c3", $d))
+say(match("k=9", qr{(\w+)=(\d+)})[2])
+say(gsub("a1b2", re(q(\d)), "#"))
+say(qr/x/i == qr/x/i, qr/x/ == qr/x/i)`,
 	// ? inside a function: a propagated error becomes the function's result, then
 	// // recovers it at the call site
 	`fn doubler($s) {
@@ -528,6 +535,35 @@ func TestLoopControlParseGating(t *testing.T) {
 		p.ParseProgram()
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Errorf("unexpected parse error for %q: %v", src, errs)
+		}
+	}
+}
+
+func TestRegexValue(t *testing.T) {
+	cases := []struct{ src, want string }{
+		// qr// and re() produce equal values for the same source; flags are part of identity
+		{`say(qr/\d+/ == qr/\d+/)`, "true\n"},
+		{`say(qr/\d+/ == re(q(\d+)))`, "true\n"},
+		{`say(qr/x/i == qr/x/)`, "false\n"},
+		// a regex value works wherever a string pattern does
+		{`say(matches("a9", qr/\d/), matches("a9", q(\d)))`, "true true\n"},
+		// flags: i (case-insensitive) baked in
+		{`say(matches("ABC", qr/abc/i))`, "true\n"},
+		// a bad pattern is a catchable Err value, not an abort (both qr and re)
+		{`say(is_err(qr/[/), is_err(re("(")))`, "true true\n"},
+		{`say(qr/[/ // "recovered")`, "recovered\n"},
+		// re() passes an existing regex through unchanged
+		{`$r := qr/\w+/
+say(re($r) == $r)`, "true\n"},
+	}
+	for _, c := range cases {
+		got, err := runBackend(t, c.src, true)
+		if err != nil {
+			t.Errorf("%q: unexpected error: %v", c.src, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%q: got %q, want %q", c.src, got, c.want)
 		}
 	}
 }
