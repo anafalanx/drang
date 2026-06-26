@@ -1,0 +1,32 @@
+# tasks.l3 — a small lang3 task runner, demonstrating the orchestration core.
+# Run:  lang3 tasks.l3 <task> [args...]   (no task lists them)
+
+$root ::= "C:/zmal/_lang3/_taskdemo"
+
+fn build($args) {
+  mkdir($root)?
+  write_file(join($root, "out.txt"), "artifact")?
+  say("build ->", read_file(join($root, "out.txt"))?)
+  run("cmd", "/c", "echo", "compiled ok")?
+}
+
+fn test($args) {
+  build($args)?                       # a dependency is just a call + ?
+  say("test args:", $args)
+  run("cmd", "/c", "exit", "0")?
+}
+
+fn ver($args) {
+  say("version:", capture("cmd", "/c", "echo", "1.2.3"))
+}
+
+fn clean($args) {
+  rm($root)
+  say("cleaned", $root)
+}
+
+fn fails($args) {
+  run("cmd", "/c", "exit", "5")?      # a failed step propagates its exit code
+}
+
+dispatch({ build: build, test: test, ver: ver, clean: clean, fails: fails })

@@ -1,0 +1,6 @@
+# Build artifacts
+*.exe
+
+# Scratch dirs and large test fixtures (not part of the source)
+/bigline.txt
+/_*/
