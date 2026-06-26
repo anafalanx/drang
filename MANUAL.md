@@ -119,6 +119,17 @@ drang -e 'say($ENV["FOO"])'    # with FOO=bar in the environment
 bar
 ```
 
+For real command-line tools, `parse_args` turns `$ARGV` into a flat map — `--flag` becomes `true`, `--key=val` (or `--key val` when `key` is named in the optional second argument) becomes a string, and the leftover positionals collect under `"_"`:
+
+```
+drang -e '$o := parse_args($ARGV, ["out"]); say($o.out); say($o["_"])' --out=build x.dr y.dr
+```
+
+```
+build
+[x.dr, y.dr]
+```
+
 ### A taste
 
 Variables are declared with `:=` (a lexical) or `::=` (a frozen top-level constant); plain `=` reassigns. Builtins are called with parentheses, strings interpolate bare `$var` (or `${ expr }` for anything complex), and data nests transparently with `.` and `[]`:
@@ -2457,6 +2468,7 @@ reference types; values are deep-copied on send and on `await`.
 |---|---|---|
 | `gc` | `gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
+| `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |
 
 ---
 
