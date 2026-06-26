@@ -555,6 +555,9 @@ func TestRegexValue(t *testing.T) {
 		// re() passes an existing regex through unchanged
 		{`$r := qr/\w+/
 say(re($r) == $r)`, "true\n"},
+		// Display picks a delimiter the pattern avoids, so it round-trips
+		{`say(qr{a/b})`, "qr|a/b|\n"},
+		{`say(qr|a/b| == qr{a/b})`, "true\n"},
 	}
 	for _, c := range cases {
 		got, err := runBackend(t, c.src, true)
