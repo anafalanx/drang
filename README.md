@@ -40,6 +40,21 @@ echo 'say(6 * 7)' | ./drang # run from stdin
 Flags: `--run` (default), `--ast`, `--tokens`, `--version`, `--help`. Arguments after the program are
 exposed to the script as `$ARGV`; the environment is the `$ENV` map.
 
+## Standalone executables
+
+Compile a script into a single self-contained executable — the drang runtime with your program
+embedded — that needs no separate interpreter:
+
+```
+drang build app.dr -o app   # -> ./app  (app.exe on Windows)
+./app one two               # runs the embedded program; args become $ARGV
+```
+
+`drang build` validates that the script parses before emitting the binary, and produces an executable
+for the platform it runs on. Windows and Linux work natively; on macOS the result must be re-signed
+once after building (`codesign -s - app`, on a Mac), because appending the payload invalidates the
+binary's code signature.
+
 ## Documentation
 
 - **[MANUAL.md](MANUAL.md)** — the full language manual. Every example in it was executed against the
@@ -49,8 +64,8 @@ exposed to the script as `$ARGV`; the environment is the `$ENV` map.
 ## Status
 
 A young, personal daily-driver. It is genuinely usable, but see the *"Not Yet"* section of the manual
-for known gaps (no JSON / HTTP / math / date-time builtins yet, no module system, no standalone-exe
-build, structs deferred in favour of maps, and so on).
+for known gaps (no JSON / HTTP / math / date-time builtins yet, no module system, structs deferred in
+favour of maps, and so on).
 
 ## License
 
