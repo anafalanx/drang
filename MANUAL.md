@@ -29,7 +29,7 @@ drang is a small, Perl-inspired scripting language for **text processing and sys
 
 Four ideas define it:
 
-- **Perl's soul, not its warts.** First-class regex, terse one-liners, a single `$` sigil on every variable, and string interpolation — but without scalar/list context, typeglobs, `bless`, or the punctuation-variable zoo. There is exactly one sigil: `$x` whether it holds a number, string, array, or hash.
+- **Perl's soul, not its warts.** First-class regex, terse one-liners, a single `$` sigil on every variable, and string interpolation — but without scalar/list context, typeglobs, `bless`, or the punctuation-variable zoo. One sigil covers all data: `$x` whether it holds a number, string, array, or hash. (Names carry their kind: `$` for data, `.` for your own functions, bare for builtins — see Functions.)
 - **Effortless parallelism.** Real multi-core execution with no GIL, made safe *by subtraction* — top-level bindings are frozen constants and there are no mutable globals, so data-parallel combinators like `pmap` run lock-free.
 - **First-class errors.** Failures are ordinary values you can inspect (`is_err`, `err_msg`, `err_code`) or propagate with a trailing `?`. There is no `$@` global and no exceptions-by-default; a dropped failure is a deliberate choice, not an accident.
 - **Complete via Go.** The standard library is a curated binding over Go's — strings, files, `os/exec`, regex (RE2) — not a from-scratch reimplementation.
@@ -147,7 +147,7 @@ alan
 count: 2
 ```
 
-Subroutines use `fn`, are first-class values, and pair with the higher-order combinators (`map`, `filter`, `reduce`, …) using `|args| body` lambdas. Loops are `for`-in over ranges, with postfix modifiers for one-liners:
+Subroutines use `fn` and carry a leading-dot sigil (`fn .name`, called `.name` — more on the three name sigils later), are first-class values, and pair with the higher-order combinators (`map`, `filter`, `reduce`, …) using `|args| body` lambdas. Loops are `for`-in over ranges, with postfix modifiers for one-liners:
 
 ```drang
 $xs := [1, 2, 3, 4]
@@ -165,9 +165,9 @@ for $n in 1..5 { say($n) if $n % 2 == 1 }
 And the headline trick — counting words across files **in parallel**, propagating any read failure with `?`, with no locks and no threads to manage:
 
 ```drang
-fn wc($path) { len(split(trim(read_file($path)?), " ")) }
+fn .wc($path) { len(split(trim(read_file($path)?), " ")) }
 $files ::= ["a.txt", "b.txt"]
-$counts := pmap($files, wc)
+$counts := pmap($files, .wc)
 say("total:", reduce($counts, 0, |$a, $b| $a + $b))
 ```
 
@@ -252,7 +252,7 @@ drang: cannot assign to constant $k
 | `array` | `[1, 2, 3]` |
 | `map` | `{"a": 1, "b": 2}` (insertion-ordered) |
 | `range` | `1..5` (inclusive) |
-| `function` | `fn ($x) { ... }` |
+| `function` | a lambda `|$x| $x * 2`, or `fn .name` declared and referenced as `.name` |
 | `regex` | `re("[0-9]+")` |
 
 (The concurrency section adds channel, task, and process handles.) `nil` is a real runtime value but has no source literal — writing `nil` yields `undefined: nil`. You obtain it from, e.g., an absent map key:
@@ -287,10 +287,10 @@ say(1..3)
 Falsy: `nil`, `false`, `0`, `0.0`, `""`, and **empty** containers (`[]`, `{}`, and an empty range). Everything else is truthy — including non-empty containers, functions, and *error values*.
 
 ```drang
-fn t($v) { if $v { say("truthy") } else { say("falsy") } }
+fn .t($v) { if $v { say("truthy") } else { say("falsy") } }
 $m := {}
-t($m["missing"]); t(false); t(0); t(0.0); t(""); t([]); t({})
-t(true); t(1); t(3.14); t("x"); t([1]); t({"a": 1})
+.t($m["missing"]); .t(false); .t(0); .t(0.0); .t(""); .t([]); .t({})
+.t(true); .t(1); .t(3.14); .t("x"); .t([1]); .t({"a": 1})
 ```
 
 ```
@@ -365,9 +365,9 @@ true true true
 **Logical** `and` / `or` / `not` (and `!` as a prefix synonym for `not`). `and`/`or` short-circuit — the right side is not evaluated when the left already decides the result:
 
 ```drang
-fn boom() { say("boom ran"); true }
-say(false and boom())
-say(true or boom())
+fn .boom() { say("boom ran"); true }
+say(false and .boom())
+say(true or .boom())
 say(!true, not false)
 ```
 
@@ -901,19 +901,29 @@ say($_) for [10, 20, 30]
 
 ## Functions, Lambdas, Closures, and Pipelines
 
-### Named functions: `fn`
+### Three name kinds, three sigils
 
-Define a named function with `fn`, a parameter list of sigil variables, and a brace body:
+drang carries a name's kind in a sigil at *every* use, so you always know what a name refers to:
+
+- **`$name`** — data: variables and constants alike (`$count`, `$pi`).
+- **`.name`** — a **user-defined function**: declared `fn .name()`, called `.name()`, and passed as a value as `.name`.
+- **a bare `name`** — a **builtin or standard-library function**, the language's own verbs (`say`, `map`, `split`, …).
+
+The leading `.` is the user-namespace sigil — read `.foo` as "`foo`, a member of the implicit user namespace." It is the *same* `.` as field access: `.foo` is a member of the implicit user namespace, just as `$m.foo` is a member of the map `$m`. Because your functions live in that `.` namespace, they can never collide with builtins or the stdlib — your `.split` and the builtin `split` coexist, so adding a new builtin can never break your code.
+
+### Named functions: `fn .name`
+
+Define a named function with `fn`, a **dotted** name, a parameter list of sigil variables, and a brace body. Call it through the same dot:
 
 ```drang
-fn add($a, $b) { $a + $b }
+fn .add($a, $b) { $a + $b }
 
-fn greet($name) {
+fn .greet($name) {
   return "hi " ~ $name
 }
 
-say(add(2, 3))
-say(greet("sam"))
+say(.add(2, 3))
+say(.greet("sam"))
 ```
 
 ```
@@ -921,20 +931,20 @@ say(greet("sam"))
 hi sam
 ```
 
-(`~` is the string-concatenation operator; `say` prints a line.)
+(`~` is the string-concatenation operator; `say` prints a line.) A bare `fn name` (no dot) is an error — user functions must be `fn .name`.
 
 ### Implicit and explicit return
 
 A function returns the value of its **last expression** — no `return` needed. Because `if`/`else` is itself an expression, the branch value falls straight out:
 
 ```drang
-fn classify($n) {
+fn .classify($n) {
   if $n < 0 { "negative" }
   else { "non-negative" }
 }
 
-say(classify(-3))
-say(classify(7))
+say(.classify(-3))
+say(.classify(7))
 ```
 
 ```
@@ -942,16 +952,16 @@ negative
 non-negative
 ```
 
-Use explicit `return` for early exits. There is also a postfix `return … if` form:
+Use explicit `return` for early exits. There is also a postfix `return … if` form. (Note `.abs` here is *your* function; the builtin `abs` is untouched in the `.` namespace and the two never clash:)
 
 ```drang
-fn abs($n) {
+fn .abs($n) {
   return -$n if $n < 0
   $n
 }
 
-say(abs(-4))
-say(abs(9))
+say(.abs(-4))
+say(.abs(9))
 ```
 
 ```
@@ -961,7 +971,7 @@ say(abs(9))
 
 ### Lambdas: `|$a, $b| …`
 
-An anonymous function is written with pipe-delimited parameters followed by **either** a single expression **or** a `{ … }` block (the block also returns its last expression). Zero parameters is `||`:
+An anonymous function is written with pipe-delimited parameters followed by **either** a single expression **or** a `{ … }` block (the block also returns its last expression). Zero parameters is `||`. A lambda has no name of its own; bind it to a `$` variable and it is plain data, called through that `$` name (`$sq(5)`) — the `.` sigil is only for functions declared with `fn .name`:
 
 ```drang
 $sq := |$x| $x * $x
@@ -987,12 +997,12 @@ The body parses at the lowest precedence, so a lambda absorbs operators and `|>`
 Both named functions and lambdas are closures: they capture the variables of the scope where they are defined.
 
 ```drang
-fn make_adder($n) {
+fn .make_adder($n) {
   |$x| $x + $n
 }
 
-$add10  := make_adder(10)
-$add100 := make_adder(100)
+$add10  := .make_adder(10)
+$add100 := .make_adder(100)
 say($add10(5))
 say($add100(5))
 ```
@@ -1027,12 +1037,12 @@ for $f in $fns {
 `x |> f(args)` desugars to `f(x, args)` — the left side is threaded in as the **first** argument. Chains read left-to-right, which is the natural reading order for glue code:
 
 ```drang
-fn double($x) { $x * 2 }
-fn add($a, $b) { $a + $b }
+fn .double($x) { $x * 2 }
+fn .add($a, $b) { $a + $b }
 
-say(5 |> double())          # double(5)
-say(5 |> add(10))           # add(5, 10)
-say(3 |> double() |> add(1))   # add(double(3), 1)
+say(5 |> .double())          # .double(5)
+say(5 |> .add(10))           # .add(5, 10)
+say(3 |> .double() |> .add(1))   # .add(.double(3), 1)
 ```
 
 ```
@@ -1083,8 +1093,8 @@ Callbacks are arity-flexible: a one-parameter lambda receives the element; a two
 A **named user function** can be passed point-free:
 
 ```drang
-fn shout($s) { upper($s) }
-say(["a", "b"] |> map(shout))
+fn .shout($s) { upper($s) }
+say(["a", "b"] |> map(.shout))
 ```
 
 ```
@@ -1404,11 +1414,11 @@ say(0 // 99, "" // "x", false // "y")
 The `?` postfix operator is the early-exit half of the model. `expr?` evaluates `expr`; if it is an Err, `?` propagates that error out of the **enclosing function**. If it is not an Err, the value flows through unchanged. This lets you write the happy path without per-call checks:
 
 ```drang
-fn parse($s) {
-  $n := int($s)?      # bail out of parse() if $s isn't an int
+fn .parse($s) {
+  $n := int($s)?      # bail out of .parse() if $s isn't an int
   return $n * 2
 }
-say(parse("21"))
+say(.parse("21"))
 ```
 
 ```
@@ -1418,11 +1428,11 @@ say(parse("21"))
 The key rule: `?` propagates only to the nearest call boundary. When the propagated error reaches the point where the function was called, it turns back into an ordinary Err **value** — it does not keep unwinding. So a caller can simply recover it:
 
 ```drang
-fn parse($s) {
+fn .parse($s) {
   $n := int($s)?
   return $n * 2
 }
-$r := parse("xx")
+$r := .parse("xx")
 say(is_err($r), err_msg($r))
 say("still running")
 ```
@@ -1536,12 +1546,12 @@ exit status 3
 A guard that returns an Err, propagated or recovered by the caller's choice:
 
 ```drang
-fn checked_div($a, $b) {
+fn .checked_div($a, $b) {
   if $b == 0 { return fail("divide by zero") }
   return $a / $b
 }
-say(checked_div(10, 2) // "n/a")
-say(checked_div(10, 0) // "n/a")
+say(.checked_div(10, 2) // "n/a")
+say(.checked_div(10, 0) // "n/a")
 ```
 
 ```
@@ -1923,8 +1933,8 @@ result. (`await` accepts a `Task` *or* a process handle from `start` — one "aw
 any async handle".)
 
 ```drang
-fn work($n) { $n * 2 }
-$tasks := [1, 2, 3, 4] |> map(|$n| spawn(work, $n))
+fn .work($n) { $n * 2 }
+$tasks := [1, 2, 3, 4] |> map(|$n| spawn(.work, $n))
 $results := $tasks |> map(|$t| await($t))
 say("fan-out: $results")
 ```
@@ -1936,8 +1946,8 @@ An error inside a spawned task (returned, `?`-propagated, or panicked) is captur
 and surfaced by `await`, so `await($t)?` propagates and `await($t) // x` recovers:
 
 ```drang
-fn boom() { fail("worker failed") }
-$res := await(spawn(boom))
+fn .boom() { fail("worker failed") }
+$res := await(spawn(.boom))
 say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")
 ```
 ```
@@ -1955,11 +1965,11 @@ until the channel is closed.
 
 ```drang
 $c := chan(3)
-fn produce($ch) {
+fn .produce($ch) {
   for $i in 1..3 { send($ch, $i * 10) }
   close($ch)
 }
-$t := spawn(produce, $c)
+$t := spawn(.produce, $c)
 $all := drain($c)
 await($t)
 say("drained: $all")
@@ -1970,12 +1980,12 @@ drained: [10, 20, 30]
 
 ```drang
 $c := chan()
-fn worker($ch) {
+fn .worker($ch) {
   send($ch, "first")
   send($ch, "second")
   close($ch)
 }
-$t := spawn(worker, $c)
+$t := spawn(.worker, $c)
 say("recv: ${recv($c)}")
 $pair := recv_ok($c)
 say("recv_ok: $pair")
