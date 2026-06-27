@@ -407,6 +407,8 @@ func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("%s blocks are only valid in -n/-p (one-liner) mode", n.Name)
 	case *ast.UseStmt:
 		return value.MakeNil(), mergeModule(n, env)
+	case *ast.ExampleStmt:
+		return value.MakeNil(), nil // a `drang test` assertion is a no-op in a normal run
 	}
 	return value.MakeNil(), fmt.Errorf("eval: unknown statement %T", s)
 }

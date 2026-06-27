@@ -400,6 +400,11 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 		if resultReg >= 0 {
 			c.emit(OpLoadNil, resultReg, 0, 0) // a declaration yields nil
 		}
+	case *ast.ExampleStmt:
+		// A `drang test` assertion is a no-op in a normal run.
+		if resultReg >= 0 {
+			c.emit(OpLoadNil, resultReg, 0, 0)
+		}
 	default:
 		c.fail()
 	}
