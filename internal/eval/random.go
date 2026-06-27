@@ -39,7 +39,10 @@ func builtinRandInt(args []value.Value) (value.Value, error) {
 		if hi <= lo {
 			return value.MakeErr("rand_int: hi must be greater than lo", 1), nil
 		}
-		return value.MakeInt(lo + rand.Int64N(hi-lo)), nil
+		// Width can exceed MaxInt64 (e.g. [-1, MaxInt64)); compute it in uint64 and
+		// add modularly so wide ranges don't overflow. lo+r is in range, so it fits.
+		w := uint64(hi) - uint64(lo)
+		return value.MakeInt(int64(uint64(lo) + rand.Uint64N(w))), nil
 	default:
 		return value.MakeNil(), fmt.Errorf("rand_int expects 1 or 2 arguments, got %d", len(args))
 	}
