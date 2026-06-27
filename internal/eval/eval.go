@@ -673,6 +673,9 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 	switch container.Tag() {
 	case value.Arr:
 		a := container.Obj().(*value.Array)
+		if a.IsFrozen() {
+			return value.MakeNil(), fmt.Errorf("cannot modify a frozen array")
+		}
 		if key.Tag() != value.Int {
 			return value.MakeNil(), fmt.Errorf("array index must be an int, got %s", key.TypeName())
 		}
@@ -707,6 +710,9 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 			return value.MakeNil(), fmt.Errorf("unhashable map key: %s", key.TypeName())
 		}
 		m := container.Obj().(*value.OrderedMap)
+		if m.IsFrozen() {
+			return value.MakeNil(), fmt.Errorf("cannot modify a frozen map")
+		}
 		newv := rhs
 		if op != token.ILLEGAL {
 			cur, _ := m.Get(key)
@@ -1505,6 +1511,9 @@ func builtinPush(args []value.Value) (value.Value, error) {
 		return value.MakeErr(fmt.Sprintf("push expects an array, got %s", args[0].TypeName()), 1), nil
 	}
 	a := args[0].Obj().(*value.Array)
+	if a.IsFrozen() {
+		return value.MakeErr("cannot push to a frozen array", 1), nil
+	}
 	a.Elems = append(a.Elems, args[1:]...)
 	return args[0], nil
 }
@@ -1518,6 +1527,9 @@ func builtinPop(args []value.Value) (value.Value, error) {
 		return value.MakeErr(fmt.Sprintf("pop expects an array, got %s", args[0].TypeName()), 1), nil
 	}
 	a := args[0].Obj().(*value.Array)
+	if a.IsFrozen() {
+		return value.MakeErr("cannot pop from a frozen array", 1), nil
+	}
 	if len(a.Elems) == 0 {
 		return value.MakeErr("pop from empty array", 1), nil
 	}
@@ -1592,6 +1604,9 @@ func builtinDelete(args []value.Value) (value.Value, error) {
 		return value.MakeErr(fmt.Sprintf("delete expects a map, got %s", args[0].TypeName()), 1), nil
 	}
 	m := args[0].Obj().(*value.OrderedMap)
+	if m.IsFrozen() {
+		return value.MakeErr("cannot delete from a frozen map", 1), nil
+	}
 	m.Delete(args[1])
 	return args[0], nil
 }

@@ -187,3 +187,34 @@ func DeepCopyValue(v Value, visited map[Obj]Obj) Value {
 	}
 	return Value{tag: v.tag, ref: v.ref.DeepCopy(visited)}
 }
+
+// Freeze marks v, and every array and map transitively reachable through it, as
+// immutable: a later in-place mutation (index/field assign, push, pop, delete) of
+// a frozen container fails with a catchable error. Freeze is idempotent and
+// cycle-safe — an already-frozen container short-circuits, which also terminates
+// reference cycles. It is used at sharing boundaries (e.g. module exports) so a
+// single shared value can be read safely without copying. (Scalars and the
+// immutable heap objects — functions, ranges, channels, tasks, procs, regexes —
+// are unaffected.)
+func Freeze(v Value) { freezeObj(v.ref) }
+
+func freezeObj(o Obj) {
+	switch x := o.(type) {
+	case *Array:
+		if x.frozen {
+			return
+		}
+		x.frozen = true
+		for _, e := range x.Elems {
+			freezeObj(e.ref)
+		}
+	case *OrderedMap:
+		if x.frozen {
+			return
+		}
+		x.frozen = true
+		for _, e := range x.vals {
+			freezeObj(e.ref)
+		}
+	}
+}
