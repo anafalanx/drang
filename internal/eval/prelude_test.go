@@ -43,8 +43,8 @@ func TestPrelude(t *testing.T) {
 		{"chunk-empty", `say(to_json(chunk([], 2)))`, "[]\n"},
 		{"zip", `say(to_json(zip([1,2,3], ["a", "b"])))`, `[[1,"a"],[2,"b"]]` + "\n"},
 		{"zip-empty", `say(to_json(zip([], [1,2])))`, "[]\n"},
-		// a user function shadows a prelude function of the same name (pre-sigil)
-		{"user-shadows-prelude", `fn flatten($x) { "mine" }  say(flatten([1]))`, "mine\n"},
+		// a user .flatten coexists with the bare prelude flatten — no shadow, no clobber
+		{"user-dot-coexists-with-prelude", `fn .flatten($x) { "mine" }  say(.flatten([1]) ~ "/" ~ to_json(flatten([[1],[2]])))`, "mine/[1,2]\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

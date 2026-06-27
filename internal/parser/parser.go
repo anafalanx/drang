@@ -65,6 +65,7 @@ type Parser struct {
 	tok           token.Token
 	peek          token.Token
 	lastBlockForm bool // whether the most recent statement was block-form (ended in }), so a same-line follow-on needs no separator
+	stdlibMode    bool // allow bare 'fn name' (the embedded prelude defines bare stdlib functions); user code must use 'fn .name'
 	errs          []string
 	loopDepth     int // enclosing loop nesting (reset at fn/lambda boundaries) — gates break/next
 }
@@ -74,6 +75,14 @@ func New(src string) *Parser {
 	p := &Parser{lex: lexer.New(src)}
 	p.next()
 	p.next()
+	return p
+}
+
+// NewStdlib returns a parser for the embedded standard library, where a bare
+// 'fn name' declares a (bare) stdlib function. User code must use 'fn .name'.
+func NewStdlib(src string) *Parser {
+	p := New(src)
+	p.stdlibMode = true
 	return p
 }
 
@@ -948,6 +957,9 @@ func (p *Parser) parseFn() ast.Stmt {
 	if p.tok.Kind != token.IDENT {
 		p.errorf("expected function name after 'fn', got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
+	}
+	if dot == "" && !p.stdlibMode {
+		p.errorf("user functions need a leading dot: write 'fn .%s' (bare names are reserved for builtins)", p.tok.Lit)
 	}
 	name := dot + p.tok.Lit
 	p.next()
