@@ -436,6 +436,7 @@ These are deliberate omissions — each is a parse error, not a missing feature 
 - **No exponent** `**` — there is no power operator.
 - **No bitwise** operators (`&`, `|`, `^`, `<<`, `>>`).
 - **No increment/decrement** `++` / `--` — use `+= 1` / `-= 1`.
+- **No Perl regex operators** (`=~`, `s///`) or `$1..$n` capture variables — drang uses `qr//` literals with the `match`/`gsub`/`matches`/`find_all` builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.
 
 ```drang
 say(2 ** 3)
@@ -2970,9 +2971,7 @@ So `fetch`/`http` (orchestrate `run(["curl", …])` instead) and the math family
 Several features are specified in DESIGN.md but do not work in the binary yet — don't reach for them:
 
 - **Structs.** `struct Foo { ... }` is a parse error. Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
-- **Named arguments** (`f(port: 9090)`) are not supported — arguments are positional (default parameters *are* supported; see [Named functions](#named-functions-fn-name)). **Variadic parameters** (`$a...`) are deliberately out of scope — pass an array instead.
-- **`=~` match / `s///` substitution operators.** These are parse errors; use the `match` / `matches` / `gsub` builtins instead.
-- **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
+- **Named arguments** (`f(port: 9090)`) are not supported — arguments are positional (default parameters *are* supported; see [Named functions](#named-functions-fn-name)). **Variadic parameters** (`$a...`) are deliberately out of scope — pass an array instead.- **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
 
   ```drang
   say("5" + 3)        # error: cannot use string and int with '+'

@@ -2151,3 +2151,31 @@ module exports reject `push`/index-assign and the cache can't be poisoned; `::=`
 interiors reject index-assign/`push`/`delete`; `pmap`/`spawn` over a constant are
 rejected and race-free (pass under `go test -race`). Build + full suite green; eval
 package race-clean.
+
+## Decision: reject Perl's regex operators (`=~` / `s///` / `$1..$n`) (2026-06-28)
+
+Earlier design notes marked `=~` match / `s///` substitution (with `$1..$n` capture
+variables) as a `[LOCKED]` feature — "the Perl soul." On review, **reversed: these are
+now deliberately OUT OF SCOPE.** drang already expresses the Perl *power* through a
+cleaner idiom — `qr//` literals + the `match`/`gsub`/`matches`/`find_all` builtins +
+the `|>` pipeline (e.g. `$s |> gsub(qr/\s+/, " ")`, `if matches($line, qr/x/) {…}`).
+Adding `=~`/`s///` would be:
+
+- **Pure sugar over `gsub`/`match`** — a second idiom for one job, against the curated-
+  stdlib value proposition (no new capability).
+- **A reintroduction of the line-noise/magic** drang explicitly rejects: `$1..$n` IS
+  the punctuation-variable zoo already listed under "What is not in the language," and
+  it fights the clean three-sigil model. Magic capture vars are also not thread-safe
+  under `pmap`.
+- **In tension with value immutability** — Perl's `$x =~ s///` mutates in place, cutting
+  against the explicit-mutation / frozen-values direction.
+- **Against the "reads like Ruby" half** — even modern Ruby prefers `gsub`/`match`
+  methods over `=~`/`$1`.
+
+Resolution of the tagline: **"thinks like Perl" = regexes first-class and text-munging
+easy (already true), NOT "looks like Perl."** The regex-ergonomics gap (capturing
+groups) is filled the drang way: **named-capture → a map** on `match`
+(`match($s, qr/(?P<y>\d+)/).y`), plus a `replace_first` to complement global `gsub`.
+The one scenario that could reopen `s///`: a future push to be a drop-in sed/perl
+**one-liner** replacement, where `drang -pe 's/x/y/'` terseness matters — and even then
+scoped to one-liner mode, not the language. MANUAL + ROADMAP updated accordingly.
