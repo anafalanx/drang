@@ -1905,3 +1905,31 @@ in stream_test.go and oneliner_test.go; build + full suite green.
 
 Deferred for one-liner mode: `-i` in-place edit, a compiled per-line fast path,
 field/record separators (FS/RS), and source positions in tree-walked errors.
+
+## Build progress: CSV (2026-06-27)
+
+Phase 3: `from_csv` / `to_csv`, thin bindings over Go's `encoding/csv` (so embedded
+newlines, the doubled-quote escape, and CRLF tolerance are correct for free). String
+in / string out (compose with `read_file`/`write_file`), no type inference (cells are
+strings), named per the `from_X`/`to_X` ruleset.
+
+Decisions (poll): rows are arrays by default, records via `{header: true}` (keyed by
+the first row; `to_csv` pulls values by key); strict ragged-row handling by default,
+`{lenient: true}` relaxes; LF line endings on write, `{crlf: true}` for RFC-strict.
+Also decided: strip a leading UTF-8 BOM; minimal quoting on write (Go default);
+option misuse aborts while malformed CSV is a catchable Err.
+
+Adversarial review (3 agents) found + fixed before commit: invalid separators
+(`sep` = `"`, `\n`, or `sep == comment`) leaked as a catchable Err instead of
+aborting (now validated as misuse); bool options accepted any truthy value so
+`header:"false"` read as true (now require an actual bool); unknown option keys were
+silently ignored (now rejected); duplicate header names silently dropped columns (now
+a strict error; lenient keeps last); `to_csv` emitted ragged array rows its own
+strict `from_csv` rejects (now validates widths); `to_csv` records with divergent
+keys escaped the count-based guard and lost data (now membership-checked). Documented
+inherent `encoding/csv` limits: CR/LF inside a quoted field reads back as LF, blank
+lines are skipped (so a lone empty-field row won't round-trip), and lenient
+truncates. New tests in csv_test.go; build + full suite green.
+
+Deferred for CSV: a streaming row reader (whole-string for now), quote-all/quoting
+styles (Go's writer is minimal-only), and a TSV convenience (use `{sep: "\t"}`).

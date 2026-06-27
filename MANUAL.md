@@ -18,6 +18,7 @@
 - [In-language concurrency](#in-language-concurrency)
 - [Files and Paths](#files-and-paths)
 - [JSON](#json)
+- [CSV](#csv)
 - [One-liner mode](#one-liner-mode)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
@@ -2300,6 +2301,62 @@ fallback
 
 ---
 
+## CSV
+
+`from_csv` parses RFC 4180 CSV into rows; `to_csv` renders rows back. Both are built
+on a battle-tested parser, so the awkward parts are handled: fields containing
+commas, quotes, or newlines, and the doubled-quote escape (`""`). **Cells are always
+strings** — convert explicitly (`int($row.age)`); there is no type inference.
+
+By default rows are arrays of strings. With `{header: true}` the first row names the
+columns and every later row becomes a record keyed by those names:
+
+```drang
+from_csv("a,b\n1,2")                       # [["a", "b"], ["1", "2"]]
+$rows := from_csv("name,age\nalice,30\nbob,25", {header: true})
+say($rows[0].name)                         # alice
+say(to_csv($rows))                         # name,age / alice,30 / bob,25 (header auto-written)
+```
+
+`to_csv` accepts either shape: an array of arrays writes plain rows; an array of
+records writes a header (from the first record's keys) plus one row per record, with
+values pulled *by key* (so a record's key order need not match). Scalars stringify
+(`nil` is an empty cell); a non-scalar cell is an error.
+
+Both are **strict by default**, to catch malformed data loudly — ragged rows (a
+differing field count), duplicate header names, and records whose keys differ from
+the header are errors. Pass `{lenient: true}` to relax all three (pad/truncate, keep
+the last duplicate column, drop unknown keys).
+
+Options (an optional trailing map):
+
+| Option | Where | Meaning |
+|--------|-------|---------|
+| `sep` | both | field delimiter, one character (default `,`; e.g. `"\t"` for TSV) |
+| `header` | both | read: first row is column names → records; write: include a header row (default true) |
+| `lenient` | both | relax strictness (ragged rows, duplicate / divergent keys) |
+| `comment` | read | skip lines whose first character is this |
+| `trim` | read | drop leading whitespace in each field |
+| `lazy_quotes` | read | tolerate stray quotes in malformed input |
+| `crlf` | write | end lines with `\r\n` (strict RFC) instead of the default `\n` |
+
+As with JSON, option misuse (a bad type, a multi-character or invalid `sep`, an
+unknown option key) aborts; malformed CSV and unencodable rows are catchable `Err`
+values:
+
+```drang
+say(is_err(from_csv("a,b\n1,2,3")))                          # true — ragged row (strict)
+$rows := from_csv(read_file("data.csv"), {header: true}) // []   # [] on a read error
+```
+
+A leading UTF-8 BOM (which Excel writes) is stripped automatically. Two inherited
+quirks worth knowing: a `\r\n` *inside* a quoted field reads back as `\n`, and blank
+lines are skipped — so a row that is a single empty field won't survive a round trip.
+And because one-liner `-n`/`-p` is line-based, it can't safely stream a CSV with
+quoted newlines — run `from_csv` on the whole text instead.
+
+---
+
 ## One-liner mode
 
 `-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
@@ -2421,6 +2478,8 @@ Minimal daily-driver math (not a math/trig kitchen sink). `abs`/`sum`/`min`/`max
 |---|---|---|
 | `from_json` | `from_json(s)` | Parse JSON into drang values (object→map, array→array, number→int/float); malformed input → Err. |
 | `to_json` | `to_json(v, indent?)` | Render a value as JSON; `indent` (int spaces or whitespace string) pretty-prints, else compact. Non-encodable values → Err. |
+| `from_csv` | `from_csv(s, opts?)` | Parse RFC 4180 CSV into rows (arrays, or records with `{header: true}`); strict by default. Malformed input → Err. |
+| `to_csv` | `to_csv(rows, opts?)` | Render rows (arrays or records) as CSV; minimal quoting, `\n` lines (`{crlf: true}` for `\r\n`). Bad rows → Err. |
 
 ### Collections & higher-order
 
