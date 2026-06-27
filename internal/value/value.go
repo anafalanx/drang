@@ -179,8 +179,8 @@ func Equal(l, r Value) bool {
 }
 
 // DeepCopyValue returns a deep, cycle-safe copy of v, used at goroutine
-// boundaries (copy-on-send). Scalars and strings copy by value; heap objects
-// copy via their DeepCopy. Not yet wired — defined so the Obj contract is whole.
+// boundaries (copy-on-send): send, spawn args, await results, and pmap's per-row
+// element. Scalars and strings copy by value; heap objects copy via their DeepCopy.
 func DeepCopyValue(v Value, visited map[Obj]Obj) Value {
 	if v.ref == nil {
 		return v

@@ -713,7 +713,7 @@ The result is a regular error value (the program does not crash); it propagates 
 
 ## Control flow
 
-Control flow in drang is built from *statements*, not expressions. `if`, `while`, and `for` produce no value, so you cannot bind one to a variable:
+Control flow in drang is built from *statements*, not expressions. `if`, `while`, and `for` produce no value *as an expression*, so you cannot bind one to a variable or use it inline:
 
 ```drang
 $x := if 1 { 2 } else { 3 }
@@ -725,7 +725,7 @@ line 1: unexpected IF "if"
 line 1: expected end of statement, got INT "1"
 ```
 
-Use a plain assignment inside the branches instead.
+Use a plain assignment inside the branches instead. (A function still returns the value of its last *statement*, so an `if`/`else` in **tail position** does hand its taken branch out — see [Implicit and explicit return](#implicit-and-explicit-return). The restriction is only on using `if` *inline*, mid-expression.)
 
 ### if / else
 
@@ -956,7 +956,7 @@ hi sam
 
 ### Implicit and explicit return
 
-A function returns the value of its **last expression** — no `return` needed. Because `if`/`else` is itself an expression, the branch value falls straight out:
+A function returns the value of its **last statement** — no `return` needed. When that last statement is an `if`/`else` (or any block), the value of the taken branch falls straight out:
 
 ```drang
 fn .classify($n) {
@@ -2775,16 +2775,22 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 - **No bitwise operators** — `&`, `|` (as bitwise), `<<`, `>>` all fail to parse (`&` lexes as `ILLEGAL`; `<<` is read as a heredoc start). `|` is the lambda delimiter, not bitwise-or.
 - **No `++` / `--`** — `$x++` is a parse error. Use compound assignment: `$x += 1`.
 
-### No types, modules, or coercion you might assume
+### Designed but not yet built
 
-- **Structs are designed but not implemented.** The `struct` keyword from DESIGN.md does not parse yet (`struct Foo { ... }` → parse error). Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
-- **No module / import system.** `import "x"` and `use "x"` are both parse errors. Everything lives in one file; there is no way to split or load code.
-- **No automatic stringy coercion.** Despite being on the roadmap, `"5" + 3` is currently an error, not `8`. Convert explicitly with `int()`:
+Several features are specified in DESIGN.md but do not work in the binary yet — don't reach for them:
+
+- **Structs.** `struct Foo { ... }` is a parse error. Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
+- **Default / named / variadic parameters.** `fn .f($a, $b=8080)` and `$a...` are parse errors; every parameter is required and positional.
+- **Slices and string indexing/substring.** A range index (`$a[1..3]`) and string indexing (`$s[2]`, `$s[2..5]`) parse but error at runtime. Use `take`/`drop` on arrays and `chars` on strings for now.
+- **`=~` match / `s///` substitution operators.** These are parse errors; use the `match` / `matches` / `gsub` builtins instead.
+- **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
 
   ```drang
   say("5" + 3)        # error: cannot use string and int with '+'
   say(int("5") + 3)   # 8
   ```
+
+(Modules *are* shipped — see [Modules: `use`](#modules-use) — as is the one-liner `BEGIN`/`END` block; both were once listed here as missing.)
 
 ### Behaviors that may surprise you
 
@@ -2806,4 +2812,4 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 ### Also absent (from DESIGN.md, not yet built)
 
-first-class builtin values (you must wrap a builtin in a lambda to pass it: `map($xs, |$f| f($f))`), `sh()` shell escape, `BEGIN`/`END` autoloop blocks, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md as deferred or planned, not shipped.
+first-class builtin values (you must wrap a builtin in a lambda to pass it: `map($xs, |$f| f($f))`), `sh()` shell escape, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped.
