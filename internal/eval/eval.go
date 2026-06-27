@@ -40,14 +40,29 @@ type binding struct {
 
 // Env is a lexical scope chain.
 type Env struct {
-	vars   map[string]binding
-	parent *Env
+	vars      map[string]binding
+	parent    *Env
+	moduleDir string // base directory for relative `use` paths (set on the top env per run/module)
 }
 
 // NewEnv returns a fresh top-level scope.
 func NewEnv() *Env { return &Env{vars: map[string]binding{}} }
 
 func (e *Env) child() *Env { return &Env{vars: map[string]binding{}, parent: e} }
+
+// SetModuleDir sets the base directory for resolving relative `use` paths. The CLI
+// sets it on the top env: the importing file's directory, or cwd for -e/stdin/REPL.
+func (e *Env) SetModuleDir(dir string) { e.moduleDir = dir }
+
+// baseDir returns the nearest module base directory in the env chain (or "").
+func (e *Env) baseDir() string {
+	for s := e; s != nil; s = s.parent {
+		if s.moduleDir != "" {
+			return s.moduleDir
+		}
+	}
+	return ""
+}
 
 // snapshot returns an isolated copy of the env CHAIN (each scope's bindings map
 // is copied) so a spawned goroutine reads its own maps and never races the main
@@ -62,7 +77,7 @@ func (e *Env) snapshot() *Env {
 	for k, b := range e.vars {
 		vars[k] = b
 	}
-	return &Env{vars: vars, parent: e.parent.snapshot()}
+	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir}
 }
 
 func (e *Env) get(name string) (value.Value, bool) {
@@ -358,6 +373,8 @@ func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
 		return evalFor(n, env)
 	case *ast.SpecialBlock:
 		return value.MakeNil(), fmt.Errorf("%s blocks are only valid in -n/-p (one-liner) mode", n.Name)
+	case *ast.UseStmt:
+		return value.MakeNil(), mergeModule(n, env)
 	}
 	return value.MakeNil(), fmt.Errorf("eval: unknown statement %T", s)
 }
@@ -1170,6 +1187,9 @@ func dispatchNonUser(name string, args []value.Value, env *Env) (value.Value, er
 	if name == "each_line" {
 		return evalEachLine(args)
 	}
+	if name == "use" {
+		return evalUse(args, env)
+	}
 	if hofNames[name] {
 		return evalHOF(name, args, env)
 	}
@@ -1182,7 +1202,7 @@ func dispatchNonUser(name string, args []value.Value, env *Env) (value.Value, er
 // isNonUserName reports whether name is a builtin, HOF, or special form (i.e. not
 // a user-defined function) — a candidate for direct dispatch when unshadowed.
 func isNonUserName(name string) bool {
-	if name == "dispatch" || name == "spawn" || name == "each_line" || hofNames[name] {
+	if name == "dispatch" || name == "spawn" || name == "each_line" || name == "use" || hofNames[name] {
 		return true
 	}
 	_, ok := builtins[name]

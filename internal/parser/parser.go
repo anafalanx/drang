@@ -156,6 +156,11 @@ func (p *Parser) parseStmtDispatch() ast.Stmt {
 		p.lastBlockForm = true
 		return s
 	}
+	// Contextual: `use "path"` (a string right after `use`) is a flat-merge import
+	// directive. `use(...)` (parens) falls through to a normal call — the captured form.
+	if p.tok.Kind == token.IDENT && p.tok.Lit == "use" && (p.peek.Kind == token.STRING || p.peek.Kind == token.RAWSTR) {
+		return p.parseUse()
+	}
 	switch p.tok.Kind {
 	case token.FN:
 		s := p.parseFn()
@@ -204,6 +209,18 @@ func (p *Parser) parseSpecialBlock() ast.Stmt {
 	return &ast.SpecialBlock{Name: name, Body: body}
 }
 
+// parseUse parses a flat-merge import directive: `use "path"`. The caller has
+// verified the current token is `use` and the next is a string.
+func (p *Parser) parseUse() ast.Stmt {
+	pos := p.here()
+	p.next() // consume 'use'
+	path := p.parseExpr(lowest)
+	if path == nil {
+		return nil
+	}
+	return &ast.UseStmt{Pos: pos, Path: path}
+}
+
 // setStmtPos stamps a statement's source position (its first token) if unset.
 func setStmtPos(s ast.Stmt, pos ast.Pos) {
 	switch n := s.(type) {
@@ -230,6 +247,8 @@ func setStmtPos(s ast.Stmt, pos ast.Pos) {
 	case *ast.Block:
 		setIfUnset(&n.Pos, pos)
 	case *ast.SpecialBlock:
+		setIfUnset(&n.Pos, pos)
+	case *ast.UseStmt:
 		setIfUnset(&n.Pos, pos)
 	}
 }

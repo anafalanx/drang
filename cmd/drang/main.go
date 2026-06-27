@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/anafalanx/drang/internal/eval"
@@ -40,7 +41,7 @@ func main() {
 		if origin == "" {
 			origin = standaloneOrigin()
 		}
-		runProgram(string(src), origin, os.Args[1:])
+		runProgram(string(src), origin, os.Args[1:], "")
 		return
 	}
 	// `drang build <script.dr> [-o out]` compiles a script into a standalone exe.
@@ -88,6 +89,7 @@ loop:
 	rest := args[i:]
 	var src, origin string
 	var argv []string
+	var baseDir string // base directory for relative `use` paths: a file's dir, else cwd
 	switch {
 	case len(rest) >= 1 && rest[0] == "-e":
 		if len(rest) < 2 {
@@ -103,6 +105,7 @@ loop:
 		}
 		src, origin = string(b), rest[0]
 		argv = rest[1:]
+		baseDir = filepath.Dir(rest[0])
 	default:
 		// One-liner mode needs an explicit program: reading stdin as the program would
 		// leave nothing to stream over (stdin is the input), so reject it clearly.
@@ -139,7 +142,7 @@ loop:
 	case "ast":
 		dumpAST(src, origin)
 	default:
-		runProgram(src, origin, argv)
+		runProgram(src, origin, argv, baseDir)
 	}
 }
 
@@ -244,13 +247,15 @@ func dumpAST(src, origin string) {
 	fmt.Println(prog.String())
 }
 
-func runProgram(src, origin string, argv []string) {
+func runProgram(src, origin string, argv []string, baseDir string) {
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if reportParseErrors(p, origin) {
 		os.Exit(1)
 	}
-	if err := eval.RunProgramWithArgs(prog, eval.NewEnv(), argv); err != nil {
+	env := eval.NewEnv()
+	env.SetModuleDir(baseDir)
+	if err := eval.RunProgramWithArgs(prog, env, argv); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {
 			os.Exit(code) // explicit exit()/die(): no error report
 		}
