@@ -16,6 +16,7 @@
 package eval
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"math"
@@ -26,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/parser"
 	"github.com/anafalanx/drang/internal/token"
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -215,6 +217,7 @@ func RunProgram(prog *ast.Program, env *Env) error {
 func NewREPLEnv() *Env {
 	env := NewEnv()
 	seedArgv(env, nil)
+	_ = RunPrelude(env) // the embedded prelude is validated by tests; ignore errors here
 	return env
 }
 
@@ -242,7 +245,40 @@ func EvalREPL(prog *ast.Program, env *Env) (value.Value, error) {
 // don't need argv may call RunProgram directly.
 func RunProgramWithArgs(prog *ast.Program, env *Env, argv []string) error {
 	seedArgv(env, argv)
+	if err := RunPrelude(env); err != nil {
+		return err
+	}
 	return RunProgramVM(prog, env) // the VM is the production path (walker fallback if uncompilable)
+}
+
+//go:embed prelude.dr
+var preludeSource string
+
+var (
+	preludeOnce sync.Once
+	preludeProg *ast.Program
+	preludeErr  error
+)
+
+// RunPrelude evaluates the embedded drang standard library into env, defining its
+// functions as globals before the user program runs. The prelude source is fixed at
+// build time, so it is parsed once per process and then evaluated into each env.
+func RunPrelude(env *Env) error {
+	preludeOnce.Do(func() {
+		p := parser.New(preludeSource)
+		preludeProg = p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			preludeErr = fmt.Errorf("prelude parse error: %s", strings.Join(errs, "; "))
+		}
+	})
+	if preludeErr != nil {
+		return preludeErr
+	}
+	// Run on the VM so the prelude's functions compile with its real bound-name set
+	// (direct builtin dispatch), exactly like normal user code, rather than the
+	// walker's shadowed=nil path (correct but slower — each builtin call would fall
+	// back through an env lookup).
+	return RunProgramVM(preludeProg, env)
 }
 
 func seedArgv(env *Env, argv []string) {

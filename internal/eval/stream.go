@@ -38,6 +38,9 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 	}
 	env := NewEnv()
 	seedArgv(env, argv)
+	if err := RunPrelude(env); err != nil {
+		return err
+	}
 
 	// Hoist BEGIN/END out of the per-line body.
 	var begin, body, end []ast.Stmt

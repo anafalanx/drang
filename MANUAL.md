@@ -1311,6 +1311,24 @@ Because every collection function returns a value (a new array, or `nil`), they 
 say([5, 3, 8, 1, 9, 2] |> filter(|$x| $x > 2) |> sort() |> take(3))   # [3, 5, 8]
 ```
 
+### Prelude: collection helpers written in drang
+
+A handful of everyday helpers are part of the standard library but written in drang
+itself — an embedded *prelude* — rather than in Go. They are pure compositions of the
+builtins above, available unqualified like any builtin:
+
+| Helper | Meaning |
+|--------|---------|
+| `flatten(xss)` | concatenate one level of nesting: `[[1, 2], [3]]` → `[1, 2, 3]` |
+| `sum_by(xs, f)` | sum of `f` over each element |
+| `tally(xs)` | count occurrences → a map `{value: count}` |
+| `count_by(xs, f)` | like `tally`, but keyed by `f(x)` |
+| `chunk(xs, n)` | split into `n`-sized pieces (`n < 1` is an error) |
+| `zip(a, b)` | pair two arrays element-wise, truncating to the shorter |
+
+Writing part of the stdlib in drang keeps the Go core small and pressure-tests the
+language; the rule for what goes in Go vs drang is recorded in DESIGN.
+
 ---
 
 ## Errors as Values
