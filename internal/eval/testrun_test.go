@@ -38,6 +38,56 @@ example 1 fails`
 	}
 }
 
+func TestExampleTopLevelExitNotMasked(t *testing.T) {
+	// A top-level exit() must not skip the examples (it once silently reported green).
+	src := "example 1 == 2\nexit(0)"
+	p := parser.New(src)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parse: %v", errs)
+	}
+	var buf bytes.Buffer
+	pass, fail, lerr := RunExamples(prog, "", "x.dr", &buf)
+	if lerr != nil {
+		t.Fatalf("load: %v", lerr)
+	}
+	if pass != 0 || fail != 1 {
+		t.Errorf("got %d passed, %d failed; want 0, 1 (exit must not mask)\n%s", pass, fail, buf.String())
+	}
+}
+
+func TestExampleSubjectExitIsFailure(t *testing.T) {
+	// exit()/die() inside an example must not be swallowed as a passing `fails`.
+	src := "example exit(3) fails"
+	p := parser.New(src)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parse: %v", errs)
+	}
+	var buf bytes.Buffer
+	pass, fail, lerr := RunExamples(prog, "", "x.dr", &buf)
+	if lerr != nil {
+		t.Fatalf("load: %v", lerr)
+	}
+	if pass != 0 || fail != 1 {
+		t.Errorf("exit in an example should fail, not pass; got %d passed, %d failed\n%s", pass, fail, buf.String())
+	}
+}
+
+func TestNestedExampleIsParseError(t *testing.T) {
+	p := parser.New("fn .f() {\n  example 1 == 1\n}")
+	p.ParseProgram()
+	found := false
+	for _, e := range p.Errors() {
+		if strings.Contains(e, "top level") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a nested example should be a parse error, got %v", p.Errors())
+	}
+}
+
 func TestExampleIsNoopInRun(t *testing.T) {
 	// An example must neither run nor error during a normal program run.
 	out := run(t, `fn .boom() { fail("x") }
