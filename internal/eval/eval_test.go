@@ -150,6 +150,7 @@ func TestOutput(t *testing.T) {
 		{"url-encode", `say(url_encode("a b&c=d"))`, "a+b%26c%3Dd\n"},
 		{"rand-range", `$r := rand(); say($r >= 0.0 and $r < 1.0)`, "true\n"},
 		{"rand-int-range", `$x := rand_int(5, 8); say($x >= 5 and $x < 8)`, "true\n"},
+		{"rand-int-wide", `$x := rand_int(-1, 9223372036854775807); say($x >= -1)`, "true\n"},
 		{"shuffle-preserves-len", `say(len(shuffle([1,2,3,4,5])))`, "5\n"},
 		{"uuid-format", `say(matches(uuid(), qr/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/))`, "true\n"},
 		{"lines-count", `say(len(lines("a\nb\nc")))`, "3\n"},
