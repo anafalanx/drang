@@ -1754,3 +1754,89 @@ Deferred from the decision poll: stringy coercion and a dropped-Err lint (both k
 as locked-tension items, not pursued); `struct`/record (maps suffice for now). The
 next phases are the niche-definers: one-liner mode, CSV, modules, then `drang fmt` /
 `drang test`.
+
+## Decision: namespaces, modules & the standard library (2026-06-27)
+
+Settled in a long design discussion. NOT YET BUILT — recorded so the eventual
+module / stdlib / `drang fmt` work all build on it.
+
+### Three sigil namespaces
+
+Every name carries its sigil at *every* occurrence (definition and use), and the
+three spaces are mutually collision-immune:
+
+| Sigil   | Kind                              | Examples                          |
+|---------|-----------------------------------|-----------------------------------|
+| `$name` | data — variables AND constants    | `$x := 5`, `$MARKER ::= "z.json"` |
+| `.name` | user-defined functions            | `fn .clean()` … `.clean()`        |
+| `name`  | built-in functions (the language) | `split`, `map`, `run`             |
+
+Consequences:
+- **Built-in ↔ user collisions are impossible** (separate sigil spaces). The stdlib
+  can grow new builtins forever without breaking user code, and a user never loses a
+  builtin by naming their own function — `split` (builtin) and `.split` (yours)
+  coexist. No shadowing, no version-gating-for-additions needed.
+- **The `.` has ONE meaning — member access.** `.foo` = member `foo` of the
+  *implicit* user namespace; `$u.foo` = member of the `$u` namespace; `$m.field` =
+  field of map `$m`. A Pratt parser handles it cleanly: prefix `.` (nud) =
+  implicit-namespace member, infix `.` (led) = field/member access. (`.5` is not a
+  float — floats need a leading digit — so there is no lexical clash.)
+- **Constants are `$`, not `.`** — they are data, already collision-immune via `$`.
+  So `.`-space is functions ONLY.
+
+### Built-in namespace (bare names)
+
+Flat, well-chosen ("Huffman-coded") bare names: short for the constantly-reached
+core, longer for the rare. Cohesive *specialized* domains may group by a
+`domain_verb` prefix convention (`time_now`, `hash_sha256`, `base64_encode`); the
+always-reached glue/collection/io core stays single-word (`split`, `map`, `run`).
+Because user code is walled off in `.`-space, builtins can safely claim the short
+prime names.
+
+### User functions (`.name`)
+
+Defined `fn .name(...)`, called `.name(...)` — the sigil is part of the name, exactly
+like `$x`. Two user functions of the same name (e.g. from two imported files) is an
+**error**, never a silent shadow.
+
+### Modules — user files only
+
+The stdlib is bare builtins (no `import` for it); modules exist ONLY to split a
+program across files. A module's exports are a **frozen record** of its `.`-functions
+and `$`-constants. ONE `use`, and whether you CAPTURE the result decides the mode:
+
+- **Flat merge** (uncaptured) — `use "./util"`: injects the module's `.foo` into your
+  `.`-space and `$BAR` into your `$`-space, as if pasted.
+- **Isolated** (captured) — `$u := use("./util")`: binds the export record to `$u`;
+  access `$u.foo()`, `$u.BAR`. Injects nothing into your flat namespaces. This IS
+  "aliased import" — bind to any `$name`; there is no `as` keyword.
+
+Rules: paths are **strings** (consistent with `read_file`/`glob`; a string carries a
+space for free), `.dr` extension optional. **Import-once** by canonical path
+(diamond-safe). Modules may export only frozen things (functions + constants) — **no
+mutable top-level vars** — preserving the frozen-top-level invariant that keeps
+`pmap` lock-free.
+
+### Evolution — revisable, not perfect
+
+The taxonomy is "good + revisable," not a one-shot:
+- **`drang fmt --fix`** carries rename/rewrite rules, so a future taxonomy revision
+  is a mechanical migration over any script (we own the AST). This is drang's edition
+  mechanism: rewrite source, don't carry multiple semantics.
+- A **lightweight version pragma** (min-version declaration/guard) — NOT full
+  editions. Built-in additions are already non-breaking (walled from `.`-space), so
+  the pragma needs no feature-gating for them.
+- **Not** a user-controlled / package-registry stdlib: the curated batteries-in-the-
+  binary stdlib is the value; user *files* are fine, a user-governed *stdlib* is not.
+
+### Settled vs open
+
+Settled: three-sigil model; dot-in-the-name for user functions; `.`-space is
+functions only (constants are `$`); same-name user collision = error; aliased import
+= the `$u := use(...)` capture form (no `as`); string paths, extension optional;
+modules = user-files-only with frozen exports + import-once.
+
+Open for the build phase: the exact `use` surface (how flat vs isolated is
+distinguished syntactically — e.g. parenless directive vs captured call, or an
+explicit alternative); the actual taxonomy pass (which builtins, which domains, final
+names); the `drang fmt --fix` rewrite-rule design; the version-pragma syntax.
