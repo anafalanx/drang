@@ -2089,3 +2089,65 @@ Tests in module_test.go (both forms, diamond/import-once, cycle, frozen-export
 reject, collision, missing-file, exit-propagation, non-transitive const, `use`-in-
 `pmap` no-false-cycle, failed-load-not-cached); build + full suite green, concurrent
 path race-clean.
+
+## Decision + build: value-level immutability (freeze) (2026-06-27)
+
+The module review found two HIGH bugs with one root cause: drang froze *bindings*
+(`binding.frozen`), not *values*. So an exported record and any constant holding an
+array/map were mutable, which (a) poisoned the shared module cache across importers
+and (b) raced under `pmap` (a `::=` constant array captured by workers, `-race`-
+confirmed). A multi-agent investigation (prior art + value-layer + concurrency
+boundaries + synthesis) settled the direction:
+
+**Verdict — not a Go limitation; ordinary language-design work.** The reference is
+**starlark-go** (Bazel loads modules in parallel over goroutines): a per-object
+`frozen bool`, a `Freeze()` that recurses at the sharing boundary, and a runtime
+`checkMutable` guard turning a write into a dynamic error. Pure runtime — Go's lack
+of compile-time `const` is irrelevant, and `go test -race` is an asset that *proves*
+the frozen-before-shared invariant. drang's value layer is structurally a near-clone
+(tagged `Value`; only `*Array`/`*OrderedMap` mutable; an existing cycle-safe
+`DeepCopyValue` to mirror).
+
+**Design (built):** a `frozen bool` on `*Array` and `*OrderedMap` (+ `IsFrozen()`); a
+deep, idempotent, cycle-safe `value.Freeze` (the frozen flag is its own cycle guard —
+Starlark's check-then-set-then-recurse); and a guard on the *four* user-reachable
+in-place mutators — `assignSlot` (index + field assign, shared by walker and VM),
+`push`, `pop`, `delete` — returning a catchable error. Because the walker and VM
+share these helpers, four guards cover both engines.
+
+**Two freeze boundaries:**
+1. **Module exports** — `collectExports` calls `value.Freeze` on the record, deep-
+   freezing every export. The single cached copy is now safe to share by reference;
+   mutating an export fails loudly instead of poisoning the cache. (Boundary 1.)
+2. **`::=` constants** — `env.define` freezes a value when it's bound constant (one
+   seam, both backends). A constant is now *deeply* immutable, not just an unrebind-
+   able name. This is the "general const-freeze" deferred earlier, revisited because
+   implementation showed it is the clean fix for the `pmap`/`spawn` race.
+
+**Why const-freeze rather than freezing the captured env at the concurrency
+boundary:** copy-on-send is *unsound* here — functions `DeepCopy` to themselves
+(keep their original `.Env`), so a worker calling a top-level function that touches a
+global still races; copy can't isolate transitive function access. Freeze-in-place
+*is* sound, but a top-level lambda captures the *whole* global env by pointer, so
+"freeze the captures" collapses to "freeze all globals, permanently" — too broad.
+The reported race was on a **constant**, so deep-freezing constants is the targeted,
+sound fix. A corpus scan (`$X ::= [`/`{` across the workspace) found three constant
+containers (`$components`, `$BUILTINS`, `$VERSIONED_RUNTIMES`), all read-only lookup
+tables — **zero migration cost**. Mutating a **mutable** (`:=`) global from parallel
+callbacks remains a documented "don't share mutable state" caveat, the same rule Go
+itself lives by (collect each callback's return instead).
+
+**Aliasing semantics (documented):** freeze follows the object — `$C ::= $existing`
+freezes the object `$existing` still points at (freeze-in-place, consistent with
+drang's reference semantics; no hidden copy). Bind a literal or a copy to keep the
+original mutable. In the corpus all constants are literals, so this never bites.
+
+**Migration:** one test (`const-interior`, which asserted the old mutable-interior
+behavior) moved from the output suite to the error suite; one VM-parity case switched
+`::=`→`:=` to keep testing index-assign on a mutable array.
+
+New tests: `value/freeze_test.go` (deep, idempotent, cycle-safe, scalar no-op);
+module exports reject `push`/index-assign and the cache can't be poisoned; `::=`
+interiors reject index-assign/`push`/`delete`; `pmap`/`spawn` over a constant are
+rejected and race-free (pass under `go test -race`). Build + full suite green; eval
+package race-clean.

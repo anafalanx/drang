@@ -21,8 +21,9 @@ import (
 // mutable top-level state is rejected, so exports are functions and constants only.
 // Modules load once per process (cached by canonical path), are diamond-safe, and
 // import cycles error. Flat-merge is NOT transitive (a name a module itself merged is
-// not re-exported). NOTE: exported VALUES are not yet deeply immutable — mutating an
-// exported container is a known gap, tracked separately.
+// not re-exported). Exports are deeply immutable: collectExports freezes the record
+// and everything reachable from it (value.Freeze), so the one shared cached copy is
+// safe to read across importers and a mutation fails loudly instead of poisoning it.
 
 var (
 	moduleMu    sync.Mutex
