@@ -31,12 +31,16 @@ func main() {
 	// A standalone executable (made by `drang build`) carries its program appended
 	// to this binary; run it directly, with every argument going to the script as
 	// $ARGV. A plain drang binary has no such payload and continues to the CLI.
-	if src, found, err := embeddedProgram(); found {
+	if src, name, found, err := embeddedProgram(); found {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "drang: corrupt standalone payload:", err)
 			os.Exit(1)
 		}
-		runProgram(string(src), standaloneOrigin(), os.Args[1:])
+		origin := name // errors name the original script (zdr.dr:line:col)
+		if origin == "" {
+			origin = standaloneOrigin()
+		}
+		runProgram(string(src), origin, os.Args[1:])
 		return
 	}
 	// `drang build <script.dr> [-o out]` compiles a script into a standalone exe.

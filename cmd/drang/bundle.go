@@ -7,7 +7,11 @@ package main
 //
 // Trailer layout (20 bytes, at the very end of the file):
 //   [ payloadLen : uint64 LE ][ version : uint32 LE ][ magic : 8 bytes ]
-// The compressed payload sits immediately before the trailer.
+// The compressed payload sits immediately before the trailer; once decompressed
+// it is framed as [ nameLen : uint16 LE ][ source basename ][ source ], so a
+// standalone's runtime errors can name the original script (zdr.dr:line:col)
+// instead of the executable. (A standalone always carries the matching runtime,
+// so the format never needs cross-version compatibility.)
 
 import (
 	"bytes"
@@ -25,7 +29,7 @@ import (
 
 const (
 	sfxMagic   = "DRANGsfx" // marks an appended standalone payload
-	sfxVersion = uint32(1)  // payload format version
+	sfxVersion = uint32(2)  // payload format version (v2 frames the source name)
 	sfxFooter  = 8 + 4 + 8  // payloadLen + version + magic
 )
 
@@ -35,65 +39,75 @@ const (
 // non-nil only when the trailer IS present but the payload can't be read
 // (corruption or an incompatible build), which the caller should treat as fatal
 // rather than silently dropping into CLI mode.
-func embeddedProgram() (src []byte, found bool, err error) {
+func embeddedProgram() (src []byte, name string, found bool, err error) {
 	exe, e := os.Executable()
 	if e != nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if real, e := filepath.EvalSymlinks(exe); e == nil {
 		exe = real
 	}
 	f, e := os.Open(exe)
 	if e != nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	defer f.Close()
 	fi, e := f.Stat()
 	if e != nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	return extractPayload(f, fi.Size())
 }
 
 // extractPayload reads an appended standalone payload from r (a file of the given
-// total size). It is the I/O-decoupled core of embeddedProgram, exposed for tests.
-func extractPayload(r io.ReaderAt, size int64) (src []byte, found bool, err error) {
+// total size), returning the embedded source and its original basename. It is the
+// I/O-decoupled core of embeddedProgram, exposed for tests.
+func extractPayload(r io.ReaderAt, size int64) (src []byte, name string, found bool, err error) {
 	if size < int64(sfxFooter) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	footer := make([]byte, sfxFooter)
 	if _, e := r.ReadAt(footer, size-int64(sfxFooter)); e != nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if string(footer[12:20]) != sfxMagic {
-		return nil, false, nil // plain binary
+		return nil, "", false, nil // plain binary
 	}
 	// From here the trailer is ours: any problem is a real error.
 	if v := binary.LittleEndian.Uint32(footer[8:12]); v != sfxVersion {
-		return nil, true, fmt.Errorf("standalone payload version %d, this drang understands %d", v, sfxVersion)
+		return nil, "", true, fmt.Errorf("standalone payload version %d, this drang understands %d", v, sfxVersion)
 	}
 	plen := int64(binary.LittleEndian.Uint64(footer[0:8]))
 	start := size - int64(sfxFooter) - plen
 	if plen < 0 || start < 0 {
-		return nil, true, fmt.Errorf("standalone payload length out of range")
+		return nil, "", true, fmt.Errorf("standalone payload length out of range")
 	}
 	comp := make([]byte, plen)
 	if _, e := r.ReadAt(comp, start); e != nil {
-		return nil, true, e
+		return nil, "", true, e
 	}
 	gz, e := gzip.NewReader(bytes.NewReader(comp))
 	if e != nil {
-		return nil, true, e
+		return nil, "", true, e
 	}
 	defer gz.Close()
-	src, e = io.ReadAll(gz)
+	raw, e := io.ReadAll(gz)
 	if e != nil {
-		return nil, true, e
+		return nil, "", true, e
 	}
-	return src, true, nil
+	// Framing: [uint16 nameLen][name][source].
+	if len(raw) < 2 {
+		return nil, "", true, fmt.Errorf("standalone payload truncated")
+	}
+	nlen := int(binary.LittleEndian.Uint16(raw[0:2]))
+	if 2+nlen > len(raw) {
+		return nil, "", true, fmt.Errorf("standalone payload name length out of range")
+	}
+	return raw[2+nlen:], string(raw[2 : 2+nlen]), true, nil
 }
 
-// standaloneOrigin names the running executable for error messages.
+// standaloneOrigin names the running executable, the fallback origin when an
+// embedded payload carries no source name.
 func standaloneOrigin() string {
 	if exe, err := os.Executable(); err == nil {
 		return filepath.Base(exe)
@@ -158,7 +172,7 @@ func buildStandalone(args []string) {
 		fmt.Fprintln(os.Stderr, "drang build: refusing to overwrite the running drang binary — choose a different -o")
 		os.Exit(1)
 	}
-	n, err := writeStandalone(exe, outPath, src)
+	n, err := writeStandalone(exe, outPath, filepath.Base(srcPath), src)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang build:", err)
 		os.Exit(1)
@@ -211,14 +225,18 @@ func defaultOutput(srcPath string) string {
 // It writes to a temp file in the destination directory and renames on success,
 // so a failed or partial build never truncates an existing file. Returns the
 // total output size.
-func writeStandalone(runtimeExe, outPath string, src []byte) (int64, error) {
+func writeStandalone(runtimeExe, outPath, name string, src []byte) (int64, error) {
 	in, err := os.Open(runtimeExe)
 	if err != nil {
 		return 0, err
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".drang-build-*")
+	dir := filepath.Dir(outPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil { // create the -o parent dir if missing
+		return 0, err
+	}
+	tmp, err := os.CreateTemp(dir, ".drang-build-*")
 	if err != nil {
 		return 0, err
 	}
@@ -234,7 +252,7 @@ func writeStandalone(runtimeExe, outPath string, src []byte) (int64, error) {
 	if _, err := io.Copy(tmp, in); err != nil {
 		return 0, err
 	}
-	if _, err := tmp.Write(packPayload(src)); err != nil {
+	if _, err := tmp.Write(packPayload(name, src)); err != nil {
 		return 0, err
 	}
 	if err := tmp.Close(); err != nil {
@@ -253,12 +271,22 @@ func writeStandalone(runtimeExe, outPath string, src []byte) (int64, error) {
 	return 0, nil
 }
 
-// packPayload compresses src and appends the trailer, returning the bytes to add
-// after the runtime binary: gzip(src) followed by the 20-byte trailer.
-func packPayload(src []byte) []byte {
+// packPayload frames the name + source, compresses them, and appends the trailer,
+// returning the bytes to add after the runtime binary.
+func packPayload(name string, src []byte) []byte {
+	if len(name) > 0xffff {
+		name = name[:0xffff] // basenames are short; clamp defensively
+	}
+	var raw bytes.Buffer
+	var nl [2]byte
+	binary.LittleEndian.PutUint16(nl[:], uint16(len(name)))
+	raw.Write(nl[:])
+	raw.WriteString(name)
+	raw.Write(src)
+
 	var buf bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-	_, _ = zw.Write(src)
+	_, _ = zw.Write(raw.Bytes())
 	_ = zw.Close()
 	payload := buf.Bytes()
 	footer := make([]byte, sfxFooter)
