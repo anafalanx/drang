@@ -1933,3 +1933,84 @@ truncates. New tests in csv_test.go; build + full suite green.
 
 Deferred for CSV: a streaming row reader (whole-string for now), quote-all/quoting
 styles (Go's writer is minimal-only), and a TSV convenience (use `{sep: "\t"}`).
+
+## Decision: Go vs drang for the standard library (2026-06-27)
+
+How to decide whether a stdlib feature is a Go builtin or written in drang.
+
+Rule: a new POWER goes in Go; a new NAME for a combination of existing powers goes
+in drang. drang is a closed value model (it reaches the OS, a Go library, or the
+runtime only through builtins), so anything touching the outside world or needing Go
+machinery MUST be Go. Everything expressible as composition of existing builtins is a
+choice, and the default is drang.
+
+Litmus, in order:
+1. Needs a power drang lacks (OS / files / process / net, a Go stdlib, a new VM
+   primitive, or an invariant only Go enforces like pmap-safety)? Go (forced).
+2. Is it the language's "physics" (core value/collection ops the VM leans on) or a
+   MEASURED hot path? Go.
+3. Otherwise (pure composition)? drang.
+
+Asymmetry: every Go builtin is permanent binary/API surface the "every builtin pulls
+weight" gate must justify (high bar); a drang stdlib function is cheap to add, read,
+fork, and evolve, and it dogfoods the language (a real expressiveness pressure-test
+plus idiomatic examples). So keep the Go core small and sharp; let the broader
+convenience layer live in drang. Even on the Go side, expose capability THINLY and
+let ergonomic shaping compose in drang on top ("complete via Go = thin bindings, not
+tall features").
+
+Key freedom: behind the bare-name stdlib the user cannot tell Go from drang, so the
+implementation language is a movable detail. Prototype in drang; promote to Go only
+when a profiler (not a hunch) says it is hot. The name never changes, so when in
+doubt write it in drang.
+
+Examples. Go: from_csv/from_json, regex, run/capture, read_file, the time and hash
+families, chan/spawn/pmap, sys_gc. drang: flatten, compact, tally/count_by, uniq_by,
+chunk, zip, min_by/max_by, titlecase, report/CLI sugar.
+
+Startup cost. A drang stdlib ships as a frozen PRELUDE embedded in the binary. Done
+naively (parse and compile the source on every process start) it adds a
+size-proportional cost paid by every run, even one that uses none of it: likely
+sub-millisecond for a small prelude, but it scales, and drang competes with awk/sed
+on instant startup. The fix: PRECOMPILE the prelude to bytecode at BUILD time (a
+go:generate step that emits the Protos as Go data) and embed that, so startup
+collapses to wiring ready-made Function values, about the same cost as a Go builtin.
+No bytecode-versioning issue (compiled fresh each build, never persisted across
+versions). Pragmatics: naive is fine while the prelude is tiny; add precompilation
+when it would be felt; add a startup benchmark now and watch it. So startup does NOT
+gate the Go-vs-drang choice.
+
+Prerequisite: the drang side activates once the prelude/embedding mechanism exists,
+the same machinery as Phase 4 (modules). Until then, stdlib is Go by necessity; keep
+would-be-drang helpers thin and unbuilt so they relocate cleanly. drang stdlib code
+still needs its own drang-level tests and the same purity (frozen, pmap-safe) as
+everything else.
+
+## Build progress: drang prelude (2026-06-27)
+
+Phase 4b: a standard library written in drang itself. An embedded prelude
+(internal/eval/prelude.dr via go:embed) is parsed once and run into every program's
+global env by RunPrelude — called from RunProgramWithArgs, RunStream, and NewREPLEnv
+— defining its functions as ordinary globals, reachable like builtins. First batch
+(pure compositions, no new capability): flatten, sum_by, tally, count_by, chunk,
+zip. This is the drang half of the "Go vs drang for the standard library" decision,
+and the same embed machinery modules (Phase 4c) will reuse.
+
+The prelude is run via RunProgramVM (not the tree-walker) so its functions compile
+with a real bound-name set (direct builtin dispatch), like normal user code, rather
+than newFunction's shadowed=nil path (correct but slower).
+
+Startup: the ~50-line prelude parses in well under a millisecond, dwarfed by process
+start; precompiling it to embedded bytecode (the go:generate path noted in the stdlib
+decision) is the optimization if it ever grows enough to matter. A startup benchmark
+should be added before it does.
+
+Lesson: min_by / max_by / sort / flat_map are ALREADY HOF builtins (an earlier
+inventory missed them). Defining them in the prelude only shadowed the builtins via
+the tree-walker; the compiled path correctly direct-dispatches HOF names straight to
+the builtin (bypassing the env), so a prelude redefinition was unreachable from
+compiled code. Takeaway: prelude functions must use NEW names; min_by/max_by stay
+builtins. (This briefly looked like a VM bug before the shadowing was spotted.)
+
+New tests in prelude_test.go (a runP helper loads the prelude); build + full suite
+green.

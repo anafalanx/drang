@@ -1,0 +1,62 @@
+# drang prelude — a small standard library written in drang itself.
+#
+# Every function here is a pure composition of existing builtins (no new
+# capability); see DESIGN "Decision: Go vs drang for the standard library". The
+# prelude is embedded in the binary and loaded into every program's global scope,
+# so these names are available unqualified, like builtins.
+
+# flatten one level: [[1, 2], [3]] -> [1, 2, 3]
+fn flatten($xs) {
+  $out := []
+  for $sub in $xs {
+    for $x in $sub { push($out, $x) }
+  }
+  $out
+}
+
+# sum of f applied to each element: sum_by(people, |$p| $p.age)
+fn sum_by($xs, $f) { sum(map($xs, $f)) }
+
+# (min_by / max_by / sort / flat_map are already HOF builtins, not prelude helpers.)
+
+# count occurrences: tally(["a", "a", "b"]) -> {a: 2, b: 1}
+fn tally($xs) {
+  reduce($xs, {}, |$acc, $x| {
+    $acc[$x] = ($acc[$x] // 0) + 1
+    $acc
+  })
+}
+
+# count by a key function: count_by(words, |$w| len($w)) -> {3: 5, 4: 2, ...}
+fn count_by($xs, $f) {
+  reduce($xs, {}, |$acc, $x| {
+    $k := $f($x)
+    $acc[$k] = ($acc[$k] // 0) + 1
+    $acc
+  })
+}
+
+# split into chunks of n: chunk([1, 2, 3, 4, 5], 2) -> [[1, 2], [3, 4], [5]]
+fn chunk($xs, $n) {
+  if $n < 1 { return fail("chunk: n must be a positive integer") }
+  $out := []
+  $i := 0
+  while $i < len($xs) {
+    push($out, take(drop($xs, $i), $n))
+    $i = $i + $n
+  }
+  $out
+}
+
+# pair two arrays element-wise, truncating to the shorter:
+# zip([1, 2, 3], ["a", "b"]) -> [[1, "a"], [2, "b"]]
+fn zip($a, $b) {
+  $out := []
+  $n := min(len($a), len($b))
+  $i := 0
+  while $i < $n {
+    push($out, [$a[$i], $b[$i]])
+    $i = $i + 1
+  }
+  $out
+}
