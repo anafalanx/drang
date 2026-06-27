@@ -124,6 +124,9 @@ func (e *Env) define(name string, v value.Value, frozen bool) error {
 		}
 		return fmt.Errorf("cannot redeclare constant $%s", name)
 	}
+	if frozen {
+		value.Freeze(v) // a constant's value is deeply immutable, not just its binding
+	}
 	e.vars[name] = binding{v: v, frozen: frozen}
 	return nil
 }

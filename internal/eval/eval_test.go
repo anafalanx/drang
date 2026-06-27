@@ -96,9 +96,6 @@ func TestOutput(t *testing.T) {
 		{"recover-default", `say(int("x") // -1)`, "-1\n"},
 		{"defor-on-error", `say(int("x") // 0)`, "0\n"},
 
-		// const interior mutability
-		{"const-interior", `$c ::= [1, 2, 3]; $c[0] = 9; say($c)`, "[9, 2, 3]\n"},
-
 		// review-confirmed regressions
 		{"range-len-saturate", `say(len(0..9223372036854775807))`, "9223372036854775807\n"},
 		{"range-huge-truthy", `if 0..9223372036854775807 { say("y") } else { say("n") }`, "y\n"},
@@ -232,6 +229,9 @@ func runErr(t *testing.T, src string) string {
 func TestRuntimeErrors(t *testing.T) {
 	cases := []struct{ name, src, wantSubstr string }{
 		{"const-rebind", `$c ::= 1; $c = 2`, "constant"},
+		{"const-interior-frozen", `$c ::= [1, 2, 3]; $c[0] = 9`, "frozen"},
+		{"const-map-frozen", `$m ::= {"a": 1}; $m["b"] = 2`, "frozen"},
+		{"const-push-frozen", `$c ::= [1]; push($c, 2)?`, "frozen"},
 		{"gap-write", `$a := [1]; $a[5] = 9`, "past end"},
 		{"non-iterable", `for $x in 42 { say($x) }`, "cannot iterate"},
 		{"assign-undeclared", `$x = 5`, "undefined"},

@@ -242,7 +242,7 @@ say($counts.x, $counts.y)`,
 	`$m := {}
 $m.deep = "x"
 say($m.deep)`,
-	`$k ::= [1, 2]
+	`$k := [1, 2]
 $k[0] = 9
 say($k)`,
 	// variable compound assignment

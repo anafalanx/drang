@@ -240,6 +240,26 @@ drang: cannot assign to constant $k
          ^
 ```
 
+A constant is **deeply immutable**, not just an unrebindable name: if you bind a
+container to a constant, its contents are frozen too. Mutating one — by index/field
+assignment, `push`, `pop`, or `delete` — is an error.
+
+```drang
+$TABLE ::= {"a": 1, "b": 2}
+$TABLE["c"] = 3            # error: cannot modify a frozen map
+$NAMES ::= ["ana", "bo"]
+push($NAMES, "cy")        # error value: cannot push to a frozen array
+```
+
+This is what makes a constant safe to share read-only across `pmap`/`spawn` workers
+without copying or locking — a worker reads it freely, and an accidental write fails
+loudly instead of racing. (Mutable `:=` containers are *not* frozen; sharing a
+mutable container into parallel callbacks and writing it is still a data race you
+must avoid — collect each callback's return value instead.) Freezing follows the
+object: binding an existing mutable container to a constant (`$C ::= $existing`)
+freezes that object, so `$existing` becomes read-only too — bind a fresh literal, or
+a copy, if you need the original to stay mutable.
+
 ### Value types at a glance
 
 | Type | Example literal / how you get one |
@@ -2512,9 +2532,9 @@ A failed **flat-merge** statement aborts the program with the import error.
 - A bare `use("./util")` **with parentheses, as a statement** (result discarded) loads
   the module but imports nothing — almost always a mistake. Write `use "./util"` to
   merge, or `$u := use("./util")` to capture.
-- Exported values are **not yet deeply immutable.** Treat a module's exports as
-  read-only; mutating an exported array/map (or the record itself) is a known gap and
-  can affect other importers. Immutable exports are planned.
+- Exported values are **deeply immutable.** A module's exports (the record and every
+  array/map within) are frozen, so mutating one fails loudly rather than affecting
+  other importers — exports are safe to share across the import cache.
 - Every top-level `.foo` is exported; there is no module-private helper yet.
 
 ---
