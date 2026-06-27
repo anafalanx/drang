@@ -637,6 +637,25 @@ line one
 line three
 ```
 
+### Indexing and slicing
+
+Strings index and slice **by rune** (not byte), so Unicode is handled correctly.
+`s[i]` returns the i-th character as a one-character string; a negative index counts
+from the end; an out-of-range index is a catchable error. `s[lo..hi]` is a substring
+over an **inclusive** rune range (negatives count from the end, bounds clamp, an
+empty/reversed range yields `""`):
+
+```drang
+say("hello"[0])        # h
+say("hello"[-1])       # o
+say("héllo"[1])        # é      (rune-aware)
+say("hello"[1..3])     # ell    (inclusive)
+say("héllo"[0..1])     # hé
+say("hi"[9] // "?")    # ?      (out of range -> catchable error)
+```
+
+(Indexing reads only — `s[i] = …` is not assignment; build a new string instead.)
+
 ### String builtins
 
 | Builtin | Signature | Notes |
@@ -1213,6 +1232,18 @@ say([10, 20, 30][-2])    # 20
 ```drang
 say([1, 2][5])           # error: index 5 out of range (len 2)
 say([10, 20, 30][-4])    # error: index -4 out of range (len 3)
+```
+
+**Slicing** uses a range index, `arr[lo..hi]`, and returns a new array. The range is
+**inclusive** (like every drang range), so `arr[1..3]` includes index 3. Negative
+bounds count from the end, out-of-range bounds clamp, and an empty or reversed range
+yields `[]` — so a slice never errors:
+
+```drang
+say([10, 20, 30, 40, 50][1..3])    # [20, 30, 40]   (inclusive)
+say([10, 20, 30, 40, 50][-2..-1])  # [40, 50]
+say([10, 20, 30][1..99])           # [20, 30]        (clamped)
+say([10, 20, 30][2..0])            # []              (reversed)
 ```
 
 `len` returns the element count (and works on maps, ranges, and strings too):
@@ -2913,7 +2944,6 @@ Several features are specified in DESIGN.md but do not work in the binary yet �
 
 - **Structs.** `struct Foo { ... }` is a parse error. Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
 - **Default / named / variadic parameters.** `fn .f($a, $b=8080)` and `$a...` are parse errors; every parameter is required and positional.
-- **Slices and string indexing/substring.** A range index (`$a[1..3]`) and string indexing (`$s[2]`, `$s[2..5]`) parse but error at runtime. Use `take`/`drop` on arrays and `chars` on strings for now.
 - **`=~` match / `s///` substitution operators.** These are parse errors; use the `match` / `matches` / `gsub` builtins instead.
 - **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
 
