@@ -315,8 +315,8 @@ func (c *compiler) konst(v value.Value) int32 {
 // addTemplate records a nested function/lambda, pre-compiling its body so a
 // VM-created closure reuses the bytecode (Proto stays nil if it doesn't compile,
 // and that closure tree-walks).
-func (c *compiler) addTemplate(name string, params []string, body *ast.Block) int32 {
-	t := &FuncTemplate{Name: name, Params: params, Body: body}
+func (c *compiler) addTemplate(name string, params []string, defaults []ast.Expr, body *ast.Block) int32 {
+	t := &FuncTemplate{Name: name, Params: params, Defaults: defaults, Body: body}
 	if proto, ok := compileFunctionBody(params, body, c.shadowed); ok {
 		t.Proto = proto
 	}
@@ -392,7 +392,7 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 	case *ast.FnDecl:
 		// Register-eligible functions never contain a nested FnDecl, so this only
 		// runs in Env mode (where OpDeclVar binds into the per-call/global env).
-		idx := c.addTemplate(n.Name, n.Params, n.Body)
+		idx := c.addTemplate(n.Name, n.Params, n.Defaults, n.Body)
 		r := c.reserve()
 		c.emit(OpMakeClosure, r, idx, 0)
 		c.emit(OpDeclVar, r, c.konst(value.MakeStr(n.Name)), 0)
@@ -816,7 +816,7 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 			c.emit(OpMove, dst, base, 0)
 		}
 	case *ast.Lambda:
-		idx := c.addTemplate("", n.Params, n.Body)
+		idx := c.addTemplate("", n.Params, n.Defaults, n.Body)
 		c.emit(OpMakeClosure, dst, idx, 0)
 	case *ast.ArrayLit:
 		count := int32(len(n.Elems))

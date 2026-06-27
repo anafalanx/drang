@@ -506,7 +506,7 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 		case OpMakeClosure:
 			t := p.Protos[in.B]
 			regs[in.A] = value.MakeObj(value.Func, &Function{
-				Name: t.Name, Params: t.Params, Body: t.Body, Env: env, Proto: t.Proto,
+				Name: t.Name, Params: t.Params, Defaults: t.Defaults, Body: t.Body, Env: env, Proto: t.Proto,
 			})
 		case OpIterNew:
 			it, err := newForIter(regs[in.B])

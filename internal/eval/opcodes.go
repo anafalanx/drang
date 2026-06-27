@@ -110,8 +110,9 @@ type Proto struct {
 // capturing env. Proto is the pre-compiled body, or nil when the body did not
 // compile (that closure then tree-walks via Body).
 type FuncTemplate struct {
-	Name   string
-	Params []string
-	Body   *ast.Block
-	Proto  *Proto
+	Name     string
+	Params   []string
+	Defaults []ast.Expr // parallel to Params; a nil entry means the parameter is required
+	Body     *ast.Block
+	Proto    *Proto
 }

@@ -477,23 +477,49 @@ func (p *Parser) parseMapLit() ast.Expr {
 // parseLambda parses an anonymous function: |$a, $b| expr  or  |$a| { ... }.
 // A '{' immediately after the parameters is a block body; to return a map, wrap
 // it in parens: |$x| ({a: 1}).
+// parseParams parses a comma-separated parameter list — each $name with an optional
+// `= default` — up to the given closing token. A required parameter may not follow a
+// defaulted one. The returned defaults slice is parallel to params (nil = required).
+func (p *Parser) parseParams(end token.Kind) (params []string, defaults []ast.Expr, ok bool) {
+	if p.tok.Kind == end {
+		return nil, nil, true
+	}
+	seenDefault := false
+	for {
+		if p.tok.Kind != token.VAR {
+			p.errorf("expected $param, got %s %q", p.tok.Kind, p.tok.Lit)
+			return nil, nil, false
+		}
+		params = append(params, p.tok.Lit)
+		p.next()
+		if p.tok.Kind == token.ASSIGN { // $name = default
+			p.next()
+			d := p.parseExpr(lowest)
+			if d == nil {
+				return nil, nil, false
+			}
+			defaults = append(defaults, d)
+			seenDefault = true
+		} else {
+			if seenDefault {
+				p.errorf("a required parameter ($%s) cannot follow a defaulted one", params[len(params)-1])
+			}
+			defaults = append(defaults, nil)
+		}
+		if p.tok.Kind != token.COMMA {
+			break
+		}
+		p.next()
+	}
+	return params, defaults, true
+}
+
 func (p *Parser) parseLambda() ast.Expr {
 	pos := p.here()
 	p.next() // opening '|'
-	var params []string
-	if p.tok.Kind != token.BAR {
-		for {
-			if p.tok.Kind != token.VAR {
-				p.errorf("expected $param in lambda, got %s %q", p.tok.Kind, p.tok.Lit)
-				return nil
-			}
-			params = append(params, p.tok.Lit)
-			p.next()
-			if p.tok.Kind != token.COMMA {
-				break
-			}
-			p.next()
-		}
+	params, defaults, ok := p.parseParams(token.BAR)
+	if !ok {
+		return nil
 	}
 	if p.tok.Kind != token.BAR {
 		p.errorf("expected '|' to close lambda parameters, got %s %q", p.tok.Kind, p.tok.Lit)
@@ -517,7 +543,7 @@ func (p *Parser) parseLambda() ast.Expr {
 	if body == nil {
 		return nil
 	}
-	return &ast.Lambda{Pos: pos, Params: params, Body: body}
+	return &ast.Lambda{Pos: pos, Params: params, Defaults: defaults, Body: body}
 }
 
 func (p *Parser) parseIf() ast.Stmt {
@@ -1030,20 +1056,9 @@ func (p *Parser) parseFn() ast.Stmt {
 		return nil
 	}
 	p.next()
-	var params []string
-	if p.tok.Kind != token.RPAREN {
-		for {
-			if p.tok.Kind != token.VAR {
-				p.errorf("expected $param, got %s %q", p.tok.Kind, p.tok.Lit)
-				return nil
-			}
-			params = append(params, p.tok.Lit)
-			p.next()
-			if p.tok.Kind != token.COMMA {
-				break
-			}
-			p.next()
-		}
+	params, defaults, ok := p.parseParams(token.RPAREN)
+	if !ok {
+		return nil
 	}
 	if p.tok.Kind != token.RPAREN {
 		p.errorf("expected ')' to close parameters, got %s %q", p.tok.Kind, p.tok.Lit)
@@ -1057,7 +1072,7 @@ func (p *Parser) parseFn() ast.Stmt {
 	if body == nil {
 		return nil
 	}
-	return &ast.FnDecl{Name: name, Params: params, Body: body}
+	return &ast.FnDecl{Name: name, Params: params, Defaults: defaults, Body: body}
 }
 
 func (p *Parser) parseReturn() ast.Stmt {

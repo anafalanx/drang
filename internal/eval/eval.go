@@ -150,11 +150,12 @@ func (e *Env) set(name string, v value.Value) (ok, frozen bool) {
 // Proto is its body compiled to bytecode (nil if the body did not compile, in
 // which case callFunction tree-walks Body instead).
 type Function struct {
-	Name   string
-	Params []string
-	Body   *ast.Block
-	Env    *Env
-	Proto  *Proto
+	Name     string
+	Params   []string
+	Defaults []ast.Expr // parallel to Params; a nil entry means the parameter is required
+	Body     *ast.Block
+	Env      *Env
+	Proto    *Proto
 }
 
 // vmEnabled controls whether functions compile their bodies to bytecode (and thus
@@ -166,8 +167,8 @@ var vmEnabled = true
 // compiler can, so the function runs on the VM no matter which backend created it
 // (a tree-walked program's functions still get a Proto and run on the VM when
 // called). A body the compiler doesn't handle leaves Proto nil and tree-walks.
-func newFunction(name string, params []string, body *ast.Block, env *Env) *Function {
-	fn := &Function{Name: name, Params: params, Body: body, Env: env}
+func newFunction(name string, params []string, defaults []ast.Expr, body *ast.Block, env *Env) *Function {
+	fn := &Function{Name: name, Params: params, Defaults: defaults, Body: body, Env: env}
 	if vmEnabled {
 		// nil shadow set: without whole-program context, assume every name could be
 		// shadowed (no direct dispatch). This path is the rare walker fallback;
@@ -376,7 +377,7 @@ func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
 	case *ast.AssignStmt:
 		return evalAssign(n, env)
 	case *ast.FnDecl:
-		fn := newFunction(n.Name, n.Params, n.Body, env)
+		fn := newFunction(n.Name, n.Params, n.Defaults, n.Body, env)
 		if err := env.define(n.Name, value.MakeObj(value.Func, fn), false); err != nil {
 			return value.MakeNil(), err
 		}
@@ -1087,7 +1088,7 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		}
 		return v, nil
 	case *ast.Lambda:
-		return value.MakeObj(value.Func, newFunction("", n.Params, n.Body, env)), nil
+		return value.MakeObj(value.Func, newFunction("", n.Params, n.Defaults, n.Body, env)), nil
 	}
 	return value.MakeNil(), fmt.Errorf("eval: unknown expression %T", e)
 }
@@ -1335,13 +1336,63 @@ func asFunction(v value.Value) (*Function, bool) {
 	return nil, false
 }
 
-func callFunction(fn *Function, args []value.Value) (value.Value, error) {
-	if len(args) != len(fn.Params) {
-		name := fn.Name
-		if name == "" {
-			name = "function"
+// bindArgs validates the argument count and fills any missing trailing arguments from
+// the parameters' default expressions — evaluated at call time, left to right, so a
+// default may reference an earlier parameter (and there is no shared-mutable-default
+// gotcha). It returns the full positional argument list.
+func bindArgs(fn *Function, args []value.Value) ([]value.Value, error) {
+	np := len(fn.Params)
+	if len(args) == np {
+		return args, nil
+	}
+	if len(args) > np {
+		return nil, arityError(fn, len(args))
+	}
+	full := make([]value.Value, np)
+	copy(full, args)
+	scope := fn.Env.child() // a throwaway scope so a default can see earlier parameters
+	for i := 0; i < len(args); i++ {
+		_ = scope.define(fn.Params[i], args[i], false)
+	}
+	for i := len(args); i < np; i++ {
+		if i >= len(fn.Defaults) || fn.Defaults[i] == nil {
+			return nil, arityError(fn, len(args))
 		}
-		return value.MakeNil(), fmt.Errorf("%s expects %d argument(s), got %d", name, len(fn.Params), len(args))
+		v, err := evalExpr(fn.Defaults[i], scope)
+		if err != nil {
+			return nil, err
+		}
+		full[i] = v
+		_ = scope.define(fn.Params[i], v, false)
+	}
+	return full, nil
+}
+
+// arityError reports a wrong argument count, noting the accepted range when the
+// function has defaulted (optional) parameters.
+func arityError(fn *Function, got int) error {
+	name := fn.Name
+	if name == "" {
+		name = "function"
+	}
+	np := len(fn.Params)
+	required := np
+	for i := 0; i < len(fn.Defaults); i++ {
+		if fn.Defaults[i] != nil {
+			required = i
+			break
+		}
+	}
+	if required == np {
+		return fmt.Errorf("%s expects %d argument(s), got %d", name, np, got)
+	}
+	return fmt.Errorf("%s expects %d to %d arguments, got %d", name, required, np, got)
+}
+
+func callFunction(fn *Function, args []value.Value) (value.Value, error) {
+	args, err := bindArgs(fn, args)
+	if err != nil {
+		return value.MakeNil(), err
 	}
 	if fn.Proto != nil {
 		return vmCallFunction(fn, args)
