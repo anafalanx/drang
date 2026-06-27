@@ -18,6 +18,8 @@ func TestNumericBuiltins(t *testing.T) {
 		{"ceil", `say(ceil(2.1))`, "3\n"},
 		{"round", `say(round(2.5))`, "3\n"},
 		{"floor-int-passthrough", `say(floor(5))`, "5\n"},
+		{"floor-min-int64-in-range", `say(floor(-9223372036854775808.0))`, "-9223372036854775808\n"},
+		{"round-huge-errs", `say(is_err(round(99999999999999999999.0)))`, "true\n"},
 		{"abspath-is-abs", `say(is_abs(abspath("x")))`, "true\n"},
 
 		// error paths are catchable Err values, not aborts

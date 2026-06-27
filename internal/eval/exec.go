@@ -290,7 +290,7 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 			var ee *exec.ExitError
 			if errors.As(runErr, &ee) {
 				code = ee.ExitCode()
-				if code == 0 { // killed by signal reports -1; never report a failure as 0
+				if code < 1 { // signal kill reports -1 (Unix); never report a failure as <=0
 					code = 1
 				}
 			} else {
