@@ -1222,22 +1222,28 @@ var builtins = map[string]builtin{
 	"contains":   builtinContains,
 
 	// filesystem: path helpers
-	"join":     builtinJoin,
-	"dirname":  builtinDirname,
-	"basename": builtinBasename,
-	"ext":      builtinExt,
-	"stem":     builtinStem,
-	"abs":      builtinAbs,
-	"slash":    builtinSlash,
+	"join":          builtinJoin,
+	"dirname":       builtinDirname,
+	"basename":      builtinBasename,
+	"ext":           builtinExt,
+	"stem":          builtinStem,
+	"abs":           builtinAbs,
+	"slash":         builtinSlash,
+	"is_abs":        builtinIsAbs,
+	"clean":         builtinClean,
+	"rel":           builtinRel,
+	"within":        builtinWithin,
+	"path_list_sep": builtinPathListSep,
 	// filesystem: stat guards
 	"exists": builtinExists,
 	"isdir":  builtinIsdir,
 	// filesystem: fallible ops
-	"glob":  builtinGlob,
-	"mkdir": builtinMkdir,
-	"mtime": builtinMtime,
-	"newer": builtinNewer,
-	"stale": builtinStale,
+	"glob":     builtinGlob,
+	"read_dir": builtinReadDir,
+	"mkdir":    builtinMkdir,
+	"mtime":    builtinMtime,
+	"newer":    builtinNewer,
+	"stale":    builtinStale,
 	// filesystem: file IO + atomic-swap family
 	"read_file":  builtinReadFile,
 	"write_file": builtinWriteFile,
@@ -1286,6 +1292,7 @@ var builtins = map[string]builtin{
 	// runtime knobs
 	"gc":  builtinGC,
 	"cwd": builtinCwd,
+	"env": builtinEnv,
 }
 
 // stdout is where say writes its output; tests override it to capture output.

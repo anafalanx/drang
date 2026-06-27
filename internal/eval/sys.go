@@ -22,6 +22,27 @@ func builtinCwd(args []value.Value) (value.Value, error) {
 	return value.MakeStr(dir), nil
 }
 
+// builtinEnv reads a process environment variable, returning its value, or the
+// optional default (nil if omitted) when unset. Unlike the $ENV map — whose keys
+// are the exact-case names from os.Environ — env() uses os.LookupEnv, which is
+// CASE-INSENSITIVE on Windows, so env("PATH") works whether Windows exposes it as
+// PATH or Path.
+func builtinEnv(args []value.Value) (value.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return value.MakeNil(), fmt.Errorf("env expects 1 or 2 arguments (name, default?), got %d", len(args))
+	}
+	if args[0].Tag() != value.Str {
+		return value.MakeNil(), fmt.Errorf("env expects a string name, got %s", args[0].TypeName())
+	}
+	if v, ok := os.LookupEnv(args[0].AsStr()); ok {
+		return value.MakeStr(v), nil
+	}
+	if len(args) == 2 {
+		return args[1], nil
+	}
+	return value.MakeNil(), nil
+}
+
 // gcPresets map friendly mode words to a GC target percent (Go's GOGC knob):
 // lower collects more often (less peak RAM, more CPU), higher collects less often
 // (more RAM, faster), and "off" disables collection entirely — ideal for a
