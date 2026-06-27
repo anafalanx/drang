@@ -1673,6 +1673,9 @@ the structural investments. Not yet started — captured here to act on later.
 
 ### Quick wins (small, low-risk)
 
+> **Status: all shipped in Phase 1** (see §43). Cross-build landed as `--runtime`
+> (supply a target-OS base binary) rather than `--target`, per the design note there.
+
 - **`drang build -o`: create the output's parent directory** (or give a clearer
   diagnostic). `drang build -o cache/x/zdr.exe` fails when `cache/x` does not exist
   (`writeStandalone`'s `os.CreateTemp` fails). Fix: `os.MkdirAll(filepath.Dir(out), …)`
@@ -1721,3 +1724,33 @@ the structural investments. Not yet started — captured here to act on later.
   lifecycle (graceful shutdown) and a deliberately minimal handler API
   (`req -> response` as maps, bodies via JSON, routing by dispatch on `req.path`).
   Discipline: a binding for serving local tools, never a web framework.
+
+## 43. Build progress (2026-06-27) — Phase 1 quick-wins batch
+
+After the competitive analysis (§42 roadmap), the first build-out phase shipped the
+small, in-grain quick wins — six committed slices, each tested and `-race`-clean,
+each through an adversarial review:
+
+- **Path/fs/env helpers** — `is_abs`, `clean`, `rel`, `within`, `path_list_sep`,
+  `read_dir` (`[{name,path,isdir}]`), and `env(name, default?)` (case-insensitive on
+  Windows via `os.LookupEnv`, fixing the `$ENV` PATH/Path footgun).
+- **Numeric** — `abs`, `sum`, `min`, `max`, `floor`, `ceil`, `round`; the path
+  builtin `abs` was renamed `abspath` to free the universally-expected numeric name.
+- **Integer overflow → error.** `+`/`-`/`*` overflow on int64 now fails loudly like
+  division by zero (was a silent wrap). Implemented in the shared `arith()`, so the
+  VM and the tree-walker get it identically (parity preserved).
+- **Process** — the `{arg0}` option (present a different argv[0]; sets `cmd.Args[0]`,
+  not `cmd.Path`) and `capture_all` returning `{out, err, code, ok}` (non-zero exit
+  is data, not a thrown Err).
+- **Standalone** — `build -o` creates the output's parent dir; payload bumped to v2,
+  framing the source basename so errors name the script (`pos.dr:2:5`) not the exe.
+- **Cross-build** — `drang build --runtime <base>` uses a supplied target-OS/arch
+  drang as the base, so a Linux/macOS standalone builds from any host (the payload is
+  platform-agnostic). Chosen over `--target os/arch` because a standalone needs an
+  actual target base binary, and supplying one (from the release) is the toolchain-
+  free, in-grain mechanism. Verified by producing a Linux ELF standalone on Windows.
+
+Deferred from the decision poll: stringy coercion and a dropped-Err lint (both kept
+as locked-tension items, not pursued); `struct`/record (maps suffice for now). The
+next phases are the niche-definers: one-liner mode, CSV, modules, then `drang fmt` /
+`drang test`.

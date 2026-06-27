@@ -2332,6 +2332,20 @@ evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 |---|---|---|
 | `int` | `int(x)` | Convert int/float/string to an int; unparseable → Err. |
 
+### Numeric
+
+Minimal daily-driver math (not a math/trig kitchen sink). `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round` return an int. A non-number operand is a catchable Err.
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `abs` | `abs(n)` | Numeric absolute value (the path builtin is `abspath`). |
+| `sum` | `sum(arr)` / `sum(a, ...)` | Add numbers (array or variadic); empty → 0; overflow → Err. |
+| `min` | `min(arr)` / `min(a, ...)` | Smallest value; empty → Err. |
+| `max` | `max(arr)` / `max(a, ...)` | Largest value; empty → Err. |
+| `floor` | `floor(n)` | Round down to an int; NaN/Inf/out-of-range → Err. |
+| `ceil` | `ceil(n)` | Round up to an int. |
+| `round` | `round(n)` | Round to the nearest int (half away from zero). |
+
 ### Strings
 
 | Builtin | Signature | Description |
@@ -2425,9 +2439,15 @@ a bool; the rest signal real I/O failures as Err.
 | `stem` | `stem(p)` | Basename without its extension. |
 | `abspath` | `abspath(p)` | Absolute path against the CWD; failure → Err. (Numeric absolute value is `abs`.) |
 | `slash` | `slash(p)` | Convert separators to forward slashes. |
+| `is_abs` | `is_abs(p)` | True if `p` is an absolute path. |
+| `clean` | `clean(p)` | Lexically simplify a path (resolve `.`/`..`). |
+| `rel` | `rel(base, p)` | Relative path from `base` to `p`; uncomparable → Err. |
+| `within` | `within(base, p)` | True if `p` is inside (or equal to) `base`. |
+| `path_list_sep` | `path_list_sep()` | OS PATH-list separator (`;` Windows / `:` Unix). |
 | `exists` | `exists(p)` | True if the path exists. |
 | `isdir` | `isdir(p)` | True if the path exists and is a directory. |
 | `glob` | `glob(pattern)` | Sorted matches (supports `**`); no match is `[]`, bad pattern → Err. |
+| `read_dir` | `read_dir(p)` | List a dir as `[{name, path, isdir}]` (sorted by name); missing → Err. |
 | `mkdir` | `mkdir(p)` | Create the directory tree (like `mkdir -p`); returns `p`, failure → Err. |
 | `mtime` | `mtime(p)` | Modification time as a Unix timestamp; missing → Err. |
 | `newer` | `newer(a, b)` | True if `a` is newer than `b`; a missing path → Err. |
@@ -2442,7 +2462,8 @@ a bool; the rest signal real I/O failures as Err.
 ### Process & concurrency
 
 Process builtins take command words (arrays splice, scalars stringify) and an
-optional trailing options map `{cwd, env, stdin, timeout}` (`timeout` in ms).
+optional trailing options map `{cwd, env, stdin, timeout, arg0}` (`timeout` in ms;
+`arg0` presents a different argv[0] than the launched executable).
 No shell is involved; args are passed verbatim. Channels and tasks are shared
 reference types; values are deep-copied on send and on `await`.
 
@@ -2450,6 +2471,7 @@ reference types; values are deep-copied on send and on `await`.
 |---|---|---|
 | `run` | `run(cmd, args..., opts?)` | Run with inherited stdio; true on success, non-zero exit → Err (code = exit). |
 | `capture` | `capture(cmd, args..., opts?)` | Run and return trimmed stdout; failure → Err (stderr folded in). |
+| `capture_all` | `capture_all(cmd, args..., opts?)` | Run and return `{out, err, code, ok}`; non-zero exit is data, not an Err (124 timeout / 127 can't-start). |
 | `pipe` | `pipe([cmd,args..], ..., opts?)` | Stream a pipeline of `[cmd, args...]` stages; returns last stage's trimmed stdout. |
 | `start` | `start(cmd, args..., opts?)` | Launch detached (no wait); returns a process handle, can't-start → Err (127). |
 | `pid` | `pid(proc)` | PID of a started process. |
@@ -2468,6 +2490,7 @@ reference types; values are deep-copied on send and on `await`.
 |---|---|---|
 | `gc` | `gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
+| `env` | `env(name, default?)` | Process env var (case-insensitive on Windows); `default` or nil if unset. |
 | `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |
 
 ---
@@ -2478,7 +2501,7 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Whole capability areas with no builtins
 
-There is no HTTP, math, date/time, randomness, hashing, or text-encoding support. The functions you might expect simply don't exist, and calling one is an `unknown function` error:
+There is no HTTP, date/time, randomness, hashing, or text-encoding support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
 
 ```
 drang -e 'say(sqrt(9))'
