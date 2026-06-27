@@ -1438,6 +1438,24 @@ var builtins = map[string]builtin{
 	"parse_time": builtinParseTime,
 	"date_parts": builtinDateParts,
 
+	// hashing + text encodings (thin Go-stdlib bindings)
+	"sha256":      builtinSha256,
+	"sha1":        builtinSha1,
+	"md5":         builtinMd5,
+	"to_base64":   builtinToBase64,
+	"from_base64": builtinFromBase64,
+	"to_hex":      builtinToHex,
+	"from_hex":    builtinFromHex,
+	"url_encode":  builtinURLEncode,
+	"url_decode":  builtinURLDecode,
+
+	// randomness (math/rand/v2; uuid uses crypto/rand)
+	"rand":     builtinRand,
+	"rand_int": builtinRandInt,
+	"shuffle":  builtinShuffle,
+	"sample":   builtinSample,
+	"uuid":     builtinUUID,
+
 	// runtime knobs
 	"sys_gc": builtinSysGC,
 	"cwd":    builtinCwd,

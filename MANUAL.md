@@ -20,6 +20,7 @@
 - [JSON](#json)
 - [CSV](#csv)
 - [Date and time](#date-and-time)
+- [Hashing, encoding, and randomness](#hashing-encoding-and-randomness)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
 - [Quick reference: builtins](#quick-reference-builtins)
@@ -2471,6 +2472,40 @@ planned follow-up.)
 
 ---
 
+## Hashing, encoding, and randomness
+
+Thin bindings over Go's standard library.
+
+**Hashing** — `sha256`, `sha1`, `md5` take a string and return its lowercase hex digest:
+
+```drang
+say(sha256("abc"))   # ba7816bf...f20015ad
+say(md5("abc"))      # 900150983cd24fb0d6963f7d28e17f72
+```
+
+**Encoding** — `to_base64`/`from_base64`, `to_hex`/`from_hex`, and `url_encode`/`url_decode` convert to and from a string; the `from_*` / `*_decode` side returns a catchable `Err` on malformed input:
+
+```drang
+say(to_base64("hi"))                    # aGk=
+say(from_base64("aGk="))                # hi
+say(to_hex("AB"))                       # 4142
+say(url_encode("a b&c=d"))              # a+b%26c%3Dd
+say(from_base64("!!!") // "bad input")  # bad input
+```
+
+**Randomness** — `rand()` is a float in `[0, 1)`; `rand_int(n)` is an int in `[0, n)` and `rand_int(lo, hi)` in `[lo, hi)`; `shuffle(arr)` returns a new shuffled array (the input is untouched); `sample(arr)` returns a random element; `uuid()` returns a random v4 UUID:
+
+```drang
+say(rand_int(6) + 1)            # a die roll, 1–6
+say(shuffle([1, 2, 3, 4]))     # e.g. [3, 1, 4, 2]
+say(sample(["a", "b", "c"]))   # e.g. b
+say(uuid())                    # e.g. 5b1f9d2c-...-4e7a-...
+```
+
+`rand`/`rand_int`/`shuffle`/`sample` use a fast auto-seeded generator (fine for jitter, sampling, and test data — not for secrets); `uuid` draws from the cryptographic generator.
+
+---
+
 ## One-liner mode
 
 `-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
@@ -2808,20 +2843,17 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Whole capability areas with no builtins
 
-There is no HTTP, randomness, hashing, or text-encoding support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
+There is no HTTP support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
 
 ```
 drang -e 'say(sqrt(9))'
 # drang: unknown function sqrt
 
-drang -e 'say(rand())'
-# drang: unknown function rand
-
-drang -e 'say(base64("x"))'
-# drang: unknown function base64
+drang -e 'say(fetch("http://x"))'
+# drang: unknown function fetch
 ```
 
-The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math family (`sin`, `cos`, `sqrt`, `pow`). These are all planned as thin bindings over Go's stdlib, but none have landed. (Date/time *is* now available — `now`, `sleep`, `strftime`, `parse_time`, `date_parts` — see [Date and time](#date-and-time).)
+So `fetch`/`http` (orchestrate `run(["curl", …])` instead) and the math family (`sin`, `cos`, `sqrt`, `pow`, `log`) are still missing — planned as thin bindings over Go's stdlib, not yet landed. (Date/time, hashing, encodings, and randomness *are* available now — see [Date and time](#date-and-time) and [Hashing, encoding, and randomness](#hashing-encoding-and-randomness).)
 
 ### Missing operators
 
