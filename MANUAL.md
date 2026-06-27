@@ -654,7 +654,10 @@ say("héllo"[0..1])     # hé
 say("hi"[9] // "?")    # ?      (out of range -> catchable error)
 ```
 
-(Indexing reads only — `s[i] = …` is not assignment; build a new string instead.)
+Indexing is by Unicode **code point** (rune), not grapheme cluster: a character built
+from several code points — a combining mark (`e`+◌́), a flag, or a ZWJ emoji — spans
+more than one index. Indexing reads only — `s[i] = …` is not assignment; build a new
+string instead.
 
 ### String builtins
 
