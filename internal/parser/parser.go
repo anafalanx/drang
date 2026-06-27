@@ -68,6 +68,7 @@ type Parser struct {
 	stdlibMode    bool // allow bare 'fn name' (the embedded prelude defines bare stdlib functions); user code must use 'fn .name'
 	errs          []string
 	loopDepth     int // enclosing loop nesting (reset at fn/lambda boundaries) — gates break/next
+	blockDepth    int // enclosing { } nesting — `example` is only valid at the top level
 }
 
 // New returns a Parser ready to parse src.
@@ -167,6 +168,9 @@ func (p *Parser) parseStmtDispatch() ast.Stmt {
 	if p.tok.Kind == token.IDENT && p.tok.Lit == "example" &&
 		p.peek.Kind != token.NEWLINE && p.peek.Kind != token.SEMI &&
 		p.peek.Kind != token.EOF && p.peek.Kind != token.RBRACE {
+		if p.blockDepth > 0 {
+			p.errorf("`example` is only valid at the top level, not inside a block or function")
+		}
 		s := p.parseExample()
 		p.lastBlockForm = false
 		return s
@@ -621,7 +625,9 @@ func (p *Parser) parseBlock() *ast.Block {
 		return nil
 	}
 	p.next()
+	p.blockDepth++
 	blk := &ast.Block{Stmts: p.parseStmtsUntil(token.RBRACE)}
+	p.blockDepth--
 	if p.tok.Kind != token.RBRACE {
 		p.errorf("expected '}', got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil

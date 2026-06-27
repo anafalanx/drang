@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/anafalanx/drang/internal/ast"
 	"github.com/anafalanx/drang/internal/value"
@@ -17,7 +18,12 @@ func RunExamples(prog *ast.Program, baseDir, origin string, w io.Writer) (pass, 
 	env := NewEnv()
 	env.SetModuleDir(baseDir)
 	if err := RunProgramWithArgs(prog, env, nil); err != nil {
-		return 0, 0, err
+		// A top-level exit()/die() ends setup early but must not silently mask the
+		// examples; check them against whatever was defined (a missing later
+		// definition just makes its example fail).
+		if _, isExit := ExitRequested(err); !isExit {
+			return 0, 0, err
+		}
 	}
 	for _, st := range prog.Stmts {
 		ex, ok := st.(*ast.ExampleStmt)
@@ -40,11 +46,18 @@ func RunExamples(prog *ast.Program, baseDir, origin string, w io.Writer) (pass, 
 // the program run, where they are no-ops.
 func checkExample(ex *ast.ExampleStmt, env *Env) (bool, string) {
 	got, err := evalExpr(ex.Subject, env)
+	// exit()/die() are non-catchable aborts, not failures — an example must not
+	// swallow one (which would otherwise read as a passing `fails`).
+	if err != nil {
+		if _, isExit := ExitRequested(err); isExit {
+			return false, "the example called exit()/die() (a non-catchable abort)"
+		}
+	}
 	if ex.Fails {
 		if err != nil || got.IsErr() {
 			return true, ""
 		}
-		return false, fmt.Sprintf("expected an error, but got %s", got.Display())
+		return false, fmt.Sprintf("expected an error, but got %s", describe(got))
 	}
 	if err != nil {
 		return false, "unexpected error: " + err.Error()
@@ -56,14 +69,26 @@ func checkExample(ex *ast.ExampleStmt, env *Env) (bool, string) {
 		if got.Truthy() {
 			return true, ""
 		}
-		return false, fmt.Sprintf("expected a truthy value, got %s", got.Display())
+		return false, fmt.Sprintf("expected a truthy value, got %s", describe(got))
 	}
 	want, werr := evalExpr(ex.Want, env)
 	if werr != nil {
+		if _, isExit := ExitRequested(werr); isExit {
+			return false, "the example called exit()/die() (a non-catchable abort)"
+		}
 		return false, "error evaluating the expected value: " + werr.Error()
 	}
 	if value.Equal(got, want) {
 		return true, ""
 	}
-	return false, fmt.Sprintf("expected %s, got %s", want.Display(), got.Display())
+	return false, fmt.Sprintf("expected %s, got %s", describe(want), describe(got))
+}
+
+// describe renders a value for a failure message, quoting strings so a type mismatch
+// (e.g. "5" vs 5) and empty/whitespace values are visible.
+func describe(v value.Value) string {
+	if v.Tag() == value.Str {
+		return strconv.Quote(v.AsStr())
+	}
+	return v.Display()
 }

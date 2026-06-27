@@ -443,24 +443,25 @@ func runTests(paths []string) {
 		os.Exit(2)
 	}
 	totalPass, totalFail := 0, 0
+	fileErr := false // a file that couldn't be read/parsed/run (vs an assertion failure)
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "drang test: %v\n", err)
-			os.Exit(2)
+			fileErr = true
+			continue
 		}
 		p := parser.New(string(src))
 		prog := p.ParseProgram()
 		if reportParseErrors(p, path) {
-			os.Exit(2)
+			fileErr = true
+			continue
 		}
 		pass, fail, lerr := eval.RunExamples(prog, filepath.Dir(path), path, os.Stdout)
 		if lerr != nil {
-			if code, ok := eval.ExitRequested(lerr); ok {
-				os.Exit(code)
-			}
 			reportRuntimeError(string(src), path, lerr)
-			os.Exit(1)
+			fileErr = true
+			continue
 		}
 		fmt.Printf("%s: %d passed, %d failed\n", path, pass, fail)
 		totalPass += pass
@@ -469,7 +470,10 @@ func runTests(paths []string) {
 	if len(paths) > 1 {
 		fmt.Printf("total: %d passed, %d failed\n", totalPass, totalFail)
 	}
-	if totalFail > 0 {
+	switch {
+	case fileErr:
+		os.Exit(2)
+	case totalFail > 0:
 		os.Exit(1)
 	}
 }
