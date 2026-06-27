@@ -241,9 +241,9 @@ func TestDispatchResolve(t *testing.T) {
 	defer func() { stdout, stderr = oldOut, oldErr }()
 
 	env := NewEnv()
-	src := `fn ok($a) { say("ran", $a) }
-fn boom($a) { fail("kaboom")? }
-fn noargs() { say("noargs") }`
+	src := `fn .ok($a) { say("ran", $a) }
+fn .boom($a) { fail("kaboom")? }
+fn .noargs() { say("noargs") }`
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
@@ -254,7 +254,7 @@ fn noargs() { say("noargs") }`
 	}
 	tasks := value.MakeMap().Obj().(*value.OrderedMap)
 	for _, n := range []string{"ok", "boom", "noargs"} {
-		v, _ := env.get(n)
+		v, _ := env.get("." + n) // user fns register under their dotted name
 		tasks.Set(value.MakeStr(n), v)
 	}
 
@@ -297,7 +297,7 @@ func TestDispatchStreamRouting(t *testing.T) {
 	defer func() { stdout, stderr = oldOut, oldErr }()
 
 	env := NewEnv()
-	p := parser.New(`fn build($a) { say("b") }`)
+	p := parser.New(`fn .build($a) { say("b") }`)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parse: %v", errs)
@@ -306,7 +306,7 @@ func TestDispatchStreamRouting(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	tasks := value.MakeMap().Obj().(*value.OrderedMap)
-	bv, _ := env.get("build")
+	bv, _ := env.get(".build") // user fn registers under its dotted name
 	tasks.Set(value.MakeStr("build"), bv)
 
 	// unknown task: nothing on stdout; header + list on stderr
