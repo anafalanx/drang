@@ -32,7 +32,6 @@ them (they're listed under "Not Yet"); building them is tracked here.
 |------|----------------|------|--------|
 | Default params (`fn .f($a, $b=8080)`) | option/config/task fns — **DONE**: call-time eval, may reference earlier params, works in fns + lambdas + both backends. Named args deferred indefinitely; variadic params scrapped (pass an array) | M | ✅ DONE |
 | ~~Slices + string indexing/substring (`$a[1..3]`, `$s[2..5]`)~~ | core text moves — **DONE**: inclusive range slices on arrays + strings, rune-aware string indexing, negatives, clamping (read-only; slice-assignment deferred) | M | ✅ DONE |
-| `=~` match / `s///` substitution + `$1..$n` in script mode | the Perl soul; power exists (`match`/`gsub`), operator layer doesn't | M | NOT-STARTED |
 | Char ranges `'a'..'z'` (needs char literals) | lower frequency; `'a'` lexes as ILLEGAL | M | NOT-STARTED |
 | Stringy-numeric coercion (`"5" + 3`) | genuine unresolved tension (§2 locked, §14 deferred) — **decide and document** | S–M | DEFERRED-BY-DESIGN |
 | Ratify provisional bits (truthiness, language name / `.dr`) | working but never formally locked; doc/decision close | S | PARTIAL |
@@ -51,7 +50,8 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | String helpers (`index_of`, `substr`, `pad`, `reverse`, `capitalize`) | ubiquitous; some composable but verbose | S | NOT-STARTED |
 | Collection helpers (`group_by`, `uniq_by`, `partition`, `enumerate`) | common; could be prelude `.dr` | S | NOT-STARTED |
 | First-class builtin values (`map($xs, basename)`) | HOF style forces wrapper lambdas — a persistent wart | M | NOT-STARTED |
-| Named-capture → map `match` variant | RE2 named groups → record | S | NOT-STARTED |
+| Named-capture → map `match` variant — **the regex-ergonomics path** | RE2 named groups → a record (`match($s, qr/(?P<y>...)/).y`); chosen over Perl `=~`/`s///` operators | S | NOT-STARTED |
+| `replace_first` (complement to global `gsub`) | substitute only the first match | S | NOT-STARTED |
 | TOML / INI config parsing | fits the zmal world, but **no Go-stdlib parser** → conflicts with stdlib-only pillar; needs a decision-record | M | NOT-STARTED |
 | `read_file`/`write_file` bytes/encoding knobs | binary / non-UTF-8 | S | NOT-STARTED |
 | `sh()` shell-escape helper; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency §11 batteries; build on demand | S–M each | DEFERRED-BY-DESIGN |
@@ -102,7 +102,7 @@ Must-use enforcement was deliberately dropped (`[LOCKED]`), not missing.
 ## Deliberately out of scope — not missing work
 
 Ternary `?:`, `**`, bitwise, `++`/`--`; classes/inheritance/`bless`/MOP; scalar-list
-context and the punctuation-variable zoo; string `eval`; a package registry;
+context and the punctuation-variable zoo; **Perl's regex operators (`=~`, `s///`) and `$1..$n` capture variables** (drang keeps `qr//` + the `match`/`gsub`/`matches` builtins + pipelines; named-capture→map is the ergonomics path — `s///` reconsiderable only for one-liner mode); string `eval`; a package registry;
 sandboxing; an HTTP *client* (orchestrate `run(["curl", …])`); bignum; GUI/Tk hosting;
 the ops/observability and distributed/multi-host growth verticals (locked to
 "personal daily-driver"). **YAML/TOML** is the one genuine judgment-call: no Go-stdlib
@@ -122,5 +122,6 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
 **The recommended next-5 is complete.** A Perl/Python refugee can now do real text+glue
 work without hitting a wall. The strongest remaining items (see the grouped lists
 above): **`drang fmt`** (c) and one-liner **`-i`** in-place edit (c), then the
-`[LOCKED]`-but-unbuilt language features in §(a) (`=~`/`s///`, default/variadic params,
-slices + string indexing).
+remaining §(a) items — char ranges and the stringy-coercion decision — and the
+**named-capture→map** regex-ergonomics builtin. (Default params and slices are done;
+`=~`/`s///` is deliberately out of scope.)
