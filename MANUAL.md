@@ -2523,11 +2523,11 @@ The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math f
 
 ### Behaviors that may surprise you
 
-- **`int` is 64-bit and overflow wraps silently** — no error, no promotion to float:
+- **`int` is 64-bit; `+`/`-`/`*` overflow is an error**, not a silent wrap (and there is no auto-promotion to float) — it fails loudly, like division by zero:
 
   ```drang
   say(9223372036854775807 + 1)
-  # -9223372036854775808
+  # drang: integer overflow: 9223372036854775807 + 1
   ```
 
 - **`format()` uses `{}` placeholders, not `%`-style verbs.** Each `{}` consumes one argument; passing more arguments than placeholders is an error, so a `printf`-style template fails:
