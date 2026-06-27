@@ -81,6 +81,30 @@ type UseStmt struct {
 func (s *UseStmt) String() string { return "(use " + s.Path.String() + ")" }
 func (*UseStmt) stmtNode()        {}
 
+// ExampleStmt is a `drang test` assertion — a no-op in a normal run:
+//
+//	example EXPR == EXPR   (Want set: equality)
+//	example EXPR           (Want nil: truthy)
+//	example EXPR fails     (Fails set: expects an error)
+type ExampleStmt struct {
+	Pos
+	Subject Expr // the expression under test (the left side of the == form)
+	Want    Expr // expected value for the == form; nil for the truthy/fails forms
+	Fails   bool // the `fails` form
+}
+
+func (s *ExampleStmt) String() string {
+	switch {
+	case s.Fails:
+		return "(example " + s.Subject.String() + " fails)"
+	case s.Want != nil:
+		return "(example " + s.Subject.String() + " == " + s.Want.String() + ")"
+	default:
+		return "(example " + s.Subject.String() + ")"
+	}
+}
+func (*ExampleStmt) stmtNode() {}
+
 // ExprStmt is an expression used as a statement.
 type ExprStmt struct {
 	Pos

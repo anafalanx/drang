@@ -23,6 +23,7 @@
 - [Hashing, encoding, and randomness](#hashing-encoding-and-randomness)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
+- [Testing: `drang test`](#testing-drang-test)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
 
@@ -2636,6 +2637,43 @@ A failed **flat-merge** statement aborts the program with the import error.
   array/map within) are frozen, so mutating one fails loudly rather than affecting
   other importers — exports are safe to share across the import cache.
 - Every top-level `.foo` is exported; there is no module-private helper yet.
+
+---
+
+## Testing: `drang test`
+
+Tests are written as **`example`** statements — assertions that double as verified
+documentation. There are three forms:
+
+```drang
+example .add(2, 3) == 5       # equality
+example is_valid("ok")        # truthy
+example .parse("bad") fails   # expects an error (an Err value or a runtime abort)
+```
+
+Run them with the `test` subcommand:
+
+```
+drang test mathutil.dr
+```
+
+`drang test` runs each file (so its functions and top-level setup execute), then
+evaluates every `example` as an assertion. It prints a block for each failure — the
+location, the example, and expected-vs-got — followed by a per-file `N passed, M
+failed` line, and exits non-zero if anything failed:
+
+```
+  FAIL mathutil.dr:8  (example (call .add 2 3) == 6)
+        expected 6, got 5
+mathutil.dr: 4 passed, 1 failed
+```
+
+An `example` examines all of a file's definitions regardless of order (the file runs
+first, then the assertions), so an example may appear above the function it tests —
+handy for example-first documentation. In a **normal** run (`drang file.dr` / `-e`),
+`example` statements are a **no-op**: they never execute, so they cost nothing and
+can't interfere with the program. (A richer `test "name" { … }` block form with an
+`assert` builtin is a possible future addition; v1 is `example`-only.)
 
 ---
 

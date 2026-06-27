@@ -6,7 +6,8 @@
 // runs the program; --ast prints the parsed AST and --tokens the token stream.
 // --version and --help print and exit. `drang build <file.dr> [-o out]` compiles
 // a script into a standalone executable (the drang binary with the source
-// appended); such an executable runs its embedded program directly.
+// appended); such an executable runs its embedded program directly. `drang test
+// <file.dr> ...` runs the `example` assertions in each file.
 package main
 
 import (
@@ -47,6 +48,11 @@ func main() {
 	// `drang build <script.dr> [-o out]` compiles a script into a standalone exe.
 	if len(os.Args) > 1 && os.Args[1] == "build" {
 		buildStandalone(os.Args[2:])
+		return
+	}
+	// `drang test <file.dr> ...` runs the `example` assertions in each file.
+	if len(os.Args) > 1 && os.Args[1] == "test" {
+		runTests(os.Args[2:])
 		return
 	}
 
@@ -182,6 +188,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
 	fmt.Fprintln(os.Stderr, "       drang -n|-p [-a] (-e '<source>' | <file.dr>) [files...]   (one-liner mode)")
 	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>] [--runtime <drang-binary>]")
+	fmt.Fprintln(os.Stderr, "       drang test <file.dr> [file.dr ...]                          (run example assertions)")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -194,12 +201,15 @@ Usage:
   drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
   drang build <file.dr> [-o <output>] [--runtime <drang-binary>]
+  drang test <file.dr> [file.dr ...]
 
 Commands:
   build          compile a script into a standalone executable (a drang binary with
                  the source appended); the result runs its embedded program.
                  --runtime <path> uses a target-OS/arch drang binary as the base,
                  for cross-platform builds (e.g. a Linux standalone from Windows)
+  test           run the 'example' assertions in each file and report pass/fail,
+                 exiting non-zero on any failure
 
 Options:
   -e <source>    run the given source string instead of a file
@@ -422,4 +432,44 @@ func reportParseErrors(p *parser.Parser, origin string) bool {
 		fmt.Fprintln(os.Stderr, e)
 	}
 	return true
+}
+
+// runTests implements `drang test <file.dr> ...`: it parses and runs each file and
+// evaluates its `example` assertions, printing any failures and a per-file summary,
+// and exiting non-zero if any assertion fails or a file cannot be parsed or run.
+func runTests(paths []string) {
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: drang test <file.dr> [file.dr ...]")
+		os.Exit(2)
+	}
+	totalPass, totalFail := 0, 0
+	for _, path := range paths {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "drang test: %v\n", err)
+			os.Exit(2)
+		}
+		p := parser.New(string(src))
+		prog := p.ParseProgram()
+		if reportParseErrors(p, path) {
+			os.Exit(2)
+		}
+		pass, fail, lerr := eval.RunExamples(prog, filepath.Dir(path), path, os.Stdout)
+		if lerr != nil {
+			if code, ok := eval.ExitRequested(lerr); ok {
+				os.Exit(code)
+			}
+			reportRuntimeError(string(src), path, lerr)
+			os.Exit(1)
+		}
+		fmt.Printf("%s: %d passed, %d failed\n", path, pass, fail)
+		totalPass += pass
+		totalFail += fail
+	}
+	if len(paths) > 1 {
+		fmt.Printf("total: %d passed, %d failed\n", totalPass, totalFail)
+	}
+	if totalFail > 0 {
+		os.Exit(1)
+	}
 }

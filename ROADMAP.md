@@ -61,7 +61,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
 | Rebuild + release/version discipline | the local `drang.exe` had silently fallen ~9h behind HEAD; add `z build` + version stamp + a release check | S | PARTIAL (binary now current) |
-| `drang test` (assertions, golden output/exit-code; `example f(x)==y` / `example f(bad) fails`) | the named next phase; examples are tested externally today | M | NOT-STARTED |
+| ~~`drang test`~~ | **DONE**: `example EXPR == EXPR` / `example EXPR` / `example EXPR fails` (a no-op in a normal run) + the `drang test` runner (per-file pass/fail, non-zero exit on failure) | M | ✅ DONE |
 | `drang fmt` (+ `--fix` = the edition/migration mechanism) | own-the-AST migrations as the taxonomy evolves; `--fix` rule design OPEN | M | NOT-STARTED |
 | `-i` in-place edit for one-liner mode | `perl -i -pe` is the canonical text-munge | S–M | DEFERRED |
 | REPL polish / editor support / LSP | real adoption infra, but one-user project — low priority | L | NOT-STARTED |
@@ -117,7 +117,10 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
 2. ~~**printf-grade `format` verbs (b).**~~ ✅ Done — `{:spec}` mini-language over the existing `{}`.
 3. ~~**Date/time + `sleep` (b).**~~ ✅ Done — epoch-float model + `now`/`sleep`/`strftime`/`parse_time`/`date_parts`.
 4. ~~**Hashing + encodings + random (b).**~~ ✅ Done — `sha256`/`md5`, base64/hex/url, `rand`/`shuffle`/`uuid`.
-5. **`drang test` (c).** The named next phase; lets daily-driver scripts stop rotting. *(next)*
+5. ~~**`drang test` (c).**~~ ✅ Done — `example` assertions + the `drang test` runner.
 
-After this set, a Perl/Python refugee can do real text+glue work for an hour without
-hitting a wall. `drang fmt` and `-i` are the strong follow-ups once these land.
+**The recommended next-5 is complete.** A Perl/Python refugee can now do real text+glue
+work without hitting a wall. The strongest remaining items (see the grouped lists
+above): **`drang fmt`** (c) and one-liner **`-i`** in-place edit (c), then the
+`[LOCKED]`-but-unbuilt language features in §(a) (`=~`/`s///`, default/variadic params,
+slices + string indexing).

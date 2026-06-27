@@ -161,6 +161,16 @@ func (p *Parser) parseStmtDispatch() ast.Stmt {
 	if p.tok.Kind == token.IDENT && p.tok.Lit == "use" && (p.peek.Kind == token.STRING || p.peek.Kind == token.RAWSTR) {
 		return p.parseUse()
 	}
+	// Contextual: a statement-leading `example` followed by an expression is a
+	// `drang test` assertion (a no-op in a normal run). `example` stays an ordinary
+	// word when not at statement-lead with an expression after it.
+	if p.tok.Kind == token.IDENT && p.tok.Lit == "example" &&
+		p.peek.Kind != token.NEWLINE && p.peek.Kind != token.SEMI &&
+		p.peek.Kind != token.EOF && p.peek.Kind != token.RBRACE {
+		s := p.parseExample()
+		p.lastBlockForm = false
+		return s
+	}
 	switch p.tok.Kind {
 	case token.FN:
 		s := p.parseFn()
@@ -221,6 +231,31 @@ func (p *Parser) parseUse() ast.Stmt {
 	return &ast.UseStmt{Pos: pos, Path: path}
 }
 
+// parseExample parses a `drang test` assertion: `example EXPR`, `example EXPR == EXPR`,
+// or `example EXPR fails`. The caller has verified the current token is `example`.
+func (p *Parser) parseExample() ast.Stmt {
+	pos := p.here()
+	p.next() // consume 'example'
+	expr := p.parseExpr(lowest)
+	if expr == nil {
+		return nil
+	}
+	ex := &ast.ExampleStmt{Pos: pos}
+	if p.tok.Kind == token.IDENT && p.tok.Lit == "fails" {
+		p.next()
+		ex.Subject = expr
+		ex.Fails = true
+		return ex
+	}
+	// A top-level `==` splits into subject/want for a richer failure message.
+	if bin, ok := expr.(*ast.Binary); ok && bin.Op == token.EQ {
+		ex.Subject, ex.Want = bin.L, bin.R
+		return ex
+	}
+	ex.Subject = expr
+	return ex
+}
+
 // setStmtPos stamps a statement's source position (its first token) if unset.
 func setStmtPos(s ast.Stmt, pos ast.Pos) {
 	switch n := s.(type) {
@@ -249,6 +284,8 @@ func setStmtPos(s ast.Stmt, pos ast.Pos) {
 	case *ast.SpecialBlock:
 		setIfUnset(&n.Pos, pos)
 	case *ast.UseStmt:
+		setIfUnset(&n.Pos, pos)
+	case *ast.ExampleStmt:
 		setIfUnset(&n.Pos, pos)
 	}
 }
