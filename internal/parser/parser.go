@@ -61,11 +61,12 @@ func precedence(k token.Kind) int {
 
 // Parser turns source text into an *ast.Program. It keeps one token of lookahead.
 type Parser struct {
-	lex       *lexer.Lexer
-	tok       token.Token
-	peek      token.Token
-	errs      []string
-	loopDepth int // enclosing loop nesting (reset at fn/lambda boundaries) — gates break/next
+	lex           *lexer.Lexer
+	tok           token.Token
+	peek          token.Token
+	lastBlockForm bool // whether the most recent statement was block-form (ended in }), so a same-line follow-on needs no separator
+	errs          []string
+	loopDepth     int // enclosing loop nesting (reset at fn/lambda boundaries) — gates break/next
 }
 
 // New returns a Parser ready to parse src.
@@ -111,7 +112,12 @@ func (p *Parser) parseStmtsUntil(end token.Kind) []ast.Stmt {
 		if s := p.parseStmt(); s != nil {
 			stmts = append(stmts, s)
 		}
-		if p.tok.Kind != end && p.tok.Kind != token.EOF && !isTerm(p.tok.Kind) {
+		// A block-form statement (if/while/for/fn/BEGIN/END) ends at its closing },
+		// which also terminates the statement (perl-style) — so `if c { ... } stmt`
+		// and `BEGIN{ ... } stmt` work on one line without an explicit ; or newline.
+		// The leniency is scoped to block-form statements: a map literal or lambda
+		// body that merely ends in } still requires a separator.
+		if p.tok.Kind != end && p.tok.Kind != token.EOF && !isTerm(p.tok.Kind) && !p.lastBlockForm {
 			p.errorf("expected end of statement, got %s %q", p.tok.Kind, p.tok.Lit)
 			for p.tok.Kind != end && p.tok.Kind != token.EOF && !isTerm(p.tok.Kind) {
 				p.next()
@@ -132,25 +138,61 @@ func (p *Parser) parseStmt() ast.Stmt {
 }
 
 func (p *Parser) parseStmtDispatch() ast.Stmt {
+	// Contextual keywords: a statement-leading BEGIN/END immediately followed by '{'
+	// is a one-liner stream block. BEGIN and END stay ordinary identifiers elsewhere.
+	// Each branch sets lastBlockForm as its final act (overriding any value a nested
+	// block left behind), recording whether THIS statement ended at a block's }.
+	if p.tok.Kind == token.IDENT && (p.tok.Lit == "BEGIN" || p.tok.Lit == "END") && p.peek.Kind == token.LBRACE {
+		s := p.parseSpecialBlock()
+		p.lastBlockForm = true
+		return s
+	}
 	switch p.tok.Kind {
 	case token.FN:
-		return p.parseFn()
+		s := p.parseFn()
+		p.lastBlockForm = true
+		return s
 	case token.IF:
-		return p.parseIf()
+		s := p.parseIf()
+		p.lastBlockForm = true
+		return s
 	case token.WHILE:
-		return p.parseWhile()
+		s := p.parseWhile()
+		p.lastBlockForm = true
+		return s
 	case token.FOR:
-		return p.parseFor()
+		s := p.parseFor()
+		p.lastBlockForm = true
+		return s
 	case token.BREAK:
-		return p.applyPostfix(p.parseLoopControl(token.BREAK))
+		s := p.applyPostfix(p.parseLoopControl(token.BREAK))
+		p.lastBlockForm = false
+		return s
 	case token.NEXT:
-		return p.applyPostfix(p.parseLoopControl(token.NEXT))
+		s := p.applyPostfix(p.parseLoopControl(token.NEXT))
+		p.lastBlockForm = false
+		return s
 	}
 	s := p.parseSimpleStmt()
 	if s == nil {
+		p.lastBlockForm = false
 		return nil
 	}
-	return p.applyPostfix(s)
+	s = p.applyPostfix(s)
+	p.lastBlockForm = false // a map literal / lambda body ending in } is NOT block-form
+	return s
+}
+
+// parseSpecialBlock parses a BEGIN { ... } / END { ... } one-liner block. The caller
+// has verified the current token is the BEGIN/END identifier and the next is '{'.
+func (p *Parser) parseSpecialBlock() ast.Stmt {
+	name := p.tok.Lit
+	p.next() // consume BEGIN/END
+	body := p.parseBlock()
+	if body == nil {
+		return nil
+	}
+	return &ast.SpecialBlock{Name: name, Body: body}
 }
 
 // setStmtPos stamps a statement's source position (its first token) if unset.
@@ -177,6 +219,8 @@ func setStmtPos(s ast.Stmt, pos ast.Pos) {
 	case *ast.NextStmt:
 		setIfUnset(&n.Pos, pos)
 	case *ast.Block:
+		setIfUnset(&n.Pos, pos)
+	case *ast.SpecialBlock:
 		setIfUnset(&n.Pos, pos)
 	}
 }

@@ -54,6 +54,22 @@ type Block struct {
 func (b *Block) String() string { return "(block " + joinStmts(b.Stmts, " ") + ")" }
 func (*Block) stmtNode()        {}
 
+// SpecialBlock is a BEGIN { ... } or END { ... } block. BEGIN/END are contextual
+// keywords (recognized only as a statement-leading `BEGIN {` / `END {`), and the
+// blocks are meaningful only in one-liner stream mode (-n/-p), where the driver
+// hoists them out of the per-line loop. Reaching one during normal evaluation is an
+// error.
+type SpecialBlock struct {
+	Pos
+	Name string // "BEGIN" or "END"
+	Body *Block
+}
+
+func (s *SpecialBlock) String() string {
+	return "(" + strings.ToLower(s.Name) + " " + joinStmts(s.Body.Stmts, " ") + ")"
+}
+func (*SpecialBlock) stmtNode() {}
+
 // ExprStmt is an expression used as a statement.
 type ExprStmt struct {
 	Pos
