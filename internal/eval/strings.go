@@ -103,9 +103,11 @@ func builtinEndsWith(args []value.Value) (value.Value, error) {
 }
 
 // builtinFormat substitutes each {} placeholder with the next argument (rendered
-// like say); {{ and }} are literal braces. The placeholder count must equal the
-// argument count, otherwise it returns a catchable Err (so a printf-style
-// format("%s", x), which has no {}, fails loudly instead of dropping the arg).
+// like say), or {:spec} with the argument formatted per a Python/Rust-style spec
+// (see format.go); {{ and }} are literal braces, and any other brace run is left
+// literal. The placeholder count must equal the argument count, otherwise it returns
+// a catchable Err (so a printf-style format("%s", x), which has no placeholders,
+// fails loudly instead of dropping the arg).
 func builtinFormat(args []value.Value) (value.Value, error) {
 	if len(args) < 1 {
 		return value.MakeNil(), fmt.Errorf("format expects at least a format string")
@@ -118,37 +120,56 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 	ai, holes := 0, 0
 	var b strings.Builder
 	for i := 0; i < len(f); i++ {
-		switch c := f[i]; c {
-		case '{':
-			if i+1 < len(f) && f[i+1] == '{' {
-				b.WriteByte('{')
+		c := f[i]
+		if c == '}' {
+			if i+1 < len(f) && f[i+1] == '}' { // literal }}
 				i++
-			} else if i+1 < len(f) && f[i+1] == '}' {
-				holes++
-				if ai < len(rest) {
-					b.WriteString(rest[ai].Display())
-				}
-				ai++
-				i++
-			} else {
-				b.WriteByte('{')
 			}
-		case '}':
-			if i+1 < len(f) && f[i+1] == '}' {
-				b.WriteByte('}')
-				i++
-			} else {
-				b.WriteByte('}')
-			}
-		default:
-			b.WriteByte(c)
+			b.WriteByte('}')
+			continue
 		}
+		if c != '{' {
+			b.WriteByte(c)
+			continue
+		}
+		if i+1 < len(f) && f[i+1] == '{' { // literal {{
+			b.WriteByte('{')
+			i++
+			continue
+		}
+		// A placeholder only if it is {} or {:spec}; any other {...} stays literal.
+		end := strings.IndexByte(f[i+1:], '}')
+		inner := ""
+		if end >= 0 {
+			inner = f[i+1 : i+1+end]
+		}
+		if end < 0 || !(inner == "" || inner[0] == ':') {
+			b.WriteByte('{')
+			continue
+		}
+		i += 1 + end // advance to the closing '}'
+		holes++
+		if ai >= len(rest) { // too few args — reported by the arity check below
+			ai++
+			continue
+		}
+		arg := rest[ai]
+		ai++
+		if inner == "" {
+			b.WriteString(arg.Display())
+			continue
+		}
+		s, err := formatArg(inner[1:], arg)
+		if err != nil {
+			return value.MakeErr("format: "+err.Error(), 1), nil
+		}
+		b.WriteString(s)
 	}
-	// Strict arity: a {} placeholder per argument and vice versa. Catches the common
-	// printf habit (format("%s", x) has no {} placeholders) and over/under-supply,
-	// as a catchable Err rather than silently dropping or emitting literal "{}".
+	// Strict arity: one placeholder per argument and vice versa. Catches the common
+	// printf habit (format("%s", x) has no placeholders) and over/under-supply, as a
+	// catchable Err rather than silently dropping or emitting a literal brace run.
 	if holes != len(rest) {
-		return value.MakeErr(fmt.Sprintf("format: template has %d %q placeholder(s) but got %d argument(s)", holes, "{}", len(rest)), 1), nil
+		return value.MakeErr(fmt.Sprintf("format: template has %d placeholder(s) but got %d argument(s)", holes, len(rest)), 1), nil
 	}
 	return value.MakeStr(b.String()), nil
 }

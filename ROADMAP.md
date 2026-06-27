@@ -42,7 +42,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
-| printf-grade `format` verbs (`{:.2f}`, `%-20s`, `%08x`) | **single biggest text gap**; aligned columns + fixed decimals; near-free over Go `fmt` | M | NOT-STARTED |
+| ~~printf-grade `format` verbs (`{:.2f}`, `{:>20}`, `{:08x}`)~~ | aligned columns + fixed decimals — **DONE**: `{:spec}` extends `{}` (Python/Rust-style: fill/align/sign/#/0/width/.prec/type) | M | ✅ DONE |
 | Date/time family + `sleep` (`now`, parse/format, arithmetic) | timestamps, "newer than N days", durations, backoff — wholly absent | M | NOT-STARTED |
 | Hashing + encodings (`sha256`/`md5`, base64, hex, url) | checksum artifacts, decode tokens — tiny bindings, hourly use | S | NOT-STARTED |
 | Random (`rand`, `rand_int`, `shuffle`, `uuid`) | jitter/backoff, temp names, sampling | S | NOT-STARTED |
@@ -114,8 +114,8 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
    the manual honest about the `[LOCKED]`-but-unbuilt features (done); add a
    version stamp / release check. *A daily-driver whose own examples don't run fails
    "complete" on trust before any feature.*
-2. **printf-grade `format` verbs (b).** Biggest text gap, highest ROI, near-free.
-3. **Date/time + `sleep` (b).** Conspicuous absence for orchestration.
+2. ~~**printf-grade `format` verbs (b).**~~ ✅ Done — `{:spec}` mini-language over the existing `{}`.
+3. **Date/time + `sleep` (b).** Conspicuous absence for orchestration. *(next)*
 4. **Hashing + encodings + random (b).** Tiny bindings, highest value-per-byte.
 5. **`drang test` (c).** The named next phase; lets daily-driver scripts stop rotting.
 
