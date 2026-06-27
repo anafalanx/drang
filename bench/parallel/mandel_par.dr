@@ -12,7 +12,7 @@ $xmax := 1.0
 $ymin := -1.25
 $ymax := 1.25
 
-fn compute_row($py) {
+fn .compute_row($py) {
   $y0 := $ymin + ($ymax - $ymin) * $py / ($H - 1)
   $rowsum := 0
   for $px in 0..($W - 1) {
@@ -33,5 +33,5 @@ fn compute_row($py) {
 
 $rows := []
 for $py in 0..($H - 1) { push($rows, $py) }
-$total := reduce(pmap($rows, |$py| compute_row($py)), 0, |$a, $b| $a + $b)
+$total := reduce(pmap($rows, |$py| .compute_row($py)), 0, |$a, $b| $a + $b)
 say($total)

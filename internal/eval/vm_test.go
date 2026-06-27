@@ -59,23 +59,23 @@ if true {
 }
 say($x)`,
 	// functions (Ident callee) — these compile fully and run on the VM
-	`fn sq($x) { $x * $x }
-say(sq(6), sq(7))`,
-	`fn add($a, $b) { $a + $b }
-say(add(3, 4), add(add(1, 2), 3))`,
-	`fn fib($n) {
-  if $n < 2 { $n } else { fib($n - 1) + fib($n - 2) }
+	`fn .sq($x) { $x * $x }
+say(.sq(6), .sq(7))`,
+	`fn .add($a, $b) { $a + $b }
+say(.add(3, 4), .add(.add(1, 2), 3))`,
+	`fn .fib($n) {
+  if $n < 2 { $n } else { .fib($n - 1) + .fib($n - 2) }
 }
-say(fib(10), fib(15))`,
-	`fn classify($n) {
+say(.fib(10), .fib(15))`,
+	`fn .classify($n) {
   if $n < 0 { return "neg" }
   if $n == 0 { return "zero" }
   "pos"
 }
-say(classify(-5), classify(0), classify(7))`,
+say(.classify(-5), .classify(0), .classify(7))`,
 	// register-mode stress: block shadowing must not leak; loop locals reused
 	// across iterations; a free variable (global) read alongside register locals.
-	`fn shadow($x) {
+	`fn .shadow($x) {
   $y := $x + 1
   if $x > 0 {
     $y := $x * 10
@@ -83,8 +83,8 @@ say(classify(-5), classify(0), classify(7))`,
   }
   say("outer", $y)
 }
-shadow(5)`,
-	`fn loopsum($n) {
+.shadow(5)`,
+	`fn .loopsum($n) {
   $acc := 0
   $i := 1
   while $i <= $n {
@@ -93,19 +93,19 @@ shadow(5)`,
   }
   $acc
 }
-say(loopsum(100), loopsum(0))`,
-	`fn mixed($x) {
+say(.loopsum(100), .loopsum(0))`,
+	`fn .mixed($x) {
   $local := $x * $g
   $local + $x
 }
 $g := 3
-say(mixed(4), mixed(10))`,
-	`fn reassign($x) {
+say(.mixed(4), .mixed(10))`,
+	`fn .reassign($x) {
   $x = $x + 1
   $x = $x * 2
   $x
 }
-say(reassign(5))`,
+say(.reassign(5))`,
 	// error model: // recovers nil/error, ? passes a real value through
 	`say(int("x") // -1, int("42") // -1)`,
 	`say(7 // 99, int("42")?)`,
@@ -152,7 +152,7 @@ for $i in 1..3 {
 }
 say($s)`,
 	// break/next inside a function body (register mode)
-	`fn classify($xs) {
+	`fn .classify($xs) {
   $r := ""
   for $x in $xs {
     if $x < 0 { next }
@@ -161,7 +161,7 @@ say($s)`,
   }
   $r
 }
-say(classify([5, -3, 20, -1, 200, 7]))`,
+say(.classify([5, -3, 20, -1, 200, 7]))`,
 	// postfix modifiers on break/next (regression: must route through applyPostfix)
 	`$out := ""
 for $i in 1..6 {
@@ -200,11 +200,11 @@ say(gsub("a1b2", re(q(\d)), "#"))
 say(qr/x/i == qr/x/i, qr/x/ == qr/x/i)`,
 	// ? inside a function: a propagated error becomes the function's result, then
 	// // recovers it at the call site
-	`fn doubler($s) {
+	`fn .doubler($s) {
   $n := int($s)?
   $n * 2
 }
-say(doubler("21"), doubler("x") // "bad")`,
+say(.doubler("21"), .doubler("x") // "bad")`,
 	// collections: literals, index/field reads, negative index, OOB, nesting
 	`say([1, 2, 3])`,
 	`$a := [10, 20, 30]
@@ -220,10 +220,10 @@ say($nested[1][0])`,
 	`$data := {nums: [10, 20, 30]}
 say($data.nums[1])`,
 	// functions that index their params (register mode + collections)
-	`fn sum3($xs) { $xs[0] + $xs[1] + $xs[2] }
-say(sum3([10, 20, 30]))`,
-	`fn lookup($m, $k) { $m[$k] // "miss" }
-say(lookup({a: 1}, "a"), lookup({a: 1}, "z"))`,
+	`fn .sum3($xs) { $xs[0] + $xs[1] + $xs[2] }
+say(.sum3([10, 20, 30]))`,
+	`fn .lookup($m, $k) { $m[$k] // "miss" }
+say(.lookup({a: 1}, "a"), .lookup({a: 1}, "z"))`,
 	// collection assignment + autovivification (single-level)
 	`$a := [1, 2, 3]
 $a[0] = 10
@@ -252,7 +252,7 @@ $x *= 2
 $x -= 1
 say($x)`,
 	// register-local containers + compound, inside functions
-	`fn build($n) {
+	`fn .build($n) {
   $acc := []
   $i := 0
   while $i < $n {
@@ -261,8 +261,8 @@ say($x)`,
   }
   $acc
 }
-say(build(4))`,
-	`fn factorial($n) {
+say(.build(4))`,
+	`fn .factorial($n) {
   $result := 1
   $i := 2
   while $i <= $n {
@@ -271,13 +271,13 @@ say(build(4))`,
   }
   $result
 }
-say(factorial(5), factorial(0))`,
-	`fn tally($m, $k) {
+say(.factorial(5), .factorial(0))`,
+	`fn .tally($m, $k) {
   $m[$k] += 1
   $m
 }
 $counts := {}
-say(tally(tally(tally($counts, "a"), "a"), "b").a)`,
+say(.tally(.tally(.tally($counts, "a"), "a"), "b").a)`,
 	// for-in over every iterable, one- and two-var
 	`$s := 0
 for $x in [10, 20, 30] { $s += $x }
@@ -304,38 +304,38 @@ for $x in $a {
 }
 say($n, len($a))`,
 	// for-in inside functions (register mode), one- and two-var
-	`fn total($xs) {
+	`fn .total($xs) {
   $t := 0
   for $x in $xs { $t += $x }
   $t
 }
-say(total([1, 2, 3, 4, 5]))`,
-	`fn wordcount($words) {
+say(.total([1, 2, 3, 4, 5]))`,
+	`fn .wordcount($words) {
   $c := {}
   for $w in $words { $c[$w] += 1 }
   $c
 }
-$wc := wordcount(["a", "b", "a", "c", "a"])
+$wc := .wordcount(["a", "b", "a", "c", "a"])
 say($wc.a, $wc.b, $wc.c)`,
-	`fn dotproduct($xs, $ys) {
+	`fn .dotproduct($xs, $ys) {
   $sum := 0
   for $i, $x in $xs { $sum += $x * $ys[$i] }
   $sum
 }
-say(dotproduct([1, 2, 3], [4, 5, 6]))`,
+say(.dotproduct([1, 2, 3], [4, 5, 6]))`,
 	// non-identifier callees: stored, returned, and indexed function values
 	`$double := |$x| $x * 2
 say($double(21))`,
-	`fn apply($f, $x) { $f($x) }
-say(apply(|$n| $n + 100, 5))`,
-	`fn adder($n) { |$x| $x + $n }
-$add5 := adder(5)
+	`fn .apply($f, $x) { $f($x) }
+say(.apply(|$n| $n + 100, 5))`,
+	`fn .adder($n) { |$x| $x + $n }
+$add5 := .adder(5)
 say($add5(10), $add5(20))`,
 	`$fns := [|$x| $x + 1, |$x| $x * 2, |$x| $x - 3]
 say($fns[0](10), $fns[1](10), $fns[2](10))`,
 	// bare identifier as a value (point-free)
-	`fn inc($x) { $x + 1 }
-$f := inc
+	`fn .inc($x) { $x + 1 }
+$f := .inc
 say($f(41))`,
 	// nested slot assignment with autovivification, at depth
 	`$m := {}
@@ -354,31 +354,31 @@ say($matrix[0][0], $matrix[0][1])`,
 	`$deep := {}
 $deep.a.b.c = "found"
 say($deep.a.b.c)`,
-	`fn nest($m, $k1, $k2) {
+	`fn .nest($m, $k1, $k2) {
   $m[$k1][$k2] += 1
   $m
 }
 $d := {}
-say(nest(nest($d, "a", "x"), "a", "x").a.x)`,
+say(.nest(.nest($d, "a", "x"), "a", "x").a.x)`,
 }
 
 // vmParityExtra exercises functions/closures/lambdas where the top-level may
 // partially fall back (e.g. a call through a variable is a non-Ident callee), but
 // the called function/lambda itself still runs on the VM. Parity only.
 var vmParityExtra = []string{
-	`fn counter() {
+	`fn .counter() {
   $n := 0
   |$inc| {
     $n = $n + $inc
     $n
   }
 }
-$c := counter()
+$c := .counter()
 say($c(1), $c(2), $c(3))`,
 	`$double := |$x| $x * 2
 say($double(21))`,
-	`fn apply($f, $x) { $f($x) }
-say(apply(|$n| $n + 100, 5))`,
+	`fn .apply($f, $x) { $f($x) }
+say(.apply(|$n| $n + 100, 5))`,
 	// nested slot assignment ($grid.row[1]) is not compiled yet -> the whole
 	// program falls back to the walker; parity must still hold
 	`$grid := {}
@@ -484,7 +484,7 @@ func TestErrorPositions(t *testing.T) {
 		{"undefined-var", "$x := 1\n$y := 2\nsay($nope)", 3},
 		{"unknown-fn", "say(1)\nnope(2)", 2},
 		{"type-error", "$a := 5\nsay($a * \"x\")", 2},
-		{"in-function", "fn f($n) {\n  $n + \"x\"\n}\nsay(f(1))", 2},
+		{"in-function", "fn .f($n) {\n  $n + \"x\"\n}\nsay(.f(1))", 2},
 	}
 	for _, c := range cases {
 		_, err := runBackend(t, c.src, true) // VM (the production path)
@@ -511,7 +511,7 @@ func TestLoopControlParseGating(t *testing.T) {
 		`break`,                                // top level
 		`next`,                                 // top level
 		`if true { break }`,                    // if is not a loop
-		`for $i in 1..3 { fn f() { break } }`,  // can't escape a function
+		`for $i in 1..3 { fn .f() { break } }`, // can't escape a function
 		`for $i in 1..3 { $g := || { next } }`, // can't escape a lambda
 		`for $i in 1..3 { map([1], |$x| break) }`, // can't escape a lambda arg
 	}
@@ -617,10 +617,10 @@ func TestVMCompilesExamples(t *testing.T) {
 }
 
 func benchFib(b *testing.B, vm bool) {
-	prog := mustParseProg(b, `fn fib($n) {
-  if $n < 2 { $n } else { fib($n - 1) + fib($n - 2) }
+	prog := mustParseProg(b, `fn .fib($n) {
+  if $n < 2 { $n } else { .fib($n - 1) + .fib($n - 2) }
 }
-fib(28)`)
+.fib(28)`)
 	oldVM, oldOut := vmEnabled, stdout
 	vmEnabled, stdout = vm, io.Discard
 	defer func() { vmEnabled, stdout = oldVM, oldOut }()
@@ -641,7 +641,7 @@ func BenchmarkFibWalker(b *testing.B) { benchFib(b, false) }
 func benchGlue(b *testing.B, vm bool) {
 	// Representative glue: a loop with map autovivification + compound assignment,
 	// then a for-in fold — the shape of real counting/reporting scripts.
-	prog := mustParseProg(b, `fn process($n) {
+	prog := mustParseProg(b, `fn .process($n) {
   $counts := {}
   $i := 0
   while $i < $n {
@@ -652,7 +652,7 @@ func benchGlue(b *testing.B, vm bool) {
   for $k, $v in $counts { $total += $v * $k }
   $total
 }
-process(200000)`)
+.process(200000)`)
 	oldVM, oldOut := vmEnabled, stdout
 	vmEnabled, stdout = vm, io.Discard
 	defer func() { vmEnabled, stdout = oldVM, oldOut }()
@@ -673,7 +673,7 @@ func BenchmarkGlueWalker(b *testing.B) { benchGlue(b, false) }
 func benchBuiltin(b *testing.B, vm bool) {
 	// A builtin called every iteration — the case direct dispatch (skip env.get)
 	// targets.
-	prog := mustParseProg(b, `fn totallen($n) {
+	prog := mustParseProg(b, `fn .totallen($n) {
   $s := 0
   $i := 0
   while $i < $n {
@@ -682,7 +682,7 @@ func benchBuiltin(b *testing.B, vm bool) {
   }
   $s
 }
-totallen(300000)`)
+.totallen(300000)`)
 	oldVM, oldOut := vmEnabled, stdout
 	vmEnabled, stdout = vm, io.Discard
 	defer func() { vmEnabled, stdout = oldVM, oldOut }()

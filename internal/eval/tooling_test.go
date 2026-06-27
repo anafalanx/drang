@@ -43,7 +43,7 @@ func TestExit(t *testing.T) {
 	}{
 		{"bare", `exit()`, 0},
 		{"code", `exit(2)`, 2},
-		{"past-function", `fn f() { exit(3) }; f(); say("unreached")`, 3},
+		{"past-function", `fn .f() { exit(3) }; .f(); say("unreached")`, 3},
 		{"past-loop", `for $i in 1..9 { exit(4) }`, 4},
 		{"not-recovered-by-defor", `exit(5) // 99`, 5},
 		{"die-is-1", `die("boom")`, 1},
@@ -136,7 +136,7 @@ func TestExitWalker(t *testing.T) {
 	oldErr := stderr
 	stderr = &bytes.Buffer{}
 	defer func() { stderr = oldErr }()
-	p := parser.New(`fn f() { exit(7) }; f()`)
+	p := parser.New(`fn .f() { exit(7) }; .f()`)
 	prog := p.ParseProgram()
 	if code, ok := ExitRequested(RunProgram(prog, NewEnv())); !ok || code != 7 {
 		t.Errorf("walker exit: code=%d ok=%v", code, ok)

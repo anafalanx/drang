@@ -18,28 +18,28 @@ $components ::= [
   {name: "Tcl/Tk + C-API manual", loc: "tc", probe: ["manual", "INDEX.md"],                      kind: "opt",  want: "",      ver: ""},
 ]
 
-fn base_for($c) {
+fn .base_for($c) {
   if $c.loc == "root" { return $root }
   $tc
 }
 
-fn probe_path($c) {
-  reduce($c.probe, base_for($c), |$acc, $seg| join($acc, $seg))
+fn .probe_path($c) {
+  reduce($c.probe, .base_for($c), |$acc, $seg| join($acc, $seg))
 }
 
-fn version_of($c) {
-  if $c.ver == "tcl" { return capture(probe_path($c), {stdin: "puts [info patchlevel]"}) // "ERROR" }
-  if $c.ver == "gcc" { return capture(probe_path($c), "-dumpversion") // "ERROR" }
+fn .version_of($c) {
+  if $c.ver == "tcl" { return capture(.probe_path($c), {stdin: "puts [info patchlevel]"}) // "ERROR" }
+  if $c.ver == "gcc" { return capture(.probe_path($c), "-dumpversion") // "ERROR" }
   if $c.ver == "twapi" {
-    $txt := read_file(probe_path($c)) // ""
+    $txt := read_file(.probe_path($c)) // ""
     return (match($txt, "package ifneeded\s+twapi\s+(\S+)") // ["", ""])[1]
   }
   ""
 }
 
-fn status_of($c) {
-  if !exists(probe_path($c)) { return {state: "missing", note: ""} }
-  $v := version_of($c)
+fn .status_of($c) {
+  if !exists(.probe_path($c)) { return {state: "missing", note: ""} }
+  $v := .version_of($c)
   if starts_with($v, "ERROR") { return {state: "broken", note: $v} }
   if $c.want != "" and $v != $c.want {
     return {state: "update", note: format("have {}, want {}", $v, $c.want)}
@@ -47,20 +47,20 @@ fn status_of($c) {
   {state: "ok", note: $v}
 }
 
-fn pad($s, $n) {
+fn .pad($s, $n) {
   if len($s) >= $n { return $s }
   $s ~ repeat(" ", $n - len($s))
 }
 
-fn check() {
+fn .check() {
   say("")
   say(format("els toolcheck  —  .toolchain at {}", $tc))
   say("")
-  say("  " ~ pad("COMPONENT", 28) ~ pad("STATUS", 9) ~ "VERSION / NOTE")
+  say("  " ~ .pad("COMPONENT", 28) ~ .pad("STATUS", 9) ~ "VERSION / NOTE")
   say("  " ~ repeat("-", 60))
-  $rows := $components |> map(|$c| ({comp: $c, st: status_of($c)}))
+  $rows := $components |> map(|$c| ({comp: $c, st: .status_of($c)}))
   $rows |> each(|$r| {
-    say("  " ~ pad($r.comp.name, 28) ~ pad(upper($r.st.state), 9) ~ $r.st.note)
+    say("  " ~ .pad($r.comp.name, 28) ~ .pad(upper($r.st.state), 9) ~ $r.st.note)
   })
   $issues := $rows |> count(|$r| $r.comp.kind == "core" and $r.st.state != "ok")
   say("")
@@ -71,4 +71,4 @@ fn check() {
   say("  all core components present and current.")
 }
 
-check()?
+.check()?

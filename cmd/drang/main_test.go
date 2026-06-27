@@ -10,17 +10,17 @@ import (
 // parse error does not kill the loop.
 func TestREPL(t *testing.T) {
 	script := strings.Join([]string{
-		`1 + 2`,        // expression -> 3
-		`$x := 10`,     // declaration persists, echoes 10
-		`$x * 5`,       // reads persisted $x -> 50
-		`fn sq($n) {`,  // multi-line: continues on "...>"
-		`$n * $n`,      //
-		`}`,            // function persists
-		`sq(9)`,        // -> 81 (runs the defined function)
-		`"v=$x"`,       // interpolation + persisted var -> v=10
-		`@@@`,          // garbage -> parse error; loop must recover
-		`100 + 1`,      // -> 101 proves recovery
-		`fn noop() { }`, // declaration -> nil, must NOT echo a value line
+		`1 + 2`,          // expression -> 3
+		`$x := 10`,       // declaration persists, echoes 10
+		`$x * 5`,         // reads persisted $x -> 50
+		`fn .sq($n) {`,   // multi-line: continues on "...>"
+		`$n * $n`,        //
+		`}`,              // function persists
+		`.sq(9)`,         // -> 81 (runs the defined function)
+		`"v=$x"`,         // interpolation + persisted var -> v=10
+		`@@@`,            // garbage -> parse error; loop must recover
+		`100 + 1`,        // -> 101 proves recovery
+		`fn .noop() { }`, // declaration -> nil, must NOT echo a value line
 		`exit`,
 	}, "\n") + "\n"
 

@@ -169,7 +169,7 @@ func TestParseBlockFormTerminatesAtBrace(t *testing.T) {
 	for _, src := range []string{
 		`if true { say(1) } say(2)`,
 		`BEGIN { say(1) } say(2)`,
-		`fn f() { 1 } f()`,
+		`fn .f() { 1 } .f()`,
 	} {
 		p := parser.New(src)
 		p.ParseProgram()
