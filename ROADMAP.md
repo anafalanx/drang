@@ -44,8 +44,8 @@ them (they're listed under "Not Yet"); building them is tracked here.
 |------|----------------|------|--------|
 | ~~printf-grade `format` verbs (`{:.2f}`, `{:>20}`, `{:08x}`)~~ | aligned columns + fixed decimals — **DONE**: `{:spec}` extends `{}` (Python/Rust-style: fill/align/sign/#/0/width/.prec/type) | M | ✅ DONE |
 | ~~Date/time family + `sleep`~~ | timestamps, durations, backoff — **DONE**: epoch-float model; `now`/`sleep`/`strftime`/`parse_time`/`date_parts` (strftime codes, local time) | M | ✅ DONE |
-| Hashing + encodings (`sha256`/`md5`, base64, hex, url) | checksum artifacts, decode tokens — tiny bindings, hourly use | S | NOT-STARTED |
-| Random (`rand`, `rand_int`, `shuffle`, `uuid`) | jitter/backoff, temp names, sampling | S | NOT-STARTED |
+| ~~Hashing + encodings (`sha256`/`md5`, base64, hex, url)~~ | checksum artifacts, decode tokens — **DONE**: `sha256`/`sha1`/`md5`, `to_base64`/`from_base64`, `to_hex`/`from_hex`, `url_encode`/`url_decode` | S | ✅ DONE |
+| ~~Random (`rand`, `rand_int`, `shuffle`, `uuid`)~~ | jitter, temp names, sampling — **DONE**: `rand`/`rand_int`/`shuffle`/`sample`/`uuid` | S | ✅ DONE |
 | Type conversions `str()`, `float()`, `bool()` | only `int()` exists today (asymmetric) | S | NOT-STARTED |
 | More math (`sqrt`, `pow`, `log`, integer-division) | `/` is always float; no int-div operator | S | NOT-STARTED |
 | String helpers (`index_of`, `substr`, `pad`, `reverse`, `capitalize`) | ubiquitous; some composable but verbose | S | NOT-STARTED |
@@ -116,8 +116,8 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
    "complete" on trust before any feature.*
 2. ~~**printf-grade `format` verbs (b).**~~ ✅ Done — `{:spec}` mini-language over the existing `{}`.
 3. ~~**Date/time + `sleep` (b).**~~ ✅ Done — epoch-float model + `now`/`sleep`/`strftime`/`parse_time`/`date_parts`.
-4. **Hashing + encodings + random (b).** Tiny bindings, highest value-per-byte. *(next)*
-5. **`drang test` (c).** The named next phase; lets daily-driver scripts stop rotting.
+4. ~~**Hashing + encodings + random (b).**~~ ✅ Done — `sha256`/`md5`, base64/hex/url, `rand`/`shuffle`/`uuid`.
+5. **`drang test` (c).** The named next phase; lets daily-driver scripts stop rotting. *(next)*
 
 After this set, a Perl/Python refugee can do real text+glue work for an hour without
 hitting a wall. `drang fmt` and `-i` are the strong follow-ups once these land.
