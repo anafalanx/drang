@@ -19,6 +19,7 @@
 - [Files and Paths](#files-and-paths)
 - [JSON](#json)
 - [CSV](#csv)
+- [Date and time](#date-and-time)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
 - [Quick reference: builtins](#quick-reference-builtins)
@@ -2444,6 +2445,32 @@ quoted newlines — run `from_csv` on the whole text instead.
 
 ---
 
+## Date and time
+
+A point in time is just a **number** — seconds since the Unix epoch, with sub-second
+precision (the Perl model). So time arithmetic and comparison use ordinary number
+operators: `$t + 3600` is an hour later, `$a < $b` is "before".
+
+- `now()` — the current time, as epoch seconds (a float).
+- `sleep($secs)` — pause for `$secs` seconds (a float; fractional is fine).
+- `strftime($epoch, $fmt)` — format an epoch as a string, using `%`-codes in **local** time.
+- `parse_time($str, $fmt)` — parse a string (same `%`-codes) back to an epoch, or an `Err`.
+- `date_parts($epoch)` — a map of components: `year month day hour minute second weekday yearday` (`weekday` is 0–6, Sunday = 0).
+
+```drang
+$t := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S")
+say(strftime($t, "%A, %b %e %Y at %H:%M"))   # Saturday, Jun 27 2026 at 13:45
+say(strftime($t + 86400, "%Y-%m-%d"))         # 2026-06-28  (one day later)
+say(date_parts($t).weekday)                   # 6
+```
+
+The `%`-codes are the usual strftime set: `%Y %y %m %d %e %H %I %M %S %p %A %a %B %b
+%j %w %z %Z %%` (plus `%n` / `%t`). An unknown code is left literal by `strftime`;
+`parse_time` rejects a code it can't parse. (Times are **local**; a UTC option is a
+planned follow-up.)
+
+---
+
 ## One-liner mode
 
 `-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
@@ -2781,14 +2808,11 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Whole capability areas with no builtins
 
-There is no HTTP, date/time, randomness, hashing, or text-encoding support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
+There is no HTTP, randomness, hashing, or text-encoding support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
 
 ```
 drang -e 'say(sqrt(9))'
 # drang: unknown function sqrt
-
-drang -e 'say(now())'
-# drang: unknown function now
 
 drang -e 'say(rand())'
 # drang: unknown function rand
@@ -2797,7 +2821,7 @@ drang -e 'say(base64("x"))'
 # drang: unknown function base64
 ```
 
-The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math family (`sin`, `cos`, `floor`, `ceil`, `abs` as a number op — note `abs` *does* exist but is the path-absolutize builtin, not a numeric absolute value). These are all planned as thin bindings over Go's stdlib, but none have landed.
+The same goes for `fetch`/`http`, `sha256`/`hash`, `hex`, `uuid`, and the math family (`sin`, `cos`, `sqrt`, `pow`). These are all planned as thin bindings over Go's stdlib, but none have landed. (Date/time *is* now available — `now`, `sleep`, `strftime`, `parse_time`, `date_parts` — see [Date and time](#date-and-time).)
 
 ### Missing operators
 
