@@ -123,7 +123,9 @@ func roundish(name string, args []value.Value, fn func(float64) float64) (value.
 		return a, nil
 	case value.Float:
 		f := fn(a.AsFloat())
-		if math.IsNaN(f) || math.IsInf(f, 0) || f >= math.MaxInt64 || f <= math.MinInt64 {
+		// float64(MaxInt64) rounds up to 2^63 (overflows), but float64(MinInt64) is
+		// exactly -2^63 and in range — so the low bound is strict.
+		if math.IsNaN(f) || math.IsInf(f, 0) || f >= math.MaxInt64 || f < math.MinInt64 {
 			return value.MakeErr(fmt.Sprintf("%s: %s is out of int range", name, a.Display()), 1), nil
 		}
 		return value.MakeInt(int64(f)), nil
