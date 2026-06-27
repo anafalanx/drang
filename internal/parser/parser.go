@@ -510,6 +510,9 @@ func (p *Parser) parseParams(end token.Kind) (params []string, defaults []ast.Ex
 			break
 		}
 		p.next()
+		if p.tok.Kind == end { // tolerate a trailing comma
+			break
+		}
 	}
 	return params, defaults, true
 }

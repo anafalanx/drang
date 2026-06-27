@@ -81,6 +81,7 @@ func (a *funcAnalysis) scanStmt(s ast.Stmt) {
 		a.hasFnDecl = true
 		a.declared[n.Name] = true
 		collectVars(n.Body, a.usedInClosures)
+		collectVarsAll(n.Defaults, a.usedInClosures)
 	case *ast.ReturnStmt:
 		if n.Value != nil {
 			a.scanExpr(n.Value)
@@ -95,6 +96,7 @@ func (a *funcAnalysis) scanExpr(e ast.Expr) {
 	switch n := e.(type) {
 	case *ast.Lambda:
 		collectVars(n.Body, a.usedInClosures)
+		collectVarsAll(n.Defaults, a.usedInClosures)
 	case *ast.Unary:
 		a.scanExpr(n.X)
 	case *ast.Binary:
@@ -178,6 +180,7 @@ func boundInStmt(s ast.Stmt, set map[string]bool) {
 		for _, p := range n.Params {
 			set[p] = true
 		}
+		boundInAll(n.Defaults, set)
 		boundInStmt(n.Body, set)
 	case *ast.ReturnStmt:
 		if n.Value != nil {
@@ -233,7 +236,29 @@ func boundInExpr(e ast.Expr, set map[string]bool) {
 		for _, p := range n.Params {
 			set[p] = true
 		}
+		boundInAll(n.Defaults, set)
 		boundInStmt(n.Body, set)
+	}
+}
+
+// collectVarsAll harvests Var uses from a parallel parameter-default list (nil =
+// no default). Defaults are part of the closure — evaluated at call time in its
+// scope — so the names they use are captured just like body uses.
+func collectVarsAll(defaults []ast.Expr, set map[string]bool) {
+	for _, d := range defaults {
+		if d != nil {
+			collectVars(d, set)
+		}
+	}
+}
+
+// boundInAll gathers names bound inside a parameter-default list (e.g. a nested
+// lambda's params), so direct-dispatch shadowing stays sound.
+func boundInAll(defaults []ast.Expr, set map[string]bool) {
+	for _, d := range defaults {
+		if d != nil {
+			boundInExpr(d, set)
+		}
 	}
 }
 
@@ -282,6 +307,7 @@ func collectVars(n ast.Node, set map[string]bool) {
 		collectVars(e.Hi, set)
 	case *ast.Lambda:
 		collectVars(e.Body, set)
+		collectVarsAll(e.Defaults, set)
 	case *ast.Block:
 		for _, s := range e.Stmts {
 			collectVars(s, set)
@@ -307,6 +333,7 @@ func collectVars(n ast.Node, set map[string]bool) {
 		collectVars(e.Body, set)
 	case *ast.FnDecl:
 		collectVars(e.Body, set)
+		collectVarsAll(e.Defaults, set)
 	case *ast.ReturnStmt:
 		if e.Value != nil {
 			collectVars(e.Value, set)

@@ -204,7 +204,7 @@ func evalSpawn(args []value.Value) (value.Value, error) {
 	}
 	// Run over an isolated snapshot of the captured env so the goroutine never
 	// races the main goroutine's ongoing top-level defines/sets.
-	worker := &Function{Name: fn.Name, Params: fn.Params, Body: fn.Body, Env: fn.Env.snapshot(), Proto: fn.Proto}
+	worker := &Function{Name: fn.Name, Params: fn.Params, Defaults: fn.Defaults, Body: fn.Body, Env: fn.Env.snapshot(), Proto: fn.Proto}
 	callArgs := make([]value.Value, len(args)-1)
 	for i, a := range args[1:] {
 		callArgs[i] = value.DeepCopyValue(a, map[value.Obj]value.Obj{})
