@@ -1303,6 +1303,10 @@ var builtins = map[string]builtin{
 	"from_json": builtinFromJSON,
 	"to_json":   builtinToJSON,
 
+	// CSV (thin binding over encoding/csv)
+	"from_csv": builtinFromCSV,
+	"to_csv":   builtinToCSV,
+
 	// numeric (minimal daily-driver math)
 	"abs":   builtinAbs,
 	"sum":   builtinSum,
