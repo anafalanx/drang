@@ -176,8 +176,8 @@ func builtinExists(args []value.Value) (value.Value, error) {
 	return value.MakeBool(statErr == nil), nil
 }
 
-func builtinIsdir(args []value.Value) (value.Value, error) {
-	p, err := oneString("isdir", args)
+func builtinIsDir(args []value.Value) (value.Value, error) {
+	p, err := oneString("is_dir", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
@@ -380,7 +380,7 @@ func matchSegs(ps, ns []string) bool {
 	return len(ns) == 0
 }
 
-// builtinReadDir lists a directory as an array of {name, path, isdir} records
+// builtinReadDir lists a directory as an array of {name, path, is_dir} records
 // (sorted by name, as os.ReadDir guarantees). A missing/unreadable dir is a
 // catchable Err. More structured than glob(join(dir, "*")).
 func builtinReadDir(args []value.Value) (value.Value, error) {
@@ -398,7 +398,7 @@ func builtinReadDir(args []value.Value) (value.Value, error) {
 		om := m.Obj().(*value.OrderedMap)
 		om.Set(value.MakeStr("name"), value.MakeStr(de.Name()))
 		om.Set(value.MakeStr("path"), value.MakeStr(filepath.Join(p, de.Name())))
-		om.Set(value.MakeStr("isdir"), value.MakeBool(de.IsDir()))
+		om.Set(value.MakeStr("is_dir"), value.MakeBool(de.IsDir()))
 		out[i] = m
 	}
 	return value.MakeArray(out), nil

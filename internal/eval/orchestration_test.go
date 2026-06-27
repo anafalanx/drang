@@ -70,11 +70,11 @@ func TestFilesystemOps(t *testing.T) {
 	if !callBuiltin(t, "exists", str(f)).AsBool() {
 		t.Error("exists(file) = false")
 	}
-	if callBuiltin(t, "isdir", str(f)).AsBool() {
-		t.Error("isdir(file) = true")
+	if callBuiltin(t, "is_dir", str(f)).AsBool() {
+		t.Error("is_dir(file) = true")
 	}
-	if !callBuiltin(t, "isdir", str(dir)).AsBool() {
-		t.Error("isdir(dir) = false")
+	if !callBuiltin(t, "is_dir", str(dir)).AsBool() {
+		t.Error("is_dir(dir) = false")
 	}
 	if callBuiltin(t, "exists", str(filepath.Join(dir, "nope"))).AsBool() {
 		t.Error("exists(missing) = true")
@@ -262,12 +262,12 @@ fn noargs() { say("noargs") }`
 		argv []string
 		code int
 	}{
-		{[]string{"ok", "x"}, 0},   // runs, success
-		{[]string{"noargs"}, 0},    // zero-param task
-		{[]string{"boom"}, 1},      // ?-propagated Err -> code 1
-		{[]string{"nope"}, 2},      // unknown task
-		{nil, 0},                   // list
-		{[]string{"--list"}, 0},    // list keyword
+		{[]string{"ok", "x"}, 0}, // runs, success
+		{[]string{"noargs"}, 0},  // zero-param task
+		{[]string{"boom"}, 1},    // ?-propagated Err -> code 1
+		{[]string{"nope"}, 2},    // unknown task
+		{nil, 0},                 // list
+		{[]string{"--list"}, 0},  // list keyword
 	}
 	for _, c := range cases {
 		code, err := dispatchResolve(tasks, c.argv)

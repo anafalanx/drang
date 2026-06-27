@@ -13,28 +13,28 @@ func TestGCKnob(t *testing.T) {
 	defer debug.SetGCPercent(orig)
 
 	// A preset word returns the previous percent (an int) and applies the setting.
-	prev := callBuiltin(t, "gc", str("relaxed"))
+	prev := callBuiltin(t, "sys_gc", str("relaxed"))
 	if prev.Tag() != value.Int {
-		t.Fatalf("gc(\"relaxed\") should return the previous percent (int), got %s", prev.TypeName())
+		t.Fatalf("sys_gc(\"relaxed\") should return the previous percent (int), got %s", prev.TypeName())
 	}
 	if got := debug.SetGCPercent(400); got != 400 {
-		t.Errorf("gc(\"relaxed\") should have set GOGC to 400, but it was %d", got)
+		t.Errorf("sys_gc(\"relaxed\") should have set GOGC to 400, but it was %d", got)
 	}
 
 	// The int form returns the previous percent too.
-	if v := callBuiltin(t, "gc", value.MakeInt(250)); v.Tag() != value.Int || v.AsInt() != 400 {
-		t.Errorf("gc(250) should return the previous percent 400, got %v", v.Display())
+	if v := callBuiltin(t, "sys_gc", value.MakeInt(250)); v.Tag() != value.Int || v.AsInt() != 400 {
+		t.Errorf("sys_gc(250) should return the previous percent 400, got %v", v.Display())
 	}
 
 	// "off" disables collection.
-	callBuiltin(t, "gc", str("off"))
+	callBuiltin(t, "sys_gc", str("off"))
 	if got := debug.SetGCPercent(100); got != -1 {
-		t.Errorf("gc(\"off\") should have disabled GC (-1), but it was %d", got)
+		t.Errorf("sys_gc(\"off\") should have disabled GC (-1), but it was %d", got)
 	}
 
 	// An unknown mode word is a catchable Err, not an abort.
-	if e := callBuiltin(t, "gc", str("bogus")); !e.IsErr() {
-		t.Error("gc with an unknown mode should be a catchable Err value")
+	if e := callBuiltin(t, "sys_gc", str("bogus")); !e.IsErr() {
+		t.Error("sys_gc with an unknown mode should be a catchable Err value")
 	}
 }
 

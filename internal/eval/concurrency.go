@@ -145,12 +145,12 @@ func builtinRecv(args []value.Value) (value.Value, error) {
 	return v, nil
 }
 
-// builtinRecv2 is recv with a closed-flag: returns [value, ok].
-func builtinRecv2(args []value.Value) (value.Value, error) {
+// builtinRecvOk is recv with a closed-flag: returns [value, ok].
+func builtinRecvOk(args []value.Value) (value.Value, error) {
 	if len(args) != 1 {
-		return value.MakeNil(), fmt.Errorf("recv2 expects 1 argument (channel), got %d", len(args))
+		return value.MakeNil(), fmt.Errorf("recv_ok expects 1 argument (channel), got %d", len(args))
 	}
-	c, errv, ok := chanArg("recv2", args[0])
+	c, errv, ok := chanArg("recv_ok", args[0])
 	if !ok {
 		return errv, nil
 	}

@@ -508,10 +508,10 @@ func TestLoopControlParseGating(t *testing.T) {
 	// the parser must reject strays (reset at fn/lambda boundaries) and accept the
 	// in-loop forms, including postfix modifiers.
 	bad := []string{
-		`break`,                               // top level
-		`next`,                                // top level
-		`if true { break }`,                   // if is not a loop
-		`for $i in 1..3 { fn f() { break } }`, // can't escape a function
+		`break`,                                // top level
+		`next`,                                 // top level
+		`if true { break }`,                    // if is not a loop
+		`for $i in 1..3 { fn f() { break } }`,  // can't escape a function
 		`for $i in 1..3 { $g := || { next } }`, // can't escape a lambda
 		`for $i in 1..3 { map([1], |$x| break) }`, // can't escape a lambda arg
 	}
@@ -525,8 +525,8 @@ func TestLoopControlParseGating(t *testing.T) {
 	good := []string{
 		`for $i in 1..3 { break }`,
 		`while true { next }`,
-		`for $i in 1..9 { break if $i == 3 }`,    // postfix if
-		`for $i in 1..9 { next unless $i > 2 }`,  // postfix unless
+		`for $i in 1..9 { break if $i == 3 }`,   // postfix if
+		`for $i in 1..9 { next unless $i > 2 }`, // postfix unless
 		`for $i in 1..3 { if $i == 2 { break } }`,
 		`for $i in 1..3 { for $j in 1..3 { break } }`, // nested
 	}
