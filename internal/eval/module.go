@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -12,27 +14,24 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// Module support. `use "path"` (a statement) flat-merges a module's exported
-// .functions and $CONSTs into the current scope; `$u := use("path")` (a call) binds
-// the module's frozen export record, reached via $u.foo() / $u.CONST. A module is any
-// .dr file; its top-level user functions (.foo) and constants ($CONST) are its
-// exports — mutable top-level state is rejected, keeping exports frozen and
-// pmap-safe. Modules load once per process (cached by canonical path), are
-// diamond-safe, and report import cycles.
-
-type moduleEntry struct {
-	exports value.Value
-	err     error
-	loading bool
-}
+// Module support. `use "./util"` (a statement) flat-merges a module's exported
+// .functions and $CONSTs into the current scope; `$u := use("./util")` (a call) binds
+// the module's export record, reached via $u.foo() / $u.CONST. A module is any .dr
+// file; its top-level user functions (.foo) and constants ($CONST) are its exports —
+// mutable top-level state is rejected, so exports are functions and constants only.
+// Modules load once per process (cached by canonical path), are diamond-safe, and
+// import cycles error. Flat-merge is NOT transitive (a name a module itself merged is
+// not re-exported). NOTE: exported VALUES are not yet deeply immutable — mutating an
+// exported container is a known gap, tracked separately.
 
 var (
 	moduleMu    sync.Mutex
-	moduleCache = map[string]*moduleEntry{}
+	moduleCache = map[string]value.Value{} // canonical path -> export record (successful loads only)
 )
 
 // evalUse implements the captured form `$u := use("path")`: it returns the module's
-// frozen export record, or a catchable Err if the module fails to load.
+// export record, or a catchable Err if the module fails to load. An exit()/die()
+// during the module's import is NOT caught — it propagates and ends the program.
 func evalUse(args []value.Value, env *Env) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("use expects 1 argument (a path string), got %d", len(args))
@@ -40,8 +39,11 @@ func evalUse(args []value.Value, env *Env) (value.Value, error) {
 	if args[0].Tag() != value.Str {
 		return value.MakeNil(), fmt.Errorf("use expects a string path, got %s", args[0].TypeName())
 	}
-	rec, err := loadModule(args[0].AsStr(), env.baseDir())
+	rec, err := loadModule(args[0].AsStr(), env)
 	if err != nil {
+		if _, ok := ExitRequested(err); ok {
+			return value.MakeNil(), err
+		}
 		return value.MakeErr("use: "+err.Error(), 1), nil
 	}
 	return rec, nil
@@ -57,8 +59,11 @@ func mergeModule(n *ast.UseStmt, env *Env) error {
 	if pv.Tag() != value.Str {
 		return fmt.Errorf("use: path must be a string, got %s", pv.TypeName())
 	}
-	rec, err := loadModule(pv.AsStr(), env.baseDir())
+	rec, err := loadModule(pv.AsStr(), env)
 	if err != nil {
+		if _, ok := ExitRequested(err); ok {
+			return err
+		}
 		return fmt.Errorf("use %q: %v", pv.AsStr(), err)
 	}
 	om := rec.Obj().(*value.OrderedMap)
@@ -71,9 +76,12 @@ func mergeModule(n *ast.UseStmt, env *Env) error {
 		if _, exists := env.vars[key]; exists {
 			return fmt.Errorf("use %q: %s is already defined here", pv.AsStr(), sigilName(key))
 		}
-		if e := env.define(key, vals[i], true); e != nil { // frozen: a later duplicate also trips define
+		if e := env.define(key, vals[i], true); e != nil {
 			return fmt.Errorf("use %q: %v", pv.AsStr(), e)
 		}
+		b := env.vars[key] // mark as merged so a re-export does not propagate it (non-transitive)
+		b.merged = true
+		env.vars[key] = b
 	}
 	return nil
 }
@@ -85,37 +93,39 @@ func sigilName(key string) string {
 	return "$" + key
 }
 
-// loadModule resolves and loads a module, caching by canonical path (load-once,
-// diamond-safe) and detecting import cycles.
-func loadModule(pathArg, baseDir string) (value.Value, error) {
-	canon, err := resolvePath(pathArg, baseDir)
+// loadModule resolves and loads a module, caching successful loads by canonical path
+// (load-once, diamond-safe). Import cycles are detected per import chain (threaded
+// through env), so concurrent loads of the same module never false-trigger a cycle.
+func loadModule(pathArg string, env *Env) (value.Value, error) {
+	canon, err := resolvePath(pathArg, env.baseDir())
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	moduleMu.Lock()
-	if e, ok := moduleCache[canon]; ok {
-		loading, exports, lerr := e.loading, e.exports, e.err
-		moduleMu.Unlock()
-		if loading {
-			return value.MakeNil(), fmt.Errorf("import cycle through %s", canon)
-		}
-		return exports, lerr
+	if env.loading(canon) {
+		return value.MakeNil(), fmt.Errorf("import cycle through %s", canon)
 	}
-	moduleCache[canon] = &moduleEntry{loading: true}
-	moduleMu.Unlock()
-
-	exports, lerr := runModule(canon)
-
 	moduleMu.Lock()
-	moduleCache[canon] = &moduleEntry{exports: exports, err: lerr}
+	cached, ok := moduleCache[canon]
 	moduleMu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	exports, lerr := runModule(canon, env)
+	if lerr == nil { // cache only successful loads, so a failure never poisons later imports
+		moduleMu.Lock()
+		moduleCache[canon] = exports
+		moduleMu.Unlock()
+	}
 	return exports, lerr
 }
 
 // runModule reads, parses, and runs a module file into a fresh prelude-backed env,
 // then collects its exports. The module's own top-level bindings land in modEnv (a
-// child of the prelude env), so they are cleanly separable from prelude/seed names.
-func runModule(canon string) (value.Value, error) {
+// child of the prelude env), cleanly separable from prelude/seed names.
+func runModule(canon string, importerEnv *Env) (value.Value, error) {
+	if fi, e := os.Stat(canon); e == nil && fi.IsDir() {
+		return value.MakeNil(), fmt.Errorf("%s is a directory, not a module file", canon)
+	}
 	src, e := os.ReadFile(canon)
 	if e != nil {
 		return value.MakeNil(), fmt.Errorf("cannot read %s: %v", canon, e)
@@ -132,29 +142,35 @@ func runModule(canon string) (value.Value, error) {
 	}
 	modEnv := base.child()
 	modEnv.moduleDir = filepath.Dir(canon)
+	modEnv.loadingChain = importerEnv.chainWith(canon)
 	if err := RunProgramVM(prog, modEnv); err != nil {
 		if _, ok := ExitRequested(err); ok {
-			return value.MakeNil(), fmt.Errorf("%s called exit() during import", canon)
+			return value.MakeNil(), err // exit()/die() during import — propagate, do not catch
 		}
 		return value.MakeNil(), fmt.Errorf("error in %s: %v", canon, err)
 	}
 	return collectExports(modEnv, canon)
 }
 
-// collectExports builds the frozen export record from a module env's own scope: each
-// .foo user function (keyed without its dot, so $u.foo works) and each $CONST. A
-// mutable top-level var is rejected — modules export only functions and constants.
+// collectExports builds the export record from a module env's own scope, in a
+// deterministic (sorted) order: each .foo user function (keyed without its dot, so
+// $u.foo works) and each $CONST. Bindings flat-merged from a sub-module are skipped
+// (re-export is non-transitive). A mutable top-level var is rejected.
 func collectExports(modEnv *Env, canon string) (value.Value, error) {
+	keys := make([]string, 0, len(modEnv.vars))
+	for k := range modEnv.vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	m := value.MakeMap()
 	om := m.Obj().(*value.OrderedMap)
-	for key, b := range modEnv.vars {
+	for _, key := range keys {
+		b := modEnv.vars[key]
+		if b.merged {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(key, "."):
-			// Own functions are non-frozen; a frozen .foo was flat-merged from a
-			// sub-module, so it is NOT re-exported (flat-merge is not transitive).
-			if b.frozen {
-				continue
-			}
 			om.Set(value.MakeStr(strings.TrimPrefix(key, ".")), b.v)
 		case b.frozen:
 			om.Set(value.MakeStr(key), b.v)
@@ -167,7 +183,9 @@ func collectExports(modEnv *Env, canon string) (value.Value, error) {
 
 // resolvePath turns a use path into a canonical absolute path. A relative path joins
 // onto baseDir (the importer's directory, or cwd when baseDir is empty); a ".dr"
-// extension is added when the path has none and the bare path does not exist.
+// extension is added when the path has none and the bare path does not exist. On a
+// case-insensitive filesystem (Windows) the key is lower-cased so one file maps to
+// one cache entry.
 func resolvePath(pathArg, baseDir string) (string, error) {
 	p := pathArg
 	if !filepath.IsAbs(p) {
@@ -182,5 +200,9 @@ func resolvePath(pathArg, baseDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving %q: %v", pathArg, err)
 	}
-	return filepath.Clean(abs), nil
+	canon := filepath.Clean(abs)
+	if runtime.GOOS == "windows" {
+		canon = strings.ToLower(canon)
+	}
+	return canon, nil
 }

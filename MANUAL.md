@@ -20,6 +20,7 @@
 - [JSON](#json)
 - [CSV](#csv)
 - [One-liner mode](#one-liner-mode)
+- [Modules: `use`](#modules-use)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
 
@@ -2432,6 +2433,89 @@ Notes and limits (v1):
   newline is added).
 - Runtime errors in stream mode report the message but not a source position.
 - In-place file editing (`-i`) is not yet supported.
+
+---
+
+## Modules: `use`
+
+A program can be split across files. Any `.dr` file is a **module**; its top-level
+named functions (`fn .foo`) and constants (`$CONST ::= …`) are its **exports**.
+Nothing else is exported — a mutable top-level variable in a module is an error at
+import time, so exports are always functions and constants.
+
+There is one keyword, `use`, and **whether you capture its result** chooses the mode.
+
+### Flat merge — `use "./util"`
+
+Used as a statement, `use` merges the module's exports into the current scope, as if
+pasted: its `.foo` functions join your `.`-space, its `$CONST`s join your `$`-space.
+
+```
+# util.dr
+fn .shout($s) { upper($s) ~ "!" }
+$GREETING ::= "hi"
+```
+```
+# main.dr
+use "./util"
+say(.shout("hey"))   # HEY!
+say($GREETING)       # hi
+```
+
+### Isolated — `$u := use("./util")`
+
+Used as a call whose result you bind, `use` returns the module's **export record** and
+merges nothing into your namespaces. Reach the exports through the binding. This is the
+aliased-import form — bind to any `$name`; there is no `as` keyword.
+
+```
+$u := use("./util")
+say($u.shout("hey"))   # HEY!
+say($u.GREETING)       # hi
+```
+
+### Paths
+
+Paths are **strings** (so a path with a space just works), and the `.dr` extension is
+optional. A relative path resolves against **the importing file's directory**, so a
+module's own `use "./sibling"` is relative to that module, not to whoever imported it.
+For entry points with no source file — `-e`, stdin, the REPL, and a `drang build`
+standalone — relative paths resolve against the **current working directory**.
+
+### Loading rules
+
+- **Load once.** A module is evaluated once per process and cached by canonical path,
+  so a diamond (`a` uses `b` and `c`, both use `d`) loads `d` exactly once.
+- **Cycles error.** If imports form a cycle, the import fails with `import cycle
+  through …` rather than looping.
+- **Flat-merge is not transitive.** If module `b` does `use "./d"`, importing `b` does
+  *not* re-export `d`'s names — you get `b`'s own exports only.
+- **Collisions error.** Merging a name already defined in the current scope (or
+  defining one a `use` already merged) is an error, not a silent overwrite.
+- **`exit` / `die` propagate.** If a module calls `exit()` or `die()` while loading, it
+  terminates the program — even through the captured `$u := use(...)` form (it is not
+  downgraded to a catchable error).
+
+### Errors
+
+A failed import via the **captured** form is a catchable [error value](#errors-as-values),
+so you can fall back:
+
+```
+$cfg := use("./optional") // {}      # missing/broken module → use a default
+```
+
+A failed **flat-merge** statement aborts the program with the import error.
+
+### Notes and limits
+
+- A bare `use("./util")` **with parentheses, as a statement** (result discarded) loads
+  the module but imports nothing — almost always a mistake. Write `use "./util"` to
+  merge, or `$u := use("./util")` to capture.
+- Exported values are **not yet deeply immutable.** Treat a module's exports as
+  read-only; mutating an exported array/map (or the record itself) is a known gap and
+  can affect other importers. Immutable exports are planned.
+- Every top-level `.foo` is exported; there is no module-private helper yet.
 
 ---
 
