@@ -1017,6 +1017,30 @@ hi sam
 
 (`~` is the string-concatenation operator; `say` prints a line.) A bare `fn name` (no dot) is an error — user functions must be `fn .name`.
 
+#### Default parameters
+
+A parameter may have a default value, `$name = expr`, making it optional. Defaulted
+parameters must come after the required ones. A default is evaluated **at call time**,
+only when its argument is omitted (so there is no shared-mutable-default surprise),
+and it may reference an earlier parameter:
+
+```drang
+fn .serve($app, $port = 8080, $host = "localhost") {
+  "{}://{}:{}" |> format($app, $host, $port)
+}
+say(.serve("web"))                  # web://localhost:8080
+say(.serve("web", 9090))            # web://localhost:9090
+
+fn .range_end($start, $end = $start + 10) { $end }
+say(.range_end(5))                  # 15
+```
+
+Calling with too few or too many arguments is a catchable error that names the
+accepted range (e.g. `.serve expects 1 to 3 arguments, got 4`). The same `$name =
+expr` syntax works in lambda parameters. (Arguments are positional — there are no
+named/keyword arguments, and no variadic `$a...` parameter; pass an array for a
+variable number of values.)
+
 ### Implicit and explicit return
 
 A function returns the value of its **last statement** — no `return` needed. When that last statement is an `if`/`else` (or any block), the value of the taken branch falls straight out:
@@ -2946,7 +2970,7 @@ So `fetch`/`http` (orchestrate `run(["curl", …])` instead) and the math family
 Several features are specified in DESIGN.md but do not work in the binary yet — don't reach for them:
 
 - **Structs.** `struct Foo { ... }` is a parse error. Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
-- **Default / named / variadic parameters.** `fn .f($a, $b=8080)` and `$a...` are parse errors; every parameter is required and positional.
+- **Named arguments** (`f(port: 9090)`) are not supported — arguments are positional (default parameters *are* supported; see [Named functions](#named-functions-fn-name)). **Variadic parameters** (`$a...`) are deliberately out of scope — pass an array instead.
 - **`=~` match / `s///` substitution operators.** These are parse errors; use the `match` / `matches` / `gsub` builtins instead.
 - **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
 

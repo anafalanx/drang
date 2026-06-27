@@ -74,6 +74,20 @@ func TestExampleSubjectExitIsFailure(t *testing.T) {
 	}
 }
 
+func TestRequiredAfterDefaultIsParseError(t *testing.T) {
+	p := parser.New("fn .bad($a = 1, $b) { 1 }")
+	p.ParseProgram()
+	found := false
+	for _, e := range p.Errors() {
+		if strings.Contains(e, "cannot follow a defaulted one") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a required param after a defaulted one should be a parse error, got %v", p.Errors())
+	}
+}
+
 func TestNestedExampleIsParseError(t *testing.T) {
 	p := parser.New("fn .f() {\n  example 1 == 1\n}")
 	p.ParseProgram()

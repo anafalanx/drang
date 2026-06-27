@@ -30,7 +30,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
-| Default + named + variadic params (`fn .f($a, $b=8080)`, `$a...`) | option maps / task fns; parse-errors today | M | NOT-STARTED |
+| Default params (`fn .f($a, $b=8080)`) | option/config/task fns — **DONE**: call-time eval, may reference earlier params, works in fns + lambdas + both backends. Named args deferred indefinitely; variadic params scrapped (pass an array) | M | ✅ DONE |
 | ~~Slices + string indexing/substring (`$a[1..3]`, `$s[2..5]`)~~ | core text moves — **DONE**: inclusive range slices on arrays + strings, rune-aware string indexing, negatives, clamping (read-only; slice-assignment deferred) | M | ✅ DONE |
 | `=~` match / `s///` substitution + `$1..$n` in script mode | the Perl soul; power exists (`match`/`gsub`), operator layer doesn't | M | NOT-STARTED |
 | Char ranges `'a'..'z'` (needs char literals) | lower frequency; `'a'` lexes as ILLEGAL | M | NOT-STARTED |

@@ -196,9 +196,10 @@ func (*ForStmt) stmtNode() {}
 // FnDecl declares a named function: fn name($a, $b) { body }.
 type FnDecl struct {
 	Pos
-	Name   string
-	Params []string
-	Body   *Block
+	Name     string
+	Params   []string
+	Defaults []Expr // parallel to Params; a nil entry means the parameter is required
+	Body     *Block
 }
 
 func (s *FnDecl) String() string {
@@ -437,8 +438,9 @@ func (*RangeLit) exprNode()        {}
 // Lambda is an anonymous function value: |$a, $b| expr  or  |$a| { ... }.
 type Lambda struct {
 	Pos
-	Params []string
-	Body   *Block
+	Params   []string
+	Defaults []Expr // parallel to Params; a nil entry means the parameter is required
+	Body     *Block
 }
 
 func (e *Lambda) String() string {
