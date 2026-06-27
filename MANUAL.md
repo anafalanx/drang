@@ -2188,7 +2188,7 @@ separator unless noted.
 | `basename(p)` | `.../notes.txt` | `notes.txt` |
 | `ext(p)` | `.../notes.txt` | `.txt` (leading dot) |
 | `stem(p)` | `.../notes.txt` | `notes` (basename minus ext) |
-| `abs(p)` | `foo/bar.txt` | absolute path against the CWD |
+| `abspath(p)` | `foo/bar.txt` | absolute path against the CWD (numeric absolute value is `abs`) |
 | `slash(p)` | `C:\a\b` | `C:/a/b` (forward slashes) |
 
 ```drang
@@ -2423,7 +2423,7 @@ a bool; the rest signal real I/O failures as Err.
 | `basename` | `basename(p)` | Final path element. |
 | `ext` | `ext(p)` | Extension including the dot (`.txt`), or `""`. |
 | `stem` | `stem(p)` | Basename without its extension. |
-| `abs` | `abs(p)` | Absolute path; failure → Err. |
+| `abspath` | `abspath(p)` | Absolute path against the CWD; failure → Err. (Numeric absolute value is `abs`.) |
 | `slash` | `slash(p)` | Convert separators to forward slashes. |
 | `exists` | `exists(p)` | True if the path exists. |
 | `isdir` | `isdir(p)` | True if the path exists and is a directory. |
