@@ -925,13 +925,15 @@ func arraySlice(a *value.Array, lo, hi int64) value.Value {
 func stringIndex(s string, i int64) value.Value {
 	rs := []rune(s)
 	n := int64(len(rs))
-	if i < 0 {
-		i += n
+	idx := i
+	if idx < 0 {
+		idx += n
 	}
-	if i < 0 || i >= n {
-		return value.MakeErr(fmt.Sprintf("index %d out of range (length %d)", i, n), 1)
+	if idx < 0 || idx >= n {
+		// Report the original index and use the same wording as the array path.
+		return value.MakeErr(fmt.Sprintf("index %d out of range (len %d)", i, n), 1)
 	}
-	return value.MakeStr(string(rs[i]))
+	return value.MakeStr(string(rs[idx]))
 }
 
 // stringSlice returns the substring s[lo..hi] by rune (inclusive); bounds clamp and
