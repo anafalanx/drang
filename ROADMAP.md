@@ -43,7 +43,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
 | ~~printf-grade `format` verbs (`{:.2f}`, `{:>20}`, `{:08x}`)~~ | aligned columns + fixed decimals — **DONE**: `{:spec}` extends `{}` (Python/Rust-style: fill/align/sign/#/0/width/.prec/type) | M | ✅ DONE |
-| Date/time family + `sleep` (`now`, parse/format, arithmetic) | timestamps, "newer than N days", durations, backoff — wholly absent | M | NOT-STARTED |
+| ~~Date/time family + `sleep`~~ | timestamps, durations, backoff — **DONE**: epoch-float model; `now`/`sleep`/`strftime`/`parse_time`/`date_parts` (strftime codes, local time) | M | ✅ DONE |
 | Hashing + encodings (`sha256`/`md5`, base64, hex, url) | checksum artifacts, decode tokens — tiny bindings, hourly use | S | NOT-STARTED |
 | Random (`rand`, `rand_int`, `shuffle`, `uuid`) | jitter/backoff, temp names, sampling | S | NOT-STARTED |
 | Type conversions `str()`, `float()`, `bool()` | only `int()` exists today (asymmetric) | S | NOT-STARTED |
@@ -115,8 +115,8 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
    version stamp / release check. *A daily-driver whose own examples don't run fails
    "complete" on trust before any feature.*
 2. ~~**printf-grade `format` verbs (b).**~~ ✅ Done — `{:spec}` mini-language over the existing `{}`.
-3. **Date/time + `sleep` (b).** Conspicuous absence for orchestration. *(next)*
-4. **Hashing + encodings + random (b).** Tiny bindings, highest value-per-byte.
+3. ~~**Date/time + `sleep` (b).**~~ ✅ Done — epoch-float model + `now`/`sleep`/`strftime`/`parse_time`/`date_parts`.
+4. **Hashing + encodings + random (b).** Tiny bindings, highest value-per-byte. *(next)*
 5. **`drang test` (c).** The named next phase; lets daily-driver scripts stop rotting.
 
 After this set, a Perl/Python refugee can do real text+glue work for an hour without

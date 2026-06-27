@@ -1431,6 +1431,13 @@ var builtins = map[string]builtin{
 	"close":   builtinCloseChan,
 	"drain":   builtinDrain,
 
+	// date/time (epoch seconds, Perl-style; strftime %-codes, local time)
+	"now":        builtinNow,
+	"sleep":      builtinSleep,
+	"strftime":   builtinStrftime,
+	"parse_time": builtinParseTime,
+	"date_parts": builtinDateParts,
+
 	// runtime knobs
 	"sys_gc": builtinSysGC,
 	"cwd":    builtinCwd,
