@@ -846,18 +846,34 @@ func indexRead(c, k value.Value) value.Value {
 	switch c.Tag() {
 	case value.Arr:
 		a := c.Obj().(*value.Array)
-		if k.Tag() != value.Int {
-			return value.MakeErr(fmt.Sprintf("array index must be an int, got %s", k.TypeName()), 1)
+		switch k.Tag() {
+		case value.Int:
+			i := k.AsInt()
+			length := int64(a.Len())
+			if i < 0 {
+				i += length
+			}
+			if i < 0 || i >= length {
+				return value.MakeErr(fmt.Sprintf("index %d out of range (len %d)", k.AsInt(), a.Len()), 1)
+			}
+			return a.Elems[i]
+		case value.Range:
+			r := k.Obj().(*value.IntRange)
+			return arraySlice(a, r.Lo, r.Hi)
+		default:
+			return value.MakeErr(fmt.Sprintf("array index must be an int or range, got %s", k.TypeName()), 1)
 		}
-		i := k.AsInt()
-		length := int64(a.Len())
-		if i < 0 {
-			i += length
+	case value.Str:
+		s := c.AsStr()
+		switch k.Tag() {
+		case value.Int:
+			return stringIndex(s, k.AsInt())
+		case value.Range:
+			r := k.Obj().(*value.IntRange)
+			return stringSlice(s, r.Lo, r.Hi)
+		default:
+			return value.MakeErr(fmt.Sprintf("string index must be an int or range, got %s", k.TypeName()), 1)
 		}
-		if i < 0 || i >= length {
-			return value.MakeErr(fmt.Sprintf("index %d out of range (len %d)", k.AsInt(), a.Len()), 1)
-		}
-		return a.Elems[i]
 	case value.Map:
 		if !value.Hashable(k) {
 			return value.MakeErr("unhashable map key: "+k.TypeName(), 1)
@@ -868,6 +884,65 @@ func indexRead(c, k value.Value) value.Value {
 	default:
 		return value.MakeErr(fmt.Sprintf("cannot index a %s", c.TypeName()), 1)
 	}
+}
+
+// clampSlice resolves a lo..hi range (inclusive, matching drang ranges) over a
+// sequence of length n: negatives count from the end, bounds clamp, and an empty or
+// reversed range yields ok=false. On ok, [from, to) is the half-open Go slice range.
+func clampSlice(lo, hi, n int64) (from, to int64, ok bool) {
+	if lo < 0 {
+		lo += n
+	}
+	if hi < 0 {
+		hi += n
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi >= n {
+		hi = n - 1
+	}
+	if lo > hi || lo >= n {
+		return 0, 0, false
+	}
+	return lo, hi + 1, true
+}
+
+// arraySlice returns a new array holding a[lo..hi] (inclusive); out-of-range bounds
+// clamp and an empty/reversed range yields an empty array.
+func arraySlice(a *value.Array, lo, hi int64) value.Value {
+	from, to, ok := clampSlice(lo, hi, int64(len(a.Elems)))
+	if !ok {
+		return value.MakeArray(nil)
+	}
+	out := make([]value.Value, to-from)
+	copy(out, a.Elems[from:to])
+	return value.MakeArray(out)
+}
+
+// stringIndex returns the i-th rune of s as a one-character string (negatives count
+// from the end); an out-of-range index is an Err.
+func stringIndex(s string, i int64) value.Value {
+	rs := []rune(s)
+	n := int64(len(rs))
+	if i < 0 {
+		i += n
+	}
+	if i < 0 || i >= n {
+		return value.MakeErr(fmt.Sprintf("index %d out of range (length %d)", i, n), 1)
+	}
+	return value.MakeStr(string(rs[i]))
+}
+
+// stringSlice returns the substring s[lo..hi] by rune (inclusive); bounds clamp and
+// an empty/reversed range yields "".
+func stringSlice(s string, lo, hi int64) value.Value {
+	rs := []rune(s)
+	from, to, ok := clampSlice(lo, hi, int64(len(rs)))
+	if !ok {
+		return value.MakeStr("")
+	}
+	return value.MakeStr(string(rs[from:to]))
 }
 
 // evalFieldRead reads c.name: a string-keyed map lookup (miss is undef), else Err.
