@@ -1823,9 +1823,14 @@ The taxonomy is "good + revisable," not a one-shot:
 - **`drang fmt --fix`** carries rename/rewrite rules, so a future taxonomy revision
   is a mechanical migration over any script (we own the AST). This is drang's edition
   mechanism: rewrite source, don't carry multiple semantics.
-- A **lightweight version pragma** (min-version declaration/guard) — NOT full
-  editions. Built-in additions are already non-breaking (walled from `.`-space), so
-  the pragma needs no feature-gating for them.
+- **No per-script version pragma.** The version is managed *out of band*: a
+  `drang build` standalone bundles its own runtime (so shared tools have no
+  mismatch), a solo user controls their one install, and a team sharing source can
+  pin the drang version at the toolchain level (as zmal does). Combined with loud
+  failures (a missing builtin/syntax errors out, never silently misbehaves) and
+  walled namespaces (additions never break old code), "assume the managed version"
+  is safe. A min-version guard is trivially addable later if a concrete cross-
+  version-source need ever appears — reserved, not built.
 - **Not** a user-controlled / package-registry stdlib: the curated batteries-in-the-
   binary stdlib is the value; user *files* are fine, a user-governed *stdlib* is not.
 
@@ -1834,9 +1839,10 @@ The taxonomy is "good + revisable," not a one-shot:
 Settled: three-sigil model; dot-in-the-name for user functions; `.`-space is
 functions only (constants are `$`); same-name user collision = error; aliased import
 = the `$u := use(...)` capture form (no `as`); string paths, extension optional;
-modules = user-files-only with frozen exports + import-once.
+modules = user-files-only with frozen exports + import-once; no per-script version
+pragma (version managed out of band).
 
 Open for the build phase: the exact `use` surface (how flat vs isolated is
 distinguished syntactically — e.g. parenless directive vs captured call, or an
 explicit alternative); the actual taxonomy pass (which builtins, which domains, final
-names); the `drang fmt --fix` rewrite-rule design; the version-pragma syntax.
+names); the `drang fmt --fix` rewrite-rule design.
