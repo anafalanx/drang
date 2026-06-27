@@ -2014,3 +2014,78 @@ builtins. (This briefly looked like a VM bug before the shadowing was spotted.)
 
 New tests in prelude_test.go (a runP helper loads the prelude); build + full suite
 green.
+
+## Build progress: modules — `use` (2026-06-27)
+
+Phase 4c: the module system, closing the namespace/module design opened above. A
+module is any `.dr` file; its top-level `.foo` functions and `$CONST` constants are
+its exports. Two forms, distinguished by whether you capture the result:
+
+- **Flat merge** (directive) — `use "./util"`: merges the module's `.foo` into your
+  `.`-space and `$BAR` into your `$`-space.
+- **Isolated** (call) — `$u := use("./util")`: binds the export record; reach it via
+  `$u.foo()` / `$u.BAR`. This is the aliased-import form (no `as`).
+
+Implementation (internal/eval/module.go): `use` is a contextual statement-leading
+word (no new keyword token); the captured form rides `dispatchNonUser` like `spawn`.
+**No compiler changes were needed** — a `.foo` always compiles to an env-checking
+call, and `$u.foo()` works via existing field-access + call, so runtime-injected
+names (prelude and modules alike) just work. Path resolution: relative to the
+importing file's directory, or **cwd** for `-e`/stdin/REPL/standalone entry points
+(decided "cwd, uniformly"). Load-once by canonical path (diamond-safe). Exports are
+collected from the module env's own scope; **flat-merge is non-transitive** (a name a
+module itself merged is not re-exported). A name already bound at the merge site is a
+collision error; a mutable top-level var in a module is rejected at export.
+
+### Adversarial review (two reviewers) + fixes
+
+Two parallel reviewers (paths/cache/`use`-forms; export/merge/isolated semantics)
+found a dozen issues. Fixed in this pass:
+
+- **Cache/cycle rework (HIGH).** The cycle check used a process-global `loading`
+  flag, so concurrent first-loads of the same module (e.g. `use` inside `pmap`)
+  false-triggered "import cycle." Replaced with **per-import-chain** detection
+  threaded through the env (`Env.loadingChain`, walked by `Env.loading`/`chainWith`,
+  copied in `snapshot`). Concurrent loads no longer collide; race-clean under `-race`.
+- **Don't cache failures (HIGH).** A failed load was cached forever, poisoning later
+  valid imports. Now only successful loads are cached (`moduleCache` is just
+  `path -> record`); a failed import re-runs next time.
+- **exit/die propagate through the captured form (MED).** `$u := use(...)` previously
+  downgraded a module's `exit()`/`die()` to a catchable Err (silently lost if `$u`
+  unused). `runModule` now passes `ExitRequested` errors through, and both `evalUse`
+  and `mergeModule` re-propagate them instead of wrapping/catching.
+- **Non-transitive constants (MED).** Functions were already non-transitive (the
+  frozen-`.foo` heuristic), but a flat-merged `$CONST` leaked up one level. Added a
+  `binding.merged` flag set by `mergeModule`; `collectExports` skips merged bindings
+  uniformly (functions and constants).
+- **Collision message (MED).** A user `fn .foo` colliding with a `use`-imported
+  `.foo` printed the nonsensical "cannot redeclare constant $.foo"; `define` now
+  words `.`-name collisions as functions.
+- **Deterministic export order (MED).** `collectExports` iterated a Go map; export
+  records (and `keys($u)`) were randomized per run. Keys are now sorted.
+- **Windows case-folding + directory error (MED/LOW).** `resolvePath` lower-cases the
+  canonical key on Windows (one cache entry per file on a case-insensitive FS), and a
+  directory path now gives "is a directory, not a module file" instead of an opaque
+  OS error.
+
+### Filed / deferred
+
+- **Value-level immutability (HIGH, filed).** The two highest-severity findings share
+  one root cause: drang freezes *bindings*, not *values*. So the export record and any
+  constant holding an array/map are mutable — mutating one poisons the shared module
+  cache across importers, and a const container mutated under `pmap` is a genuine data
+  race (`-race` confirmed). The module header's "frozen/pmap-safe" claim is corrected
+  to note this gap. The real fix is a value-level frozen flag (Array + OrderedMap +
+  the mutation ops) with deep-freeze on export — a language-level value-semantics
+  change, filed as its own task rather than patched here.
+- **Deferred (documented, not bugs to fix now):** duplicate `fn .foo` in one file is
+  silent last-wins (general redefinition behavior, needed by the REPL); every
+  top-level `.foo` is exported (no module privacy yet); an extensionless path prefers
+  a bare file over `<name>.dr`; a bare `use("x")` *with parens* as a discarded
+  statement is a no-op (a precise parse-time guard would wrongly flag `use(...)` in
+  value position, so it's documented rather than enforced).
+
+Tests in module_test.go (both forms, diamond/import-once, cycle, frozen-export
+reject, collision, missing-file, exit-propagation, non-transitive const, `use`-in-
+`pmap` no-false-cycle, failed-load-not-cached); build + full suite green, concurrent
+path race-clean.

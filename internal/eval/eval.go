@@ -36,13 +36,15 @@ import (
 type binding struct {
 	v      value.Value
 	frozen bool
+	merged bool // imported into this scope by `use` (flat-merge) — not re-exported
 }
 
 // Env is a lexical scope chain.
 type Env struct {
-	vars      map[string]binding
-	parent    *Env
-	moduleDir string // base directory for relative `use` paths (set on the top env per run/module)
+	vars         map[string]binding
+	parent       *Env
+	moduleDir    string          // base directory for relative `use` paths (set on the top env per run/module)
+	loadingChain map[string]bool // canonical paths being loaded up the import chain (cycle detection)
 }
 
 // NewEnv returns a fresh top-level scope.
@@ -64,6 +66,30 @@ func (e *Env) baseDir() string {
 	return ""
 }
 
+// loading reports whether canon is already being loaded up this import chain — an
+// import cycle. It is per-chain (threaded through module envs), not global, so
+// concurrent loads of the same module from different goroutines do not collide.
+func (e *Env) loading(canon string) bool {
+	for s := e; s != nil; s = s.parent {
+		if s.loadingChain[canon] {
+			return true
+		}
+	}
+	return false
+}
+
+// chainWith returns this env's import chain extended with canon, for a module env
+// about to be loaded.
+func (e *Env) chainWith(canon string) map[string]bool {
+	m := map[string]bool{canon: true}
+	for s := e; s != nil; s = s.parent {
+		for k := range s.loadingChain {
+			m[k] = true
+		}
+	}
+	return m
+}
+
 // snapshot returns an isolated copy of the env CHAIN (each scope's bindings map
 // is copied) so a spawned goroutine reads its own maps and never races the main
 // goroutine's ongoing defines/sets. Binding VALUES are shared: frozen constants
@@ -77,7 +103,7 @@ func (e *Env) snapshot() *Env {
 	for k, b := range e.vars {
 		vars[k] = b
 	}
-	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir}
+	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, loadingChain: e.loadingChain}
 }
 
 func (e *Env) get(name string) (value.Value, bool) {
@@ -93,6 +119,9 @@ func (e *Env) get(name string) (value.Value, bool) {
 // refuses to redeclare a constant already bound in this same scope.
 func (e *Env) define(name string, v value.Value, frozen bool) error {
 	if b, ok := e.vars[name]; ok && b.frozen {
+		if strings.HasPrefix(name, ".") {
+			return fmt.Errorf("cannot redefine %s (it is already defined, e.g. imported by use)", name)
+		}
 		return fmt.Errorf("cannot redeclare constant $%s", name)
 	}
 	e.vars[name] = binding{v: v, frozen: frozen}

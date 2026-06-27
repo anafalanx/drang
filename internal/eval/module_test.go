@@ -114,3 +114,60 @@ func TestModuleMissingFileErrors(t *testing.T) {
 		t.Errorf("want a missing-module error, got %v", err)
 	}
 }
+
+func TestModuleExitPropagatesThroughCapturedUse(t *testing.T) {
+	// exit()/die() during an import must terminate the program, even via the
+	// catchable $u := use(...) form (it is NOT downgraded to a recoverable Err).
+	dir := t.TempDir()
+	writeMod(t, dir, "ex.dr", "say(\"in module\")\nexit(3)\nfn .x() { 1 }")
+	_, err := runMod(t, dir, "$u := use(\"./ex\")\nsay(\"after\")")
+	code, ok := ExitRequested(err)
+	if !ok || code != 3 {
+		t.Errorf("exit(3) in a module should propagate as code 3, got err=%v ok=%v code=%d", err, ok, code)
+	}
+}
+
+func TestModuleConstNotTransitivelyReExported(t *testing.T) {
+	// B flat-merges D (a $CONST among them); A imports B. D's constant must NOT be
+	// re-exported by B — flat-merge is non-transitive for constants as well.
+	dir := t.TempDir()
+	writeMod(t, dir, "d.dr", "$DSECRET ::= \"d-secret\"\nfn .d() { 1 }")
+	writeMod(t, dir, "b.dr", "use \"./d\"\nfn .b() { .d() }")
+	out, err := runMod(t, dir, "$u := use(\"./b\")\nsay(keys($u))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "DSECRET") {
+		t.Errorf("D's constant was transitively re-exported by B: %q", out)
+	}
+}
+
+func TestModuleUseInsidePmapNoFalseCycle(t *testing.T) {
+	// Concurrent first-loads of the same module from pmap workers must not
+	// false-trigger the import-cycle check (cycle detection is per import chain).
+	dir := t.TempDir()
+	writeMod(t, dir, "tiny.dr", "fn .val() { 42 }")
+	out, err := runMod(t, dir, "$res := [1,2,3,4,5,6,7,8] |> pmap(|$x| { use(\"./tiny\") })\nsay(len($res))")
+	if err != nil {
+		t.Fatalf("use inside pmap errored (false cycle?): %v", err)
+	}
+	if strings.TrimSpace(out) != "8" {
+		t.Errorf("got %q, want 8 records", out)
+	}
+}
+
+func TestModuleFailedLoadNotCached(t *testing.T) {
+	// A failed load must not be cached, or it would poison a later valid import.
+	dir := t.TempDir()
+	if _, err := runMod(t, dir, "$u := use(\"./later\")"); err != nil {
+		t.Fatalf("a missing module via the captured form should be catchable, got %v", err)
+	}
+	writeMod(t, dir, "later.dr", "fn .hi() { \"hello\" }")
+	out, err := runMod(t, dir, "$u := use(\"./later\")\nsay($u.hi())")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "hello" {
+		t.Errorf("failed load appears to have been cached/poisoned: got %q", out)
+	}
+}
