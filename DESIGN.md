@@ -1706,3 +1706,18 @@ the structural investments. Not yet started — captured here to act on later.
   exit-code checks (the golden comparisons were external to the language).
 - **`drang fmt`** — a canonical formatter; matters once scripts get large, and is
   tractable since we own the parser/AST.
+- **HTTP server (eventual, deliberate — not now)** — expose a robust local HTTP
+  server (thin `net/http` binding) so drang can serve a UI/dashboard for zmal
+  tools: the control-plane extension of orchestration. Unlike an HTTP *client*
+  (which you already get via `run(["curl", …])`), a server can't be orchestrated
+  around, so it belongs in the grain. PREREQUISITE design work: a server forces
+  drang's deferred shared-mutable-state-under-concurrency question, which collides
+  with the frozen-top-level-constants invariant that keeps `pmap` safe. Two
+  grain-respecting paths, both keeping *ambient* mutable globals impossible:
+  (a) state owned by one `spawn`'d goroutine reached over the existing channels
+  (CSP/actor — "share memory by communicating", no new surface), or (b) an explicit
+  synchronized `cell`/atom value with internally-guarded get/set/update (ergonomic,
+  safe by construction, passed explicitly not ambient). Plus a long-running
+  lifecycle (graceful shutdown) and a deliberately minimal handler API
+  (`req -> response` as maps, bodies via JSON, routing by dispatch on `req.path`).
+  Discipline: a binding for serving local tools, never a web framework.
