@@ -5,6 +5,19 @@ code-level scan, and a vision-gap analysis against drang's niche (a small, paral
 Perl-inspired scripting language for text / glue / orchestration — "reads like Ruby,
 thinks like Perl, runs like Go").*
 
+## Release status
+
+- **0.3 (2026-06-28)** — this round shipped: modules (`use`) + value-level immutability
+  (frozen constants & module exports), printf-grade `format` specs, date/time + `sleep`,
+  hashing/encoding/randomness, `drang test` (`example` assertions), array slices +
+  rune-aware string indexing, and default parameters. The doc/reality drift (bucket 1)
+  is closed and the binary is version-stamped. Several adversarial-review passes hardened
+  each feature.
+- **0.4 — the target: first *complete* version.** The remaining items below (named-
+  capture→map + `replace_first`, `drang fmt`, one-liner `-i`, char ranges, the stringy-
+  coercion decision) plus a **proper, expanded standard library** (the curated
+  batteries — grow the prelude / builtins toward the daily-driver bar).
+
 ## State of the language
 
 Roughly **80% of the way to a credible daily-driver**, and the *engine* is done:

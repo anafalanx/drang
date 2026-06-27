@@ -27,7 +27,7 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.2"
+var version = "0.3"
 
 func main() {
 	// A standalone executable (made by `drang build`) carries its program appended
