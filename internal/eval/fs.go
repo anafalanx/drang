@@ -108,6 +108,61 @@ func builtinSlash(args []value.Value) (value.Value, error) {
 	return value.MakeStr(filepath.ToSlash(p)), nil
 }
 
+func builtinIsAbs(args []value.Value) (value.Value, error) {
+	p, err := oneString("is_abs", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	return value.MakeBool(filepath.IsAbs(p)), nil
+}
+
+func builtinClean(args []value.Value) (value.Value, error) {
+	p, err := oneString("clean", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	return value.MakeStr(filepath.Clean(p)), nil
+}
+
+// builtinRel returns target relative to base. Uncomparable paths (e.g. different
+// Windows volumes) are a catchable Err.
+func builtinRel(args []value.Value) (value.Value, error) {
+	base, target, err := twoStrings("rel", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	r, e := filepath.Rel(base, target)
+	if e != nil {
+		return value.MakeErr("rel "+base+" -> "+target+": "+e.Error(), 1), nil
+	}
+	return value.MakeStr(r), nil
+}
+
+// builtinWithin reports whether target is inside base (or equal to it). It is a
+// guard (always a bool): uncomparable paths or any "../"-escaping relative path
+// are simply not within.
+func builtinWithin(args []value.Value) (value.Value, error) {
+	base, target, err := twoStrings("within", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	r, e := filepath.Rel(base, target)
+	if e != nil {
+		return value.MakeBool(false), nil
+	}
+	within := r == "." || (r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)))
+	return value.MakeBool(within), nil
+}
+
+// builtinPathListSep returns the OS PATH-list separator (";" on Windows, ":" on
+// Unix), for splitting/joining $ENV["PATH"]-style lists.
+func builtinPathListSep(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("path_list_sep expects no arguments, got %d", len(args))
+	}
+	return value.MakeStr(string(os.PathListSeparator)), nil
+}
+
 // --- stat guards: always a bool, never an Err, so they drop into if/unless ---
 
 func builtinExists(args []value.Value) (value.Value, error) {
@@ -321,6 +376,30 @@ func matchSegs(ps, ns []string) bool {
 		ps, ns = ps[1:], ns[1:]
 	}
 	return len(ns) == 0
+}
+
+// builtinReadDir lists a directory as an array of {name, path, isdir} records
+// (sorted by name, as os.ReadDir guarantees). A missing/unreadable dir is a
+// catchable Err. More structured than glob(join(dir, "*")).
+func builtinReadDir(args []value.Value) (value.Value, error) {
+	p, err := oneString("read_dir", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	entries, e := os.ReadDir(p)
+	if e != nil {
+		return value.MakeErr("read_dir "+p+": "+e.Error(), 1), nil
+	}
+	out := make([]value.Value, len(entries))
+	for i, de := range entries {
+		m := value.MakeMap()
+		om := m.Obj().(*value.OrderedMap)
+		om.Set(value.MakeStr("name"), value.MakeStr(de.Name()))
+		om.Set(value.MakeStr("path"), value.MakeStr(filepath.Join(p, de.Name())))
+		om.Set(value.MakeStr("isdir"), value.MakeBool(de.IsDir()))
+		out[i] = m
+	}
+	return value.MakeArray(out), nil
 }
 
 // --- file IO ---
