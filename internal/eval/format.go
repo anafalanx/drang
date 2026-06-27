@@ -28,6 +28,11 @@ type fspec struct {
 	typ   byte // d b o x X f F e E g G s % or 0
 }
 
+const (
+	maxFmtWidth = 1 << 20 // bounds field width against an accidental huge allocation
+	maxFmtPrec  = 1 << 10 // well beyond any real precision; also dodges Go fmt's verb cap
+)
+
 func isAlignRune(r rune) bool { return r == '<' || r == '>' || r == '^' }
 
 func parseSpec(s string) (fspec, error) {
@@ -57,7 +62,11 @@ func parseSpec(s string) (fspec, error) {
 		i++
 	}
 	if i > ws {
-		sp.width, _ = strconv.Atoi(string(r[ws:i]))
+		w, err := strconv.Atoi(string(r[ws:i]))
+		if err != nil || w > maxFmtWidth {
+			return sp, fmt.Errorf("format spec %q: width too large (max %d)", s, maxFmtWidth)
+		}
+		sp.width = w
 	}
 	if i < len(r) && r[i] == '.' {
 		i++
@@ -68,7 +77,11 @@ func parseSpec(s string) (fspec, error) {
 		if i == ps {
 			return sp, fmt.Errorf("spec %q: '.' must be followed by a precision", s)
 		}
-		sp.prec, _ = strconv.Atoi(string(r[ps:i]))
+		p, err := strconv.Atoi(string(r[ps:i]))
+		if err != nil || p > maxFmtPrec {
+			return sp, fmt.Errorf("format spec %q: precision too large (max %d)", s, maxFmtPrec)
+		}
+		sp.prec = p
 	}
 	if i < len(r) {
 		sp.typ, i = byte(r[i]), i+1
@@ -110,7 +123,11 @@ func formatArg(spec string, v value.Value) (string, error) {
 			return "", fmt.Errorf("precision is not allowed with integer type %q", string(sp.typ))
 		}
 		numeric = true
-		core = fmt.Sprintf("%"+signFlag+altFlag+string(sp.typ), v.AsInt())
+		if sp.typ == 'o' && sp.alt {
+			core = fmt.Sprintf("%"+signFlag+"O", v.AsInt()) // Go's %O gives the 0o prefix (like 0x/0b)
+		} else {
+			core = fmt.Sprintf("%"+signFlag+altFlag+string(sp.typ), v.AsInt())
+		}
 	case 'f', 'F', 'e', 'E', 'g', 'G':
 		if !v.IsNumber() {
 			return "", fmt.Errorf("format type %q needs a number, got %s", string(sp.typ), v.TypeName())
@@ -164,8 +181,13 @@ func formatArg(spec string, v value.Value) (string, error) {
 	if sp.width < 0 || runeLen(core) >= sp.width {
 		return core, nil
 	}
+	// '0' with no explicit alignment is sign-/prefix-aware zero padding.
 	if sp.zero && sp.align == 0 && sp.fill == ' ' {
 		return zeroPad(core, sp.width), nil
+	}
+	fill := sp.fill
+	if sp.zero && sp.fill == ' ' { // '0' with an explicit alignment: zero-fill
+		fill = '0'
 	}
 	align := sp.align
 	if align == 0 {
@@ -175,7 +197,7 @@ func formatArg(spec string, v value.Value) (string, error) {
 			align = '<'
 		}
 	}
-	return padAlign(core, sp.width, sp.fill, align), nil
+	return padAlign(core, sp.width, fill, align), nil
 }
 
 func runeLen(s string) int { return len([]rune(s)) }
@@ -190,16 +212,24 @@ func truncate(s string, prec int) string {
 	return s
 }
 
-// zeroPad inserts zeros after a leading sign, so "-7" padded to width 4 is "-007".
+// zeroPad inserts zeros after any leading sign and base prefix, so "-7" padded to
+// width 4 is "-007" and "0xff" to width 8 is "0x0000ff".
 func zeroPad(s string, width int) string {
 	n := width - runeLen(s)
 	if n <= 0 {
 		return s
 	}
-	if len(s) > 0 && (s[0] == '-' || s[0] == '+' || s[0] == ' ') {
-		return s[:1] + strings.Repeat("0", n) + s[1:]
+	i := 0
+	if i < len(s) && (s[i] == '-' || s[i] == '+' || s[i] == ' ') {
+		i++
 	}
-	return strings.Repeat("0", n) + s
+	if i+1 < len(s) && s[i] == '0' {
+		switch s[i+1] {
+		case 'x', 'X', 'o', 'O', 'b', 'B':
+			i += 2
+		}
+	}
+	return s[:i] + strings.Repeat("0", n) + s[i:]
 }
 
 func padAlign(s string, width int, fill rune, align byte) string {
