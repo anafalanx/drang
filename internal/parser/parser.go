@@ -642,6 +642,19 @@ func (p *Parser) parsePrefix() ast.Expr {
 		name := p.tok.Lit
 		p.next()
 		return &ast.Ident{Pos: pos, Name: name}
+	case token.DOT:
+		// Leading-dot user-function reference: .name lives in the user namespace. The
+		// name keeps its '.', so it resolves through the ordinary identifier path and
+		// is naturally disjoint from bare builtins (different keys). This is a prefix
+		// (nud) role; infix '.' (field access) is handled separately in parseInfix.
+		p.next() // '.'
+		if p.tok.Kind != token.IDENT {
+			p.errorf("expected a name after '.', got %s %q", p.tok.Kind, p.tok.Lit)
+			return nil
+		}
+		dotName := p.tok.Lit
+		p.next()
+		return &ast.Ident{Pos: pos, Name: "." + dotName}
 	case token.LPAREN:
 		p.next()
 		e := p.parseExpr(lowest)
@@ -927,11 +940,16 @@ func notExpr(e ast.Expr) ast.Expr { return &ast.Unary{Op: token.BANG, X: e} }
 
 func (p *Parser) parseFn() ast.Stmt {
 	p.next() // 'fn'
+	dot := ""
+	if p.tok.Kind == token.DOT { // fn .name — a user-namespace function
+		dot = "."
+		p.next()
+	}
 	if p.tok.Kind != token.IDENT {
 		p.errorf("expected function name after 'fn', got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
-	name := p.tok.Lit
+	name := dot + p.tok.Lit
 	p.next()
 	if p.tok.Kind != token.LPAREN {
 		p.errorf("expected '(' after function name, got %s %q", p.tok.Kind, p.tok.Lit)
