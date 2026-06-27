@@ -1,8 +1,9 @@
 package main
 
-// Standalone executables. `drang build script.dr -o app.exe` copies the running
-// drang binary and appends the gzip-compressed source followed by a fixed trailer.
-// At startup drang inspects its own tail: if the trailer is present it runs the
+// Standalone executables. `drang build script.dr -o app.exe` copies a drang binary
+// (this one by default, or a target-OS/arch one via --runtime for cross-platform
+// builds) and appends the gzip-compressed source followed by a fixed trailer. At
+// startup drang inspects its own tail: if the trailer is present it runs the
 // embedded program (standalone mode); otherwise it behaves as the normal CLI.
 //
 // Trailer layout (20 bytes, at the very end of the file):
@@ -117,7 +118,7 @@ func standaloneOrigin() string {
 
 // buildStandalone implements `drang build <script.dr> [-o <output>]`.
 func buildStandalone(args []string) {
-	var srcPath, outPath string
+	var srcPath, outPath, runtimePath string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-o", "--output":
@@ -126,6 +127,13 @@ func buildStandalone(args []string) {
 				os.Exit(2)
 			}
 			outPath = args[i+1]
+			i++
+		case "--runtime":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "drang build: --runtime needs a path to a drang binary")
+				os.Exit(2)
+			}
+			runtimePath = args[i+1]
 			i++
 		default:
 			if srcPath != "" {
@@ -154,10 +162,16 @@ func buildStandalone(args []string) {
 	if outPath == "" {
 		outPath = defaultOutput(srcPath)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "drang: cannot locate the drang binary:", err)
-		os.Exit(1)
+	// The base binary is this drang by default, or a supplied target-OS/arch drang
+	// (--runtime) for cross-platform builds — the appended payload is platform-agnostic.
+	exe := runtimePath
+	if exe == "" {
+		self, err := os.Executable()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "drang: cannot locate the drang binary:", err)
+			os.Exit(1)
+		}
+		exe = self
 	}
 	if real, e := filepath.EvalSymlinks(exe); e == nil {
 		exe = real
@@ -169,7 +183,7 @@ func buildStandalone(args []string) {
 		os.Exit(1)
 	}
 	if sameFile(outPath, exe) {
-		fmt.Fprintln(os.Stderr, "drang build: refusing to overwrite the running drang binary — choose a different -o")
+		fmt.Fprintln(os.Stderr, "drang build: refusing to overwrite the runtime binary — choose a different -o")
 		os.Exit(1)
 	}
 	n, err := writeStandalone(exe, outPath, filepath.Base(srcPath), src)
@@ -177,7 +191,9 @@ func buildStandalone(args []string) {
 		fmt.Fprintln(os.Stderr, "drang build:", err)
 		os.Exit(1)
 	}
-	signIfDarwin(outPath)
+	if runtimePath == "" {
+		signIfDarwin(outPath) // host-built only; a cross-built macOS exe must be signed on a Mac
+	}
 	fmt.Printf("built %s (%d bytes) from %s\n", outPath, n, srcPath)
 }
 

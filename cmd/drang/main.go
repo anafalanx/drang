@@ -127,7 +127,7 @@ loop:
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
-	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>]")
+	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>] [--runtime <drang-binary>]")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -139,11 +139,13 @@ func help() {
 Usage:
   drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
-  drang build <file.dr> [-o <output>]
+  drang build <file.dr> [-o <output>] [--runtime <drang-binary>]
 
 Commands:
-  build          compile a script into a standalone executable (this drang binary
-                 with the source appended); the result runs its embedded program
+  build          compile a script into a standalone executable (a drang binary with
+                 the source appended); the result runs its embedded program.
+                 --runtime <path> uses a target-OS/arch drang binary as the base,
+                 for cross-platform builds (e.g. a Linux standalone from Windows)
 
 Options:
   -e <source>    run the given source string instead of a file
