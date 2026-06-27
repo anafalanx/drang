@@ -156,6 +156,43 @@ func TestModuleUseInsidePmapNoFalseCycle(t *testing.T) {
 	}
 }
 
+func TestModuleExportIsFrozen(t *testing.T) {
+	// A constant array exported by a module is immutable: pushing to it (via the
+	// flat-merged binding) is a catchable error, not a silent mutation.
+	dir := t.TempDir()
+	writeMod(t, dir, "data.dr", "$LIST ::= [1,2,3]\nfn .get() { $LIST }")
+	out, err := runMod(t, dir, "use \"./data\"\nsay(push($LIST, 4) // \"frozen!\")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "frozen!" {
+		t.Errorf("expected the exported array to be frozen, got %q", out)
+	}
+}
+
+func TestModuleExportIndexAssignRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeMod(t, dir, "data.dr", "$M ::= {\"a\": 1}\nfn .x() { 1 }")
+	_, err := runMod(t, dir, "$u := use(\"./data\")\n$u.M[\"a\"] = 99")
+	if err == nil || !strings.Contains(err.Error(), "frozen") {
+		t.Errorf("expected a frozen-map error on index-assign, got %v", err)
+	}
+}
+
+func TestModuleExportNoCachePoisoning(t *testing.T) {
+	// The original Boundary-1 bug: an importer mutating an export poisoned the
+	// shared cache. Now the mutation is rejected, so a later import sees the original.
+	dir := t.TempDir()
+	writeMod(t, dir, "reg.dr", "$REGISTRY ::= [\"a\",\"b\"]\nfn .reg() { $REGISTRY }")
+	out, err := runMod(t, dir, "$u := use(\"./reg\")\npush($u.REGISTRY, \"POISON\")\n$v := use(\"./reg\")\nsay(len($v.REGISTRY))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("export cache was poisoned: expected len 2, got %q", out)
+	}
+}
+
 func TestModuleFailedLoadNotCached(t *testing.T) {
 	// A failed load must not be cached, or it would poison a later valid import.
 	dir := t.TempDir()

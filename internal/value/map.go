@@ -39,9 +39,10 @@ func Hashable(k Value) bool {
 // values(), and pairs() all read the same ordered key/value slices, so they can
 // never diverge (Go's built-in map randomizes range order).
 type OrderedMap struct {
-	idx  map[mapKey]int
-	keys []Value
-	vals []Value
+	idx    map[mapKey]int
+	keys   []Value
+	vals   []Value
+	frozen bool // immutable when set (see value.Freeze); mutators reject a frozen map
 }
 
 // MakeMap returns an empty map Value.
@@ -49,6 +50,7 @@ func MakeMap() Value { return Value{tag: Map, ref: &OrderedMap{idx: map[mapKey]i
 
 func (m *OrderedMap) TypeName() string { return "map" }
 func (m *OrderedMap) Len() int         { return len(m.keys) }
+func (m *OrderedMap) IsFrozen() bool   { return m.frozen }
 func (m *OrderedMap) Keys() []Value    { return m.keys }
 func (m *OrderedMap) Vals() []Value    { return m.vals }
 

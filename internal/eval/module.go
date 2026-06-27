@@ -178,6 +178,10 @@ func collectExports(modEnv *Env, canon string) (value.Value, error) {
 			return value.MakeNil(), fmt.Errorf("%s: a module may export only functions and constants, but $%s is a mutable top-level variable", canon, key)
 		}
 	}
+	// Freeze the record (and, transitively, every exported array/map) so the one
+	// cached copy is safe to share read-only across importers — mutating an export
+	// fails loudly instead of poisoning the cache.
+	value.Freeze(m)
 	return m, nil
 }
 
