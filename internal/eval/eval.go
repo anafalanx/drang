@@ -11,8 +11,8 @@
 // Collections: array/map/range values, indexing and field reads, lvalue and
 // compound assignment with write-side autovivification, and for-in.
 //
-// Deferred to later slices: stringy numeric coercion, break/continue, lambdas,
-// orchestration builtins.
+// Deferred: stringy numeric coercion (still an open design question). break/
+// continue, lambdas, and the orchestration builtins once listed here are now built.
 package eval
 
 import (

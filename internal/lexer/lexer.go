@@ -6,10 +6,9 @@
 // expressions and |> pipelines wrap across lines freely). ';' also terminates.
 //
 // Supported: string interpolation ("$x"/"${expr}"); the q/qq/qw quote operators
-// (raw / interpolated / word-list, with ( [ { / | delimiters); and heredocs
-// (<<TAG, <<"TAG", <<'TAG', <<~TAG). Deliberately deferred (TODO): regex literals
-// (a dedicated /.../ or qr// — the existing regex builtins + raw q// patterns and
-// lenient string escapes cover the need without a new compiled-regex value type).
+// (raw / interpolated / word-list, with ( [ { / | delimiters); heredocs
+// (<<TAG, <<"TAG", <<'TAG', <<~TAG); and qr// / qr|| regex literals (a compiled
+// regex value type).
 package lexer
 
 import (
@@ -20,12 +19,12 @@ import (
 
 // Lexer scans source text one token at a time.
 type Lexer struct {
-	src          string
-	pos          int        // offset of l.ch within src
-	rd           int        // offset of the next byte to read
-	ch           byte       // current byte; 0 means end of input
-	line         int
-	col          int
+	src      string
+	pos      int  // offset of l.ch within src
+	rd       int  // offset of the next byte to read
+	ch       byte // current byte; 0 means end of input
+	line     int
+	col      int
 	lastKind token.Kind   // kind of the previous emitted token (for terminator insertion)
 	brackets []token.Kind // open-bracket stack: a newline terminates only when the innermost is '{' (or none)
 }
