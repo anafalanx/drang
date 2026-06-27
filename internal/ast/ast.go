@@ -70,6 +70,17 @@ func (s *SpecialBlock) String() string {
 }
 func (*SpecialBlock) stmtNode() {}
 
+// UseStmt is a bare `use "path"` import directive: it flat-merges a module's
+// exported .functions and $CONSTs into the current scope. (The captured form,
+// `$u := use("path")`, is an ordinary call to the `use` special form, not this node.)
+type UseStmt struct {
+	Pos
+	Path Expr
+}
+
+func (s *UseStmt) String() string { return "(use " + s.Path.String() + ")" }
+func (*UseStmt) stmtNode()        {}
+
 // ExprStmt is an expression used as a statement.
 type ExprStmt struct {
 	Pos
