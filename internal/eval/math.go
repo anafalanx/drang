@@ -68,6 +68,9 @@ func builtinSum(args []value.Value) (value.Value, error) {
 	if allInt {
 		var s int64
 		for _, n := range nums {
+			if addOverflows(s, n.AsInt()) {
+				return value.MakeErr("sum: integer overflow", 1), nil
+			}
 			s += n.AsInt()
 		}
 		return value.MakeInt(s), nil

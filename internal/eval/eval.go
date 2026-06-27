@@ -18,6 +18,7 @@ package eval
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -969,6 +970,28 @@ func evalBinary(n *ast.Binary, env *Env) (value.Value, error) {
 	return value.MakeNil(), fmt.Errorf("eval: unknown binary op %s", n.Op)
 }
 
+// addOverflows/subOverflows/mulOverflows report int64 overflow for +/-/*, so
+// integer arithmetic fails loudly (like division/modulo by zero) instead of
+// wrapping silently — a footgun for byte/size math.
+func addOverflows(a, b int64) bool {
+	s := a + b
+	return (a > 0 && b > 0 && s < 0) || (a < 0 && b < 0 && s >= 0)
+}
+
+func subOverflows(a, b int64) bool {
+	return (b < 0 && a > math.MaxInt64+b) || (b > 0 && a < math.MinInt64+b)
+}
+
+func mulOverflows(a, b int64) bool {
+	if a == 0 || b == 0 {
+		return false
+	}
+	if (a == -1 && b == math.MinInt64) || (b == -1 && a == math.MinInt64) {
+		return true
+	}
+	return a*b/a != b
+}
+
 func arith(op token.Kind, l, r value.Value) (value.Value, error) {
 	if !l.IsNumber() || !r.IsNumber() {
 		return value.MakeNil(), fmt.Errorf("cannot use %s and %s with '%s' (stringy coercion is a later slice)",
@@ -978,10 +1001,19 @@ func arith(op token.Kind, l, r value.Value) (value.Value, error) {
 		a, b := l.AsInt(), r.AsInt()
 		switch op {
 		case token.PLUS:
+			if addOverflows(a, b) {
+				return value.MakeNil(), fmt.Errorf("integer overflow: %d + %d", a, b)
+			}
 			return value.MakeInt(a + b), nil
 		case token.MINUS:
+			if subOverflows(a, b) {
+				return value.MakeNil(), fmt.Errorf("integer overflow: %d - %d", a, b)
+			}
 			return value.MakeInt(a - b), nil
 		case token.STAR:
+			if mulOverflows(a, b) {
+				return value.MakeNil(), fmt.Errorf("integer overflow: %d * %d", a, b)
+			}
 			return value.MakeInt(a * b), nil
 		case token.PERCENT:
 			if b == 0 {
