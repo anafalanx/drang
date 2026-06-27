@@ -320,6 +320,8 @@ func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
 		return evalWhile(n, env)
 	case *ast.ForStmt:
 		return evalFor(n, env)
+	case *ast.SpecialBlock:
+		return value.MakeNil(), fmt.Errorf("%s blocks are only valid in -n/-p (one-liner) mode", n.Name)
 	}
 	return value.MakeNil(), fmt.Errorf("eval: unknown statement %T", s)
 }

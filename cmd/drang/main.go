@@ -50,7 +50,8 @@ func main() {
 	}
 
 	mode := "run"
-	args := os.Args[1:]
+	args := expandOneLinerCluster(os.Args[1:])
+	var streamN, streamP, autoSplit bool
 
 	// Consume leading mode flags up to the first non-flag (the program token).
 	i := 0
@@ -63,6 +64,12 @@ loop:
 			mode = "ast"
 		case "--run":
 			mode = "run"
+		case "-n":
+			streamN = true
+		case "-p":
+			streamP = true
+		case "-a":
+			autoSplit = true
 		case "--repl":
 			repl()
 			os.Exit(0)
@@ -97,6 +104,12 @@ loop:
 		src, origin = string(b), rest[0]
 		argv = rest[1:]
 	default:
+		// One-liner mode needs an explicit program: reading stdin as the program would
+		// leave nothing to stream over (stdin is the input), so reject it clearly.
+		if streamN || streamP {
+			fmt.Fprintln(os.Stderr, "drang: -n/-p requires a program (-e '<source>' or a <file.dr>)")
+			os.Exit(2)
+		}
 		// No program given. An interactive terminal gets the REPL (this is also what
 		// double-clicking the executable does); piped/redirected stdin is read and run
 		// as the program, so `cat foo.dr | drang` works.
@@ -115,6 +128,11 @@ loop:
 		src, origin = string(b), "<stdin>"
 	}
 
+	if streamN || streamP {
+		runStream(src, origin, argv, streamP, autoSplit)
+		return
+	}
+
 	switch mode {
 	case "tokens":
 		dumpTokens(src, origin)
@@ -125,8 +143,41 @@ loop:
 	}
 }
 
+// expandOneLinerCluster splits a leading combined one-liner flag (e.g. -ne, -ane)
+// into separate flags (-n -e, -a -n -e) so the normal flag loop handles them. Only
+// the first argument is considered, and only when it is a cluster of the one-liner
+// letters n/p/a/e; a trailing e becomes -e (which then consumes the next arg as the
+// program source, exactly as a standalone -e would).
+func expandOneLinerCluster(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	a := args[0]
+	if len(a) <= 2 || a[0] != '-' || a[1] == '-' {
+		return args // a single flag (-n), a long --flag, or a bare token
+	}
+	body := a[1:]
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case 'n', 'p', 'a':
+		case 'e':
+			if i != len(body)-1 {
+				return args // -e must be last: it consumes the NEXT arg as the source
+			}
+		default:
+			return args // not purely one-liner letters; leave untouched
+		}
+	}
+	expanded := make([]string, 0, len(body)+len(args)-1)
+	for i := 0; i < len(body); i++ {
+		expanded = append(expanded, "-"+body[i:i+1])
+	}
+	return append(expanded, args[1:]...)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
+	fmt.Fprintln(os.Stderr, "       drang -n|-p [-a] (-e '<source>' | <file.dr>) [files...]   (one-liner mode)")
 	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>] [--runtime <drang-binary>]")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
@@ -149,6 +200,9 @@ Commands:
 
 Options:
   -e <source>    run the given source string instead of a file
+  -n             one-liner mode: run the program once per input line ($_ = the line)
+  -p             like -n, but print $_ after each line (the sed/filter mode)
+  -a             autosplit each line on whitespace into the $f array (0-indexed)
   --run          run the program (default)
   --repl         start the interactive REPL (also the default with no program
                  on an interactive terminal)
@@ -160,6 +214,11 @@ Options:
 With no program on an interactive terminal, drang starts the REPL; with piped
 input it runs stdin as the program. Arguments after the program are exposed to
 the script as $ARGV; the process environment is available as the $ENV map.
+
+In one-liner mode (-n/-p), the args after the program are input files (stdin if
+none), and short flags combine: drang -ne '...', -pe, -ane. Each line sets $_ (the
+line), $nr (1-based line number), and $file (the current filename); -a also sets $f.
+BEGIN { } and END { } blocks run once, before and after the loop.
 `, version)
 }
 
@@ -192,6 +251,24 @@ func runProgram(src, origin string, argv []string) {
 		os.Exit(1)
 	}
 	if err := eval.RunProgramWithArgs(prog, eval.NewEnv(), argv); err != nil {
+		if code, ok := eval.ExitRequested(err); ok {
+			os.Exit(code) // explicit exit()/die(): no error report
+		}
+		reportRuntimeError(src, origin, err)
+		os.Exit(eval.ExitCode(err))
+	}
+}
+
+// runStream parses src and runs it in one-liner stream mode (-n/-p): once per input
+// line, with the post-program args (argv) used as input files (stdin if none).
+func runStream(src, origin string, argv []string, autoPrint, autoSplit bool) {
+	p := parser.New(src)
+	prog := p.ParseProgram()
+	if reportParseErrors(p, origin) {
+		os.Exit(1)
+	}
+	opts := eval.StreamOpts{AutoPrint: autoPrint, AutoSplit: autoSplit, Files: argv}
+	if err := eval.RunStream(prog, argv, opts); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {
 			os.Exit(code) // explicit exit()/die(): no error report
 		}

@@ -18,6 +18,7 @@
 - [In-language concurrency](#in-language-concurrency)
 - [Files and Paths](#files-and-paths)
 - [JSON](#json)
+- [One-liner mode](#one-liner-mode)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
 
@@ -2296,6 +2297,56 @@ say(from_json("nope") // "fallback")
 true
 fallback
 ```
+
+---
+
+## One-liner mode
+
+`-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
+the program runs once per input line. `-n` just loops; `-p` also prints the topic
+variable after each line (the filter/sed mode). Short flags combine — `-ne`,
+`-pe`, `-ane` — and a trailing `e` takes the program source as its argument, like
+a plain `-e`.
+
+```
+drang -pe '$_ = upper($_)' < notes.txt               # filter: uppercase each line
+drang -ne 'if matches($_, "ERROR") { say($_) }' log  # grep-like (matches(s, pat))
+drang -ane '$_ = $f[0]' data.tsv                      # print the first column
+```
+
+Per-line variables (all in the `$` data namespace):
+
+| Variable | Meaning |
+|----------|---------|
+| `$_`    | the current line, with its trailing newline (and `\r`) stripped |
+| `$nr`   | the 1-based line number, counting across every input file |
+| `$file` | the current input filename (`"<stdin>"` when reading stdin) |
+| `$f`    | with `-a`, the line split on whitespace into a 0-indexed array |
+
+Input comes from the files named after the program, or from stdin when none are
+given; `-` in the file list also means stdin. The filenames are exposed as `$ARGV`.
+
+`BEGIN { ... }` and `END { ... }` blocks run once, before and after the loop — for
+setup, headers, accumulators, and totals. The per-line body runs in a persistent
+scope, so a variable declared in `BEGIN` survives every line:
+
+```
+drang -ane 'BEGIN{ $sum := 0 } $sum = $sum + int($f[0]); END{ say($sum) }' nums.txt
+```
+
+(`BEGIN`/`END` are contextual keywords — recognized only as a statement-leading
+`BEGIN {` / `END {` — so they stay ordinary identifiers everywhere else.)
+
+Notes and limits (v1):
+
+- Separate statements on one line with `;`. A block's closing `}` also ends a
+  statement, so `BEGIN{ ... } stmt` needs no `;`, but `stmt; END{ ... }` does.
+- Use `:=` / `=` in the per-line body, not `::=` — re-declaring a constant on every
+  line is an error.
+- `-p` ends each line with `\n` (CRLF input is normalized to LF, and a missing final
+  newline is added).
+- Runtime errors in stream mode report the message but not a source position.
+- In-place file editing (`-i`) is not yet supported.
 
 ---
 

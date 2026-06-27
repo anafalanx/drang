@@ -1868,3 +1868,40 @@ Locked the naming ruleset for future additions: predicates `is_X`; IO
 (`int`, future `str`/`float`/`bool`); hot core single-word; spell words out except
 blessed idioms (`dirname`, `basename`, `re`, `gsub`, `chan`, `recv`, `pid`). Deferred
 `matches`→`test` (kept `matches`). Build + full test suite green.
+
+## Build progress: one-liner stream mode (2026-06-27)
+
+Phase 2 of the niche-definers: awk/perl/sed-style `-n`/`-p` stream processing, so
+drang competes on terse text-munging without writing a full program.
+
+- `-n` runs the program once per input line; `-p` also prints the topic var after
+  each line. Short flags combine (`-ne`/`-pe`/`-ane`); a trailing `e` takes the
+  source as its argument. Cluster expansion requires `e` to be LAST, so a transposed
+  `-en` fails loudly (file-not-found) instead of silently eating the next flag.
+- Per-line `$` vars: `$_` (line, chomped of `\n`/`\r`), `$nr` (1-based, across all
+  files), `$file` (filename), `$f` (whitespace fields, with `-a`). Input is the
+  post-program args as files (or stdin; `-` is stdin); `$ARGV` holds the filenames.
+  No program + `-n`/`-p` is a clear error (stdin is the input, not the program).
+- `BEGIN`/`END` are contextual keywords (only as a statement-leading `BEGIN {`),
+  parsed to a new `ast.SpecialBlock`; the stream driver hoists them out of the loop
+  and runs them once. Outside `-n`/`-p` a SpecialBlock is a clean error.
+- A closing `}` of a BLOCK-FORM statement now terminates the statement (perl-style),
+  so `BEGIN{ ... } stmt` and `if c { ... } stmt` work on one line. Scoped via parser
+  `lastBlockForm`, so a map literal / lambda body ending in `}` still needs a `;`.
+
+Implementation: internal/eval/stream.go (`RunStream`), cmd/drang/main.go (flags +
+`expandOneLinerCluster` + `runStream`), parser/ast `SpecialBlock`, the evalStmt
+guard. The per-line body is tree-walked against a persistent scope (so accumulators
+survive); compiling once and running on the VM per line is a future optimization.
+
+Adversarial review (3 agents) found + fixed before commit: the `}`-terminator was
+too broad (masked missing-separator errors after any `}`-ending value → scoped to
+block-form); `-en`-style clusters silently ate the next flag (→ require `e` last);
+`-n`/`-p` with no program read stdin as the program (→ clear error); a frozen
+injected var (`$nr ::= ...` in BEGIN) silently no-op'd the loop (→ surface the define
+error). Accepted v1 limits: no source position in stream errors (tree-walker), `-p`
+normalizes line endings, `::=` in the body fails on line 2, `-i` not yet. New tests
+in stream_test.go and oneliner_test.go; build + full suite green.
+
+Deferred for one-liner mode: `-i` in-place edit, a compiled per-line fast path,
+field/record separators (FS/RS), and source positions in tree-walked errors.
