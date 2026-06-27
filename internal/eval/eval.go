@@ -1227,7 +1227,7 @@ var builtins = map[string]builtin{
 	"basename":      builtinBasename,
 	"ext":           builtinExt,
 	"stem":          builtinStem,
-	"abs":           builtinAbs,
+	"abspath":       builtinAbspath,
 	"slash":         builtinSlash,
 	"is_abs":        builtinIsAbs,
 	"clean":         builtinClean,
@@ -1267,6 +1267,15 @@ var builtins = map[string]builtin{
 	// JSON (thin binding over encoding/json)
 	"from_json": builtinFromJSON,
 	"to_json":   builtinToJSON,
+
+	// numeric (minimal daily-driver math)
+	"abs":   builtinAbs,
+	"sum":   builtinSum,
+	"min":   builtinMin,
+	"max":   builtinMax,
+	"floor": builtinFloor,
+	"ceil":  builtinCeil,
+	"round": builtinRound,
 
 	// regex (RE2)
 	"re":       builtinRe,

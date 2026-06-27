@@ -88,14 +88,16 @@ func builtinStem(args []value.Value) (value.Value, error) {
 	return value.MakeStr(strings.TrimSuffix(b, filepath.Ext(b))), nil
 }
 
-func builtinAbs(args []value.Value) (value.Value, error) {
-	p, err := oneString("abs", args)
+// builtinAbspath resolves a path to absolute against the CWD. (Numeric absolute
+// value is the abs builtin; this was renamed from abs to free that name.)
+func builtinAbspath(args []value.Value) (value.Value, error) {
+	p, err := oneString("abspath", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	a, e := filepath.Abs(p)
 	if e != nil {
-		return value.MakeErr("abs "+p+": "+e.Error(), 1), nil
+		return value.MakeErr("abspath "+p+": "+e.Error(), 1), nil
 	}
 	return value.MakeStr(a), nil
 }
