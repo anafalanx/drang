@@ -1924,12 +1924,12 @@ say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")
 is_err: true  msg: worker failed
 ```
 
-### Channels: `chan` / `send` / `recv` / `recv2` / `close` / `drain`
+### Channels: `chan` / `send` / `recv` / `recv_ok` / `close` / `drain`
 
 `chan()` makes an unbuffered channel; `chan(n)` a buffered one. A channel is the
 one intentionally *shared* value type. `send` blocks until received (and copies
 the value — copy-on-send); `recv` blocks for the next value (and yields `undef`
-once the channel is closed and drained); `recv2` returns `[value, ok]`; `close`
+once the channel is closed and drained); `recv_ok` returns `[value, ok]`; `close`
 is idempotent; `drain` collects every remaining value into an array, blocking
 until the channel is closed.
 
@@ -1957,14 +1957,14 @@ fn worker($ch) {
 }
 $t := spawn(worker, $c)
 say("recv: ${recv($c)}")
-$pair := recv2($c)
-say("recv2: $pair")
+$pair := recv_ok($c)
+say("recv_ok: $pair")
 say("after close, undef: ${not recv($c)}")
 await($t)
 ```
 ```
 recv: first
-recv2: [second, true]
+recv_ok: [second, true]
 after close, undef: true
 ```
 
@@ -2042,7 +2042,7 @@ $versions := ["git", "go", "node"] |> pmap(|$tool| capture($tool, "--version") /
 
 drang treats paths as plain strings and leans on Go's `os`/`filepath` underneath.
 The builtins fall into four groups: **file I/O** (`read_file`, `write_file`,
-`lines`), **filesystem ops** (`exists`, `isdir`, `mkdir`, `glob`, `rename`, `rm`,
+`lines`), **filesystem ops** (`exists`, `is_dir`, `mkdir`, `glob`, `rename`, `rm`,
 `copy`, `size`), **pure path transforms** (`dirname`, `basename`, `ext`, `stem`,
 `abs`, `slash`), and **freshness gates** for build scripts (`mtime`, `newer`,
 `stale`).
@@ -2108,7 +2108,7 @@ say("unreached")
 drang: read_file nope_missing.txt: open nope_missing.txt: The system cannot find the file specified.
 ```
 
-`exists` and `isdir` are the exception: they always return a plain `bool`, so
+`exists` and `is_dir` are the exception: they always return a plain `bool`, so
 they drop straight into `if`/`unless` without recovery plumbing.
 
 ### File I/O: read_file, write_file, lines
@@ -2134,7 +2134,7 @@ say(len(lines("a\nb")))    # 2
 ### Filesystem ops
 
 - `exists(p)` → bool, true if the path exists.
-- `isdir(p)` → bool, true only if `p` exists *and* is a directory.
+- `is_dir(p)` → bool, true only if `p` exists *and* is a directory.
 - `mkdir(p)` → creates `p` and any missing parents (`mkdir -p`); returns `p`.
 - `glob(pattern)` → sorted array of matching paths; **no match is an empty
   array, not an error**. Supports `*`, `?`, `[...]`, and a recursive `**`
@@ -2445,9 +2445,9 @@ a bool; the rest signal real I/O failures as Err.
 | `within` | `within(base, p)` | True if `p` is inside (or equal to) `base`. |
 | `path_list_sep` | `path_list_sep()` | OS PATH-list separator (`;` Windows / `:` Unix). |
 | `exists` | `exists(p)` | True if the path exists. |
-| `isdir` | `isdir(p)` | True if the path exists and is a directory. |
+| `is_dir` | `is_dir(p)` | True if the path exists and is a directory. |
 | `glob` | `glob(pattern)` | Sorted matches (supports `**`); no match is `[]`, bad pattern → Err. |
-| `read_dir` | `read_dir(p)` | List a dir as `[{name, path, isdir}]` (sorted by name); missing → Err. |
+| `read_dir` | `read_dir(p)` | List a dir as `[{name, path, is_dir}]` (sorted by name); missing → Err. |
 | `mkdir` | `mkdir(p)` | Create the directory tree (like `mkdir -p`); returns `p`, failure → Err. |
 | `mtime` | `mtime(p)` | Modification time as a Unix timestamp; missing → Err. |
 | `newer` | `newer(a, b)` | True if `a` is newer than `b`; a missing path → Err. |
@@ -2480,7 +2480,7 @@ reference types; values are deep-copied on send and on `await`.
 | `chan` | `chan(n?)` | Make a channel, unbuffered or with buffer size `n`. |
 | `send` | `send(c, v)` | Send a copy of `v` (blocking); send on a closed channel → Err. |
 | `recv` | `recv(c)` | Block for the next value; closed-and-drained yields undef. |
-| `recv2` | `recv2(c)` | Like `recv` but returns `[value, ok]` (ok=false when closed). |
+| `recv_ok` | `recv_ok(c)` | Like `recv` but returns `[value, ok]` (ok=false when closed). |
 | `close` | `close(c)` | Close a channel (safe from any goroutine); returns nil. |
 | `drain` | `drain(c)` | Collect all remaining values into an array, blocking until closed. |
 
@@ -2488,7 +2488,7 @@ reference types; values are deep-copied on send and on `await`.
 
 | Builtin | Signature | Description |
 |---|---|---|
-| `gc` | `gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
+| `sys_gc` | `sys_gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
 | `env` | `env(name, default?)` | Process env var (case-insensitive on Windows); `default` or nil if unset. |
 | `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |

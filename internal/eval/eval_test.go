@@ -194,7 +194,7 @@ func TestOutput(t *testing.T) {
 		{"spawn-await", `$t := spawn(|| 6 * 7); say(await($t))`, "42\n"},
 		{"spawn-args", `$t := spawn(|$a, $b| $a + $b, 3, 4); say(await($t))`, "7\n"},
 		{"chan-send-recv", `$c := chan(1); send($c, "hi"); say(recv($c))`, "hi\n"},
-		{"recv2-closed", `$c := chan(); close($c); say(recv2($c))`, "[nil, false]\n"},
+		{"recv_ok-closed", `$c := chan(); close($c); say(recv_ok($c))`, "[nil, false]\n"},
 		{"spawn-error-await", `$t := spawn(|| fail("boom")); say(await($t) // "caught")`, "caught\n"},
 		{"send-on-closed", `$c := chan(1); close($c); say(send($c, 1) // "closed")`, "closed\n"},
 		{"send-copies", `$a := [1, 2]; $c := chan(1); send($c, $a); push($a, 99); say(recv($c))`, "[1, 2]\n"},

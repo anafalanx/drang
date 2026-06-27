@@ -57,8 +57,8 @@ func TestReadDir(t *testing.T) {
 		t.Errorf("first entry name = %q, want a.txt", name.AsStr())
 	}
 	sub := arr[2].Obj().(*value.OrderedMap)
-	if isdir, _ := sub.Get(value.MakeStr("isdir")); !isdir.AsBool() {
-		t.Errorf("sub should be isdir=true")
+	if isDir, _ := sub.Get(value.MakeStr("is_dir")); !isDir.AsBool() {
+		t.Errorf("sub should be is_dir=true")
 	}
 	if p, _ := sub.Get(value.MakeStr("path")); p.AsStr() != filepath.Join(dir, "sub") {
 		t.Errorf("sub path = %q", p.AsStr())

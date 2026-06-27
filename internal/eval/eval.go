@@ -1269,7 +1269,7 @@ var builtins = map[string]builtin{
 	"path_list_sep": builtinPathListSep,
 	// filesystem: stat guards
 	"exists": builtinExists,
-	"isdir":  builtinIsdir,
+	"is_dir": builtinIsDir,
 	// filesystem: fallible ops
 	"glob":     builtinGlob,
 	"read_dir": builtinReadDir,
@@ -1323,18 +1323,18 @@ var builtins = map[string]builtin{
 	"uniq": builtinUniq,
 
 	// concurrency: channels (spawn is a special form; pmap is in evalHOF)
-	"await": builtinAwait,
-	"chan":  builtinChan,
-	"send":  builtinSend,
-	"recv":  builtinRecv,
-	"recv2": builtinRecv2,
-	"close": builtinCloseChan,
-	"drain": builtinDrain,
+	"await":   builtinAwait,
+	"chan":    builtinChan,
+	"send":    builtinSend,
+	"recv":    builtinRecv,
+	"recv_ok": builtinRecvOk,
+	"close":   builtinCloseChan,
+	"drain":   builtinDrain,
 
 	// runtime knobs
-	"gc":  builtinGC,
-	"cwd": builtinCwd,
-	"env": builtinEnv,
+	"sys_gc": builtinSysGC,
+	"cwd":    builtinCwd,
+	"env":    builtinEnv,
 }
 
 // stdout is where say writes its output; tests override it to capture output.

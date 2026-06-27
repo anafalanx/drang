@@ -12,24 +12,24 @@ import (
 type Op uint8
 
 const (
-	OpLoadConst   Op = iota // R[A] = Consts[B]
-	OpLoadNil               // R[A] = nil
-	OpMove                  // R[A] = R[B]
-	OpAdd                   // R[A] = R[B] + R[C]
-	OpSub                   // R[A] = R[B] - R[C]
-	OpMul                   // R[A] = R[B] * R[C]
-	OpDiv                   // R[A] = R[B] / R[C]
-	OpMod                   // R[A] = R[B] % R[C]
-	OpConcat                // R[A] = R[B] ~ R[C]
+	OpLoadConst Op = iota // R[A] = Consts[B]
+	OpLoadNil             // R[A] = nil
+	OpMove                // R[A] = R[B]
+	OpAdd                 // R[A] = R[B] + R[C]
+	OpSub                 // R[A] = R[B] - R[C]
+	OpMul                 // R[A] = R[B] * R[C]
+	OpDiv                 // R[A] = R[B] / R[C]
+	OpMod                 // R[A] = R[B] % R[C]
+	OpConcat              // R[A] = R[B] ~ R[C]
 	// Constant-immediate fast paths: right operand is a pooled constant, folding
 	// away a LoadConst + a temporary register. (Commutative + and * also fire when
 	// the constant is on the left.)
-	OpAddK    // R[A] = R[B] + Consts[C]
-	OpSubK    // R[A] = R[B] - Consts[C]
-	OpMulK    // R[A] = R[B] * Consts[C]
-	OpDivK    // R[A] = R[B] / Consts[C]
-	OpModK    // R[A] = R[B] % Consts[C]
-	OpConcatK // R[A] = R[B] ~ Consts[C]
+	OpAddK                  // R[A] = R[B] + Consts[C]
+	OpSubK                  // R[A] = R[B] - Consts[C]
+	OpMulK                  // R[A] = R[B] * Consts[C]
+	OpDivK                  // R[A] = R[B] / Consts[C]
+	OpModK                  // R[A] = R[B] % Consts[C]
+	OpConcatK               // R[A] = R[B] ~ Consts[C]
 	OpEq                    // R[A] = R[B] == R[C]
 	OpNe                    // R[A] = R[B] != R[C]
 	OpLt                    // R[A] = R[B] < R[C]
@@ -71,15 +71,15 @@ const (
 	OpJmpFalseGe
 	OpJmpFalseEq
 	OpJmpFalseNe
-	OpPushScope             // env = env.child()
-	OpPopScope              // env = env.parent
-	OpCall                  // R[A] = call(Consts[C], R[A : A+B])   (B = argc; result over the arg base)
-	OpCallBuiltin           // like OpCall but the name is a never-shadowed builtin/HOF — skips env.get
-	OpCallValue             // R[A] = R[C](R[A : A+B])              (B = argc; callee value in R[C])
-	OpGetIdent              // R[A] = env.get(Consts[B])            (bare identifier as a value)
-	OpMakeClosure           // R[A] = a *Function from Protos[B], capturing the current env
-	OpPropagate             // if R[A] is an error, unwind it as errSignal; else pass through (for ?)
-	OpReturn                // return R[A]
+	OpPushScope   // env = env.child()
+	OpPopScope    // env = env.parent
+	OpCall        // R[A] = call(Consts[C], R[A : A+B])   (B = argc; result over the arg base)
+	OpCallBuiltin // like OpCall but the name is a never-shadowed builtin/HOF — skips env.get
+	OpCallValue   // R[A] = R[C](R[A : A+B])              (B = argc; callee value in R[C])
+	OpGetIdent    // R[A] = env.get(Consts[B])            (bare identifier as a value)
+	OpMakeClosure // R[A] = a *Function from Protos[B], capturing the current env
+	OpPropagate   // if R[A] is an error, unwind it as errSignal; else pass through (for ?)
+	OpReturn      // return R[A]
 )
 
 // Instr is a fixed-width instruction. Fixed width keeps decode branch-free; the
@@ -93,8 +93,8 @@ type Instr struct {
 // and the number of registers a frame needs. value.Value is the register cell, so
 // scalars stay unboxed — the property that lets the VM avoid CPython-style boxing.
 type Proto struct {
-	Code    []Instr
-	Consts  []value.Value
+	Code      []Instr
+	Consts    []value.Value
 	NumRegs   int
 	NumIters  int             // for-in iterator slots this proto uses
 	Protos    []*FuncTemplate // nested function/lambda templates, by index (OpMakeClosure)

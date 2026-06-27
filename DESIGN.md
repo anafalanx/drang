@@ -1693,7 +1693,7 @@ the structural investments. Not yet started — captured here to act on later.
 - **More path builtins:** `is_abs(p)`, `clean(p)`, `rel(base, p)`, `within(base, p)`,
   `path_list_sep()` — thin `filepath` bindings (`IsAbs`/`Clean`/`Rel`, a no-`..`-escape
   check for `within`, and `os.PathListSeparator`). Fit the existing path-helper family.
-- **`read_dir(path)`** → array of `{name, path, isdir}` (`os.ReadDir`; not-found → a
+- **`read_dir(path)`** → array of `{name, path, is_dir}` (`os.ReadDir`; not-found → a
   catchable Err). Resolver code wants this rather than `glob(join(root, "*"))`.
 - **`run`/`capture`/`pipe` `{arg0: "make"}` option** — present a different argv[0]
   than the launched executable (needed for full `z` parity; Go can do this by setting
@@ -1732,7 +1732,7 @@ small, in-grain quick wins — six committed slices, each tested and `-race`-cle
 each through an adversarial review:
 
 - **Path/fs/env helpers** — `is_abs`, `clean`, `rel`, `within`, `path_list_sep`,
-  `read_dir` (`[{name,path,isdir}]`), and `env(name, default?)` (case-insensitive on
+  `read_dir` (`[{name,path,is_dir}]`), and `env(name, default?)` (case-insensitive on
   Windows via `os.LookupEnv`, fixing the `$ENV` PATH/Path footgun).
 - **Numeric** — `abs`, `sum`, `min`, `max`, `floor`, `ceil`, `round`; the path
   builtin `abs` was renamed `abspath` to free the universally-expected numeric name.
@@ -1844,5 +1844,27 @@ pragma (version managed out of band).
 
 Open for the build phase: the exact `use` surface (how flat vs isolated is
 distinguished syntactically — e.g. parenless directive vs captured call, or an
-explicit alternative); the actual taxonomy pass (which builtins, which domains, final
-names); the `drang fmt --fix` rewrite-rule design.
+explicit alternative); further taxonomy/domain passes as builtins are added (first
+pass done below); the `drang fmt --fix` rewrite-rule design.
+
+## Build progress: builtin Huffman pass (2026-06-27)
+
+First concrete pass over the bare-builtin namespace under the three-sigil decision
+above. Inventory: 75 builtins; the hot core was already well-sized, so this was a
+targeted pass, not a mass rename.
+
+Kept `read_file`/`write_file` (self-documenting; leaves bare `read`/`write` free for
+future stream/stdin IO). Applied three renames (free at 0.2, no adopters):
+- `isdir` → `is_dir` (match `is_abs`/`is_err`); the `read_dir` record field `isdir`
+  → `is_dir` too, so the predicate and the field agree.
+- `recv2` → `recv_ok` (kill the lone numeric suffix; the name now states the
+  `[value, ok]` shape).
+- `gc` → `sys_gc` (a rare runtime knob shouldn't own 2-char prime real estate; seeds
+  the `sys_` domain for future runtime/system builtins).
+
+Locked the naming ruleset for future additions: predicates `is_X`; IO
+`read_X`/`write_X`; (de)serialization `from_X`/`to_X`; specialized domains
+`domain_verb` (`time_now`, `hash_sha256`, …); primitive conversions bare type names
+(`int`, future `str`/`float`/`bool`); hot core single-word; spell words out except
+blessed idioms (`dirname`, `basename`, `re`, `gsub`, `chan`, `recv`, `pid`). Deferred
+`matches`→`test` (kept `matches`). Build + full test suite green.
