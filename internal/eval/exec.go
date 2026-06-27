@@ -23,6 +23,8 @@ type execOpts struct {
 	env      []string // nil = inherit the parent environment
 	stdin    string
 	hasStdin bool
+	arg0     string // present a different argv[0] than the launched executable
+	hasArg0  bool
 	timeout  time.Duration // 0 = no limit
 }
 
@@ -259,6 +261,52 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	return value.MakeStr(strings.TrimSpace(out.String())), nil
 }
 
+// builtinCaptureAll runs a command and ALWAYS returns a record
+// {out, err, code, ok} (stdout, stderr, exit code, success) — a non-zero exit is
+// data to inspect, not a thrown Err. (capture() is the "give me stdout or fail"
+// form; capture_all is the "tell me everything" form, like Open3.capture3.)
+// code is 124 on timeout and 127 when the command can't start.
+func builtinCaptureAll(args []value.Value) (value.Value, error) {
+	argv, opts, err := splitExecArgs("capture_all", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	cmd, ctx, cancel := newCmd(argv, opts)
+	defer cancel()
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if opts.hasStdin {
+		cmd.Stdin = strings.NewReader(opts.stdin)
+	}
+	applyExecOpts(cmd, opts)
+
+	code := 0
+	if runErr := cmd.Run(); runErr != nil {
+		switch {
+		case ctx != nil && ctx.Err() == context.DeadlineExceeded:
+			code = 124
+		default:
+			var ee *exec.ExitError
+			if errors.As(runErr, &ee) {
+				code = ee.ExitCode()
+				if code == 0 { // killed by signal reports -1; never report a failure as 0
+					code = 1
+				}
+			} else {
+				code = 127 // could not start
+			}
+		}
+	}
+	rec := value.MakeMap()
+	om := rec.Obj().(*value.OrderedMap)
+	om.Set(value.MakeStr("out"), value.MakeStr(strings.TrimSpace(out.String())))
+	om.Set(value.MakeStr("err"), value.MakeStr(strings.TrimSpace(errBuf.String())))
+	om.Set(value.MakeStr("code"), value.MakeInt(int64(code)))
+	om.Set(value.MakeStr("ok"), value.MakeBool(code == 0))
+	return rec, nil
+}
+
 // builtinPipe runs a streaming pipeline: each stage is an array [cmd, args...],
 // wired stdout->stdin through real OS pipes (no full-buffering between stages). It
 // returns the LAST stage's trimmed stdout on success, or a catchable Err — code 127
@@ -374,6 +422,9 @@ func applyExecOpts(cmd *exec.Cmd, o execOpts) {
 	if o.env != nil {
 		cmd.Env = o.env
 	}
+	if o.hasArg0 && len(cmd.Args) > 0 {
+		cmd.Args[0] = o.arg0 // child sees this as argv[0]; cmd.Path still launches the real exe
+	}
 }
 
 // splitExecArgs peels a trailing options map, then flattens the remaining args
@@ -439,6 +490,9 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 		case "stdin":
 			o.stdin = vals[i].Display()
 			o.hasStdin = true
+		case "arg0":
+			o.arg0 = vals[i].Display()
+			o.hasArg0 = true
 		case "timeout":
 			if vals[i].Tag() != value.Int {
 				return o, fmt.Errorf("%s: timeout must be an int (milliseconds)", name)
