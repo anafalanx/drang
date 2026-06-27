@@ -265,7 +265,7 @@ var (
 // build time, so it is parsed once per process and then evaluated into each env.
 func RunPrelude(env *Env) error {
 	preludeOnce.Do(func() {
-		p := parser.New(preludeSource)
+		p := parser.NewStdlib(preludeSource) // the prelude defines bare stdlib functions
 		preludeProg = p.ParseProgram()
 		if errs := p.Errors(); len(errs) > 0 {
 			preludeErr = fmt.Errorf("prelude parse error: %s", strings.Join(errs, "; "))

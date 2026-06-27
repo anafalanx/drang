@@ -10,7 +10,6 @@ func TestUserFnSigil(t *testing.T) {
 		{"define-call", `fn .clean($x) { upper($x) }  say(.clean("hi"))`, "HI\n"},
 		{"first-class-to-hof", `fn .dbl($x) { $x * 2 }  say(to_json(map([1,2,3], .dbl)))`, "[2,4,6]\n"},
 		{"recursion", `fn .fact($n) { if $n <= 1 { return 1 }  $n * .fact($n - 1) }  say(.fact(5))`, "120\n"},
-		{"coexists-with-bare", `fn foo() { "bare" }  fn .foo() { "dot" }  say(foo() ~ .foo())`, "baredot\n"},
 		{"call-then-field-access", `fn .mk() { {n: 7} }  say(.mk().n)`, "7\n"},
 		// a user .len is disjoint from the len builtin — no shadow, no collision
 		{"disjoint-from-builtin", `fn .len($x) { 99 }  say("${.len([1,2])}/${len([1,2])}")`, "99/2\n"},
