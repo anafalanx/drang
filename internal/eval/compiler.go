@@ -700,6 +700,17 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 		c.emit(OpLoadConst, dst, c.konst(value.MakeFloat(n.Value)), 0)
 	case *ast.StringLit:
 		c.emit(OpLoadConst, dst, c.konst(value.MakeStr(n.Value)), 0)
+	case *ast.Interp:
+		// Compile as the equivalent "" ~ p0 ~ p1 ~ ... fold (the pre-Interp desugaring),
+		// so interpolated strings stay on the VM with byte-identical bytecode.
+		var expr ast.Expr = n.Parts[0]
+		if _, isStr := expr.(*ast.StringLit); !isStr {
+			expr = &ast.Binary{Pos: n.Pos, Op: token.TILDE, L: &ast.StringLit{Pos: n.Pos}, R: expr}
+		}
+		for _, op := range n.Parts[1:] {
+			expr = &ast.Binary{Pos: n.Pos, Op: token.TILDE, L: expr, R: op}
+		}
+		c.compileExpr(expr, dst)
 	case *ast.BoolLit:
 		c.emit(OpLoadConst, dst, c.konst(value.MakeBool(n.Value)), 0)
 	case *ast.RegexLit:
