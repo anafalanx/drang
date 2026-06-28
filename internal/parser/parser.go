@@ -814,7 +814,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		if right == nil {
 			return nil
 		}
-		return desugarPipe(left, right)
+		return makePipe(left, right)
 	case token.OR:
 		p.next()
 		right := p.parseExpr(boolOr)
@@ -900,13 +900,15 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	return &ast.Call{Pos: exprPos(callee), Callee: callee, Args: args}
 }
 
-// desugarPipe rewrites  left |> f(b)  into  f(left, b)  (and  left |> f  into f(left)).
-func desugarPipe(left, right ast.Expr) ast.Expr {
+// makePipe builds a faithful  left |> right  Pipe node. When right is a call f(b),
+// Call holds it verbatim (args NOT including left); a bare  left |> f  wraps f in an
+// arg-less Call so the node shape is uniform. eval prepends left as the first arg, so
+// the runtime behavior matches the old desugaring to f(left, b).
+func makePipe(left, right ast.Expr) ast.Expr {
 	if c, ok := right.(*ast.Call); ok {
-		c.Args = append([]ast.Expr{left}, c.Args...)
-		return c
+		return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: c}
 	}
-	return &ast.Call{Pos: exprPos(right), Callee: right, Args: []ast.Expr{left}}
+	return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: &ast.Call{Pos: exprPos(right), Callee: right}}
 }
 
 // interpolate decodes a raw string body, processing escapes and $-interpolation

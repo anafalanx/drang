@@ -815,6 +815,10 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 		if dst != base {
 			c.emit(OpMove, dst, base, 0)
 		}
+	case *ast.Pipe:
+		// Compile as the equivalent call f(lhs, args...) — identical bytecode to the
+		// old parse-time desugaring, so |> stays on the VM (no tree-walker fallback).
+		c.compileExpr(&ast.Call{Pos: n.Call.Pos, Callee: n.Call.Callee, Args: append([]ast.Expr{n.Lhs}, n.Call.Args...)}, dst)
 	case *ast.Lambda:
 		idx := c.addTemplate("", n.Params, n.Defaults, n.Body)
 		c.emit(OpMakeClosure, dst, idx, 0)
