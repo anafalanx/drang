@@ -314,35 +314,35 @@ func (p *Parser) applyPostfix(s ast.Stmt) ast.Stmt {
 		if cond == nil {
 			return nil
 		}
-		return &ast.IfStmt{Cond: cond, Then: blockOf(s)}
+		return &ast.IfStmt{Cond: cond, Then: blockOf(s), Postfix: token.IF}
 	case token.UNLESS:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.IfStmt{Cond: notExpr(cond), Then: blockOf(s)}
+		return &ast.IfStmt{Cond: notExpr(cond), Then: blockOf(s), Postfix: token.UNLESS}
 	case token.WHILE:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.WhileStmt{Cond: cond, Body: blockOf(s)}
+		return &ast.WhileStmt{Cond: cond, Body: blockOf(s), Postfix: token.WHILE}
 	case token.UNTIL:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.WhileStmt{Cond: notExpr(cond), Body: blockOf(s)}
+		return &ast.WhileStmt{Cond: notExpr(cond), Body: blockOf(s), Postfix: token.UNTIL}
 	case token.FOR:
 		p.next()
 		iter := p.parseExpr(lowest)
 		if iter == nil {
 			return nil
 		}
-		return &ast.ForStmt{Vars: []string{"_"}, Iter: iter, Body: blockOf(s)}
+		return &ast.ForStmt{Vars: []string{"_"}, Iter: iter, Body: blockOf(s), Postfix: token.FOR}
 	}
 	return s
 }
@@ -734,12 +734,13 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.StringLit{Pos: pos, Value: s, Raw: rawSrc} // q{...}/<<'TAG': literal, no interpolation
 	case token.QW:
 		words := strings.Fields(p.tok.Lit)
+		rawSrc := p.tok.Raw
 		p.next()
 		elems := make([]ast.Expr, len(words))
 		for i, w := range words {
 			elems[i] = &ast.StringLit{Pos: pos, Value: w}
 		}
-		return &ast.ArrayLit{Pos: pos, Elems: elems}
+		return &ast.ArrayLit{Pos: pos, Elems: elems, Qw: true, Raw: rawSrc}
 	case token.QR:
 		pat, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
