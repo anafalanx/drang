@@ -17,6 +17,16 @@ import (
 	"github.com/anafalanx/drang/internal/token"
 )
 
+// Comment is a captured line comment — its verbatim text (including the leading '#')
+// and source position — kept in a side-table so the formatter can reattach it. The
+// token stream is unaffected: comments are still skipped as trivia, so the parser and
+// interpreter see byte-identical tokens.
+type Comment struct {
+	Text string
+	Line int
+	Col  int
+}
+
 // Lexer scans source text one token at a time.
 type Lexer struct {
 	src      string
@@ -27,7 +37,12 @@ type Lexer struct {
 	col      int
 	lastKind token.Kind   // kind of the previous emitted token (for terminator insertion)
 	brackets []token.Kind // open-bracket stack: a newline terminates only when the innermost is '{' (or none)
+	comments []Comment    // line comments, captured as trivia for the formatter (side-table)
 }
+
+// Comments returns the line comments captured so far. It is complete once the input
+// has been fully tokenized (e.g. after the parser has consumed the program).
+func (l *Lexer) Comments() []Comment { return l.comments }
 
 // New returns a Lexer positioned at the first token of src.
 func New(src string) *Lexer {
@@ -289,9 +304,11 @@ func (l *Lexer) skipTrivia() bool {
 			sawNL = true
 			l.advance()
 		case '#':
+			startOff, startLine, startCol := l.pos, l.line, l.col
 			for l.ch != '\n' && l.ch != 0 {
 				l.advance()
 			}
+			l.comments = append(l.comments, Comment{Text: l.src[startOff:l.pos], Line: startLine, Col: startCol})
 		default:
 			return sawNL
 		}

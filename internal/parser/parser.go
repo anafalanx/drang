@@ -114,6 +114,11 @@ func (p *Parser) ParseProgram() *ast.Program {
 	return prog
 }
 
+// Comments returns the line comments the lexer captured as trivia (complete once
+// ParseProgram has consumed the whole input). Used by the formatter to reattach them;
+// the token stream and AST are unaffected.
+func (p *Parser) Comments() []lexer.Comment { return p.lex.Comments() }
+
 // parseStmtsUntil parses statements until the given closing kind (or EOF).
 func (p *Parser) parseStmtsUntil(end token.Kind) []ast.Stmt {
 	var stmts []ast.Stmt
