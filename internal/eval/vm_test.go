@@ -435,6 +435,38 @@ func runBackend(t *testing.T, src string, vm bool) (string, error) {
 	return buf.String(), err
 }
 
+// TestScanExprPipeInterpCapture locks in the compiler-side capture analysis (scanExpr)
+// for the Pipe and Interp arms (step-2 review LOW: the suite otherwise hit those arms
+// only via the tree-walker's collectVars). A closure capturing a variable used only
+// inside a |> pipeline / an interpolation must compile fully (so register analysis, and
+// thus scanExpr, runs) and produce the same result on both backends.
+func TestScanExprPipeInterpCapture(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"pipe-capture", `fn .add($a, $b) { $a + $b }
+fn .make($n) { |$x| $x |> .add($n) }
+$f := .make(10)
+say($f(5))`, "15\n"},
+		{"interp-capture", `fn .greeter($name) { || "hi $name" }
+$g := .greeter("bob")
+say($g())`, "hi bob\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := compileProgram(mustParseProg(t, tc.src)); !ok {
+				t.Fatalf("expected full VM compilation (so scanExpr runs), but it fell back:\n%s", tc.src)
+			}
+			wOut, wErr := runBackend(t, tc.src, false)
+			vOut, vErr := runBackend(t, tc.src, true)
+			if wErr != nil || vErr != nil {
+				t.Fatalf("unexpected error: walker=%v vm=%v", wErr, vErr)
+			}
+			if wOut != tc.want || vOut != tc.want {
+				t.Errorf("want %q; walker=%q vm=%q", tc.want, wOut, vOut)
+			}
+		})
+	}
+}
+
 func TestVMCompilesSubset(t *testing.T) {
 	for _, src := range vmSubset {
 		if _, ok := compileProgram(mustParseProg(t, src)); !ok {
