@@ -56,6 +56,10 @@ say($g)`,
 	`say(sqrt(16), pow(2, 8), div(17, 5))`,
 	`say(index_of("abcdef", "cd"))`,
 	`say(strftime(0, "%Y-%m-%d", {utc: true}))`, // deterministic on both backends
+	// first-class builtins (resolved as values on both backends)
+	`say(["/a/b.txt", "/c/d"] |> map(basename))`,
+	"$f := len\nsay($f([1, 2, 3]))",
+	`say(type(upper))`,
 	// block scoping: an inner declaration must not leak to the outer scope
 	`$x := 1
 if true {

@@ -2247,3 +2247,20 @@ minimal-but-robust:
 - **Out (compose in drang, don't configure):** client object / request builder, cookie
   jar / sessions, retry-backoff (a prelude combinator), multipart, streaming, proxies,
   auth schemes. PUT/PATCH/DELETE go through `http(method, …)` — no `http_put` kitchen sink.
+
+## Decision: first-class builtins (2026-06-28)
+
+The long-standing wart — `map($xs, basename)` failing because a builtin was only reachable
+by name in call position — is fixed. User functions and lambdas were already first-class
+values; this makes builtins behave the same, so it *removes* a special case rather than
+adding surface.
+
+Implementation: a bare identifier in value position that is not a binding but IS in the
+`builtins` map evaluates to a function value — `&Function{Name, Builtin: fn}` — on both
+backends (the tree-walker's `evalExpr` Ident arm and the VM's `OpGetIdent`). `Function`
+gained a `Builtin` field; `callFunction` invokes it directly (the builtin does its own
+arity/type checks). The HOF dispatch (`callCb`/`reduce`) treats a builtin callback as
+taking the element (it has no declared params). A user binding still shadows the builtin
+name (env lookup wins first), consistent with call resolution. Special forms (map/filter/
+spawn/dispatch/the HOFs) are NOT in the `builtins` map, so they stay name-only (you would
+never pass `map` to `map`) — keeping the first-class set to ordinary builtins.

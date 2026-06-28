@@ -78,7 +78,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
 | ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
 | TOML / INI config parsing | no Go-stdlib parser → conflicts with stdlib-only pillar | Go | GATED (decision-record first) |
-| First-class builtin values (`map($xs, basename)`) | HOF style forces wrapper lambdas — a persistent wart | (language) | NOT-STARTED |
+| ~~First-class builtin values (`map($xs, basename)`)~~ | the long-standing HOF wart — **DONE**: a bare builtin name is a function value on both backends | (language) | ✅ DONE |
 | `sh()` shell-escape; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency batteries; build on demand | mixed | DEFERRED-BY-DESIGN |
 
 ## (c) Tooling & developer experience

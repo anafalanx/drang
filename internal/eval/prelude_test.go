@@ -75,6 +75,8 @@ func TestPrelude(t *testing.T) {
 		// control
 		{"retry-succeeds", "$n := 0\n$r := retry(3, 0, || { $n = $n + 1; if $n < 3 { return fail(\"x\") } $n })\nsay($r)", "3\n"},
 		{"retry-all-fail", `say(is_err(retry(2, 0, || fail("no"))))`, "true\n"},
+		// a first-class builtin passed to a prelude HOF
+		{"group_by-builtin", `say(to_json(group_by(["aa", "bb", "c"], len)))`, `{"2":["aa","bb"],"1":["c"]}` + "\n"},
 		// a user .flatten coexists with the bare prelude flatten — no shadow, no clobber
 		{"user-dot-coexists-with-prelude", `fn .flatten($x) { "mine" }  say(.flatten([1]) ~ "/" ~ to_json(flatten([[1],[2]])))`, "mine/[1,2]\n"},
 	}

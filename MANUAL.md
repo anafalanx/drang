@@ -1199,35 +1199,28 @@ say($xs |> reduce(0, |$acc, $x| $acc + $x))
 
 Callbacks are arity-flexible: a one-parameter lambda receives the element; a two-parameter lambda also receives the index (and `reduce`'s lambda is `(acc, el)` or `(acc, el, index)`).
 
-### Limitation: builtins are not first-class values yet
+### Functions and builtins are first-class values
 
-A **named user function** can be passed point-free:
+Both a named user function and a builtin can be passed point-free — a bare name in value
+position is a function value:
 
 ```drang
 fn .shout($s) { upper($s) }
-say(["a", "b"] |> map(.shout))
+say(["a", "b"] |> map(.shout))                       # [A, B]
+
+say(["/a/b/foo.txt", "/c/d/bar.txt"] |> map(basename))   # [foo.txt, bar.txt]
+say(["x", "yy", "zzz"] |> map(len))                  # [1, 2, 3]
+say([3, 1, 2] |> reduce(0, max))                     # 3
+
+$f := upper
+say($f("hi"))                                        # HI
+say(type(len))                                       # function
 ```
 
-```
-[A, B]
-```
-
-A **builtin**, however, is not yet a first-class value, so passing its bare name fails:
-
-```drang
-say(["A.txt", "B.txt"] |> map(basename))   # drang: undefined: basename
-```
-
-Wrap the builtin in a lambda instead:
-
-```drang
-$paths := ["/a/b/foo.txt", "/c/d/bar.txt"]
-say($paths |> map(|$p| basename($p)))
-```
-
-```
-[foo.txt, bar.txt]
-```
+A user binding of the same name still shadows the builtin (`$len := 99` makes `$len` the
+number `99`, exactly as it shadows the builtin in a call). You only need a lambda when you
+want to reshape the call — reorder arguments, supply extra ones, or pass the index:
+`map($xs, |$x, $i| format("{}:{}", $i, $x))`.
 
 ---
 
@@ -3215,4 +3208,4 @@ Several features are specified in DESIGN.md but do not work in the binary yet �
 
 ### Also absent (from DESIGN.md, not yet built)
 
-first-class builtin values (you must wrap a builtin in a lambda to pass it: `map($xs, |$f| f($f))`), `sh()` shell escape, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped.
+`sh()` shell escape, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values — `map($xs, basename)` — now *do* work; see "Functions and builtins are first-class values".)
