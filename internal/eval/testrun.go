@@ -28,10 +28,11 @@ func RunExamples(prog *ast.Program, baseDir, origin, goldenPath string, update b
 	capture := goldenPath != "" || update
 	var buf bytes.Buffer
 	if capture {
-		old := stdout
-		stdout = &buf
+		// Swap under outMu (via swapStdout) so capture can't race a say from a
+		// still-running spawned task; the restore also fences any in-flight write.
+		old := swapStdout(&buf)
 		loadErr = RunProgramWithArgs(prog, env, nil)
-		stdout = old
+		swapStdout(old)
 	} else {
 		loadErr = RunProgramWithArgs(prog, env, nil)
 	}
@@ -98,16 +99,21 @@ func goldenDiff(expected, actual string) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "        @@ first difference at line %d @@\n", p+1)
-	const maxLines = 40
-	n := 0
-	for i := p; i < len(exp)-s && n < maxLines; i, n = i+1, n+1 {
-		fmt.Fprintf(&b, "        - %s\n", exp[i])
+	const maxPerSide = 20 // each side gets its own budget, so neither is hidden
+	expLines, actLines := exp[p:len(exp)-s], act[p:len(act)-s]
+	for i, ln := range expLines {
+		if i >= maxPerSide {
+			fmt.Fprintf(&b, "        … (%d more expected lines)\n", len(expLines)-i)
+			break
+		}
+		fmt.Fprintf(&b, "        - %s\n", ln)
 	}
-	for i := p; i < len(act)-s && n < maxLines; i, n = i+1, n+1 {
-		fmt.Fprintf(&b, "        + %s\n", act[i])
-	}
-	if (len(exp)-s-p)+(len(act)-s-p) > maxLines {
-		b.WriteString("        … (diff truncated)\n")
+	for i, ln := range actLines {
+		if i >= maxPerSide {
+			fmt.Fprintf(&b, "        … (%d more actual lines)\n", len(actLines)-i)
+			break
+		}
+		fmt.Fprintf(&b, "        + %s\n", ln)
 	}
 	return b.String()
 }
