@@ -36,15 +36,32 @@ func builtinSleep(args []value.Value) (value.Value, error) {
 }
 
 // epochToTime converts epoch seconds (with fraction) to a LOCAL time.Time.
-func epochToTime(epoch float64) time.Time {
+func epochToTime(epoch float64) time.Time { return epochZone(epoch, false) }
+
+// epochZone converts epoch seconds (with fraction) to a time.Time in the local zone, or
+// UTC when utc is set.
+func epochZone(epoch float64, utc bool) time.Time {
 	sec := int64(epoch)
 	nsec := int64((epoch - float64(sec)) * 1e9)
-	return time.Unix(sec, nsec).Local()
+	t := time.Unix(sec, nsec)
+	if utc {
+		return t.UTC()
+	}
+	return t.Local()
+}
+
+// wantUTC reports whether a trailing opts map carries {utc: true}.
+func wantUTC(opts value.Value) bool {
+	if opts.Tag() != value.Map {
+		return false
+	}
+	v, ok := opts.Obj().(*value.OrderedMap).Get(value.MakeStr("utc"))
+	return ok && v.Truthy()
 }
 
 func builtinStrftime(args []value.Value) (value.Value, error) {
-	if len(args) != 2 {
-		return value.MakeNil(), fmt.Errorf("strftime expects 2 arguments (epoch, format), got %d", len(args))
+	if len(args) < 2 || len(args) > 3 {
+		return value.MakeNil(), fmt.Errorf("strftime expects 2 or 3 arguments (epoch, format, opts?), got %d", len(args))
 	}
 	if !args[0].IsNumber() {
 		return value.MakeErr(fmt.Sprintf("strftime expects a number epoch, got %s", args[0].TypeName()), 1), nil
@@ -52,12 +69,13 @@ func builtinStrftime(args []value.Value) (value.Value, error) {
 	if args[1].Tag() != value.Str {
 		return value.MakeErr(fmt.Sprintf("strftime expects a format string, got %s", args[1].TypeName()), 1), nil
 	}
-	return value.MakeStr(strftimeFormat(epochToTime(args[0].Num()), args[1].AsStr())), nil
+	utc := len(args) == 3 && wantUTC(args[2])
+	return value.MakeStr(strftimeFormat(epochZone(args[0].Num(), utc), args[1].AsStr())), nil
 }
 
 func builtinParseTime(args []value.Value) (value.Value, error) {
-	if len(args) != 2 {
-		return value.MakeNil(), fmt.Errorf("parse_time expects 2 arguments (string, format), got %d", len(args))
+	if len(args) < 2 || len(args) > 3 {
+		return value.MakeNil(), fmt.Errorf("parse_time expects 2 or 3 arguments (string, format, opts?), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str || args[1].Tag() != value.Str {
 		return value.MakeErr("parse_time expects (string, format) string arguments", 1), nil
@@ -66,7 +84,11 @@ func builtinParseTime(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeErr(err.Error(), 1), nil
 	}
-	t, perr := time.ParseInLocation(layout, args[0].AsStr(), time.Local)
+	loc := time.Local
+	if len(args) == 3 && wantUTC(args[2]) {
+		loc = time.UTC
+	}
+	t, perr := time.ParseInLocation(layout, args[0].AsStr(), loc)
 	if perr != nil {
 		return value.MakeErr("parse_time: "+perr.Error(), 1), nil
 	}
@@ -74,13 +96,14 @@ func builtinParseTime(args []value.Value) (value.Value, error) {
 }
 
 func builtinDateParts(args []value.Value) (value.Value, error) {
-	if len(args) != 1 {
-		return value.MakeNil(), fmt.Errorf("date_parts expects 1 argument (epoch), got %d", len(args))
+	if len(args) < 1 || len(args) > 2 {
+		return value.MakeNil(), fmt.Errorf("date_parts expects 1 or 2 arguments (epoch, opts?), got %d", len(args))
 	}
 	if !args[0].IsNumber() {
 		return value.MakeErr(fmt.Sprintf("date_parts expects a number epoch, got %s", args[0].TypeName()), 1), nil
 	}
-	t := epochToTime(args[0].Num())
+	utc := len(args) == 2 && wantUTC(args[1])
+	t := epochZone(args[0].Num(), utc)
 	m := value.MakeMap()
 	om := m.Obj().(*value.OrderedMap)
 	om.Set(value.MakeStr("year"), value.MakeInt(int64(t.Year())))

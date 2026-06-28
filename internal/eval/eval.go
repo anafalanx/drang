@@ -1555,6 +1555,8 @@ var builtins = map[string]builtin{
 	// filesystem: file IO + atomic-swap family
 	"read_file":  builtinReadFile,
 	"write_file": builtinWriteFile,
+	"tempfile":   builtinTempFile,
+	"tempdir":    builtinTempDir,
 	"rename":     builtinRename,
 	"rm":         builtinRm,
 	"copy":       builtinCopy,
@@ -1640,10 +1642,13 @@ var builtins = map[string]builtin{
 	"sample":   builtinSample,
 	"uuid":     builtinUUID,
 
-	// runtime knobs
+	// runtime knobs + platform
 	"sys_gc": builtinSysGC,
 	"cwd":    builtinCwd,
 	"env":    builtinEnv,
+	"os":     builtinOS,
+	"arch":   builtinArch,
+	"home":   builtinHome,
 
 	// HTTP client (minimal + robust; net/http). Transport failure -> catchable Err;
 	// an HTTP status (incl. 4xx/5xx) is data in the returned {status, ok, body, headers, url}.

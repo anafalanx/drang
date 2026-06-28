@@ -419,18 +419,86 @@ func builtinReadFile(args []value.Value) (value.Value, error) {
 }
 
 func builtinWriteFile(args []value.Value) (value.Value, error) {
-	if len(args) != 2 {
-		return value.MakeNil(), fmt.Errorf("write_file expects 2 arguments (path, content), got %d", len(args))
+	if len(args) < 2 || len(args) > 3 {
+		return value.MakeNil(), fmt.Errorf("write_file expects 2 or 3 arguments (path, content, opts?), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
 		return value.MakeNil(), fmt.Errorf("write_file: path must be a string")
 	}
 	p := args[0].AsStr()
-	content := args[1].Display()
+	content := args[1].Display() // any value renders via its display; a string carries raw bytes
+	appendMode := false
+	if len(args) == 3 {
+		if args[2].Tag() != value.Map {
+			return value.MakeErr("write_file: opts must be a map, got "+args[2].TypeName(), 1), nil
+		}
+		if v, ok := args[2].Obj().(*value.OrderedMap).Get(value.MakeStr("append")); ok {
+			appendMode = v.Truthy()
+		}
+	}
+	if appendMode {
+		f, e := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if e != nil {
+			return value.MakeErr("write_file "+p+": "+e.Error(), 1), nil
+		}
+		_, we := f.WriteString(content)
+		ce := f.Close()
+		if we != nil {
+			return value.MakeErr("write_file "+p+": "+we.Error(), 1), nil
+		}
+		if ce != nil {
+			return value.MakeErr("write_file "+p+": "+ce.Error(), 1), nil
+		}
+		return value.MakeStr(p), nil
+	}
 	if e := os.WriteFile(p, []byte(content), 0o644); e != nil {
 		return value.MakeErr("write_file "+p+": "+e.Error(), 1), nil
 	}
 	return value.MakeStr(p), nil
+}
+
+// builtinTempFile creates a fresh, uniquely-named empty file in the system temp dir and
+// returns its path. An optional prefix names it; the caller removes it (rm) when done.
+func builtinTempFile(args []value.Value) (value.Value, error) {
+	prefix, err := tempPrefix("tempfile", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	f, e := os.CreateTemp("", prefix+"-*")
+	if e != nil {
+		return value.MakeErr("tempfile: "+e.Error(), 1), nil
+	}
+	name := f.Name()
+	f.Close()
+	return value.MakeStr(name), nil
+}
+
+// builtinTempDir creates a fresh, uniquely-named directory in the system temp dir and
+// returns its path; the caller removes it (rm) when done.
+func builtinTempDir(args []value.Value) (value.Value, error) {
+	prefix, err := tempPrefix("tempdir", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	p, e := os.MkdirTemp("", prefix+"-*")
+	if e != nil {
+		return value.MakeErr("tempdir: "+e.Error(), 1), nil
+	}
+	return value.MakeStr(p), nil
+}
+
+// tempPrefix resolves the optional prefix argument (default "drang") for tempfile/tempdir.
+func tempPrefix(name string, args []value.Value) (string, error) {
+	if len(args) > 1 {
+		return "", fmt.Errorf("%s expects 0 or 1 arguments (prefix?), got %d", name, len(args))
+	}
+	if len(args) == 1 {
+		if args[0].Tag() != value.Str {
+			return "", fmt.Errorf("%s: prefix must be a string", name)
+		}
+		return args[0].AsStr(), nil
+	}
+	return "drang", nil
 }
 
 // --- atomic-swap family: rename, rm (recursive force delete), copy, size ---

@@ -55,6 +55,7 @@ say($g)`,
 	`say(str(42), type([1, 2]), float("1.5"))`,
 	`say(sqrt(16), pow(2, 8), div(17, 5))`,
 	`say(index_of("abcdef", "cd"))`,
+	`say(strftime(0, "%Y-%m-%d", {utc: true}))`, // deterministic on both backends
 	// block scoping: an inner declaration must not leak to the outer scope
 	`$x := 1
 if true {

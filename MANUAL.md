@@ -2267,8 +2267,11 @@ they drop straight into `if`/`unless` without recovery plumbing.
 ### File I/O: read_file, write_file, lines
 
 - `read_file(path)` → the whole file as a string, or `Err` if unreadable.
-- `write_file(path, content)` → writes `content` (any value, rendered like
-  `say`) to `path`, creating or truncating it; returns the path, or `Err`.
+- `write_file(path, content, {append: true}?)` → writes `content` (any value, rendered
+  like `say`) to `path`, creating or truncating it; with `{append: true}` it appends
+  instead. Returns the path, or `Err`.
+- `tempfile(prefix?)` / `tempdir(prefix?)` → create a uniquely-named empty file / directory
+  in the system temp dir and return its path; remove it with `rm` when done.
 - `lines(text)` → splits a **string** into an array of lines. It is *not* a file
   reader — pair it with `read_file`: `lines(read_file(path))`.
 
@@ -2516,9 +2519,9 @@ operators: `$t + 3600` is an hour later, `$a < $b` is "before".
 
 - `now()` — the current time, as epoch seconds (a float).
 - `sleep($secs)` — pause for `$secs` seconds (a float; fractional is fine).
-- `strftime($epoch, $fmt)` — format an epoch as a string, using `%`-codes in **local** time.
-- `parse_time($str, $fmt)` — parse a string (same `%`-codes) back to an epoch, or an `Err`.
-- `date_parts($epoch)` — a map of components: `year month day hour minute second weekday yearday` (`weekday` is 0–6, Sunday = 0).
+- `strftime($epoch, $fmt, {utc: true}?)` — format an epoch as a string, using `%`-codes; local time by default, or UTC with `{utc: true}`.
+- `parse_time($str, $fmt, {utc: true}?)` — parse a string (same `%`-codes) back to an epoch, or an `Err`; interprets the string as local time, or UTC with `{utc: true}`.
+- `date_parts($epoch, {utc: true}?)` — a map of components: `year month day hour minute second weekday yearday` (`weekday` is 0–6, Sunday = 0); local or, with `{utc: true}`, UTC.
 
 ```drang
 $t := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S")
@@ -2529,8 +2532,9 @@ say(date_parts($t).weekday)                   # 6
 
 The `%`-codes are the usual strftime set: `%Y %y %m %d %e %H %I %M %S %p %A %a %B %b
 %j %w %z %Z %%` (plus `%n` / `%t`). An unknown code is left literal by `strftime`;
-`parse_time` rejects a code it can't parse. (Times are **local**; a UTC option is a
-planned follow-up.)
+`parse_time` rejects a code it can't parse. Times are **local** by default; pass
+`{utc: true}` to `strftime`/`parse_time`/`date_parts` to work in UTC (important for
+cross-machine logs and timestamps).
 
 ---
 
@@ -3037,7 +3041,9 @@ a bool; the rest signal real I/O failures as Err.
 | `newer` | `newer(a, b)` | True if `a` is newer than `b`; a missing path → Err. |
 | `stale` | `stale(target, sources)` | True if `target` is missing or older than any source; missing source → Err. |
 | `read_file` | `read_file(p)` | Read the whole file as a string; failure → Err. |
-| `write_file` | `write_file(p, content)` | Write `content` to `p`; returns `p`, failure → Err. |
+| `write_file` | `write_file(p, content, {append}?)` | Write (or append) `content` to `p`; returns `p`, failure → Err. |
+| `tempfile` | `tempfile(prefix?)` | Create a unique empty temp file; returns its path (remove with `rm`). |
+| `tempdir` | `tempdir(prefix?)` | Create a unique temp directory; returns its path (remove with `rm`). |
 | `rename` | `rename(src, dst)` | Rename/move; returns `dst`, failure → Err. |
 | `rm` | `rm(p)` | Remove a file or tree, recursively and idempotently; returns `p`. |
 | `copy` | `copy(src, dst)` | Copy a file or directory tree; returns `dst`, failure → Err. |
@@ -3085,6 +3091,9 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 | `sys_gc` | `sys_gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
 | `env` | `env(name, default?)` | Process env var (case-insensitive on Windows); `default` or nil if unset. |
+| `os` | `os()` | Operating system name (`windows`/`darwin`/`linux`/…). |
+| `arch` | `arch()` | CPU architecture (`amd64`/`arm64`/…). |
+| `home` | `home()` | Current user's home directory; failure → Err. |
 | `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |
 
 ---
