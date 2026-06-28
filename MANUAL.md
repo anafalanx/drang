@@ -21,6 +21,7 @@
 - [CSV](#csv)
 - [Date and time](#date-and-time)
 - [Hashing, encoding, and randomness](#hashing-encoding-and-randomness)
+- [HTTP client](#http-client)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
 - [Testing: `drang test`](#testing-drang-test)
@@ -2567,6 +2568,54 @@ say(uuid())                    # e.g. 5b1f9d2c-...-4e7a-...
 
 ---
 
+## HTTP client
+
+A small, robust HTTP client over Go's `net/http`. The whole surface is `http` plus `get`
+and `post` sugar; PUT/PATCH/DELETE go through `http(method, url, ...)`. Higher-level
+patterns — retry, cookies, auth, pagination — are written in drang, not configured in the
+builtin.
+
+```drang
+$r := http_get("https://example.com")
+say($r.status, $r.ok, len($r.body))                       # 200 true 1256
+
+$r := http("POST", "https://api.example.com/items", {json: {name: "ada"}})?
+$r := http_post("https://example.com/form", "a=1&b=2")    # a string body
+```
+
+A response is a map: `{status, ok (200–299), body, headers (lowercased keys), url (final,
+after redirects)}`. `opts` (a trailing map, like `run`'s) accepts: `headers` (a `{name:
+value}` map), `body` (string), `json` (any value — serialized and sent as
+`application/json`; `body` and `json` together is an error), `timeout` (ms; `0` =
+unlimited), `redirects` (cap; `0` = don't follow, returning the 3xx), `max_body` (bytes;
+`0` = unlimited), and `insecure` (skip TLS verification).
+
+**Robust by default** (the defaults Go's bare client lacks): a 30-second timeout, follow
+up to 10 redirects (dropping `Authorization` on a cross-host hop), TLS verification **on**,
+a 32 MiB response-body cap (exceeding it is an error, never a silent truncation),
+transparent gzip, and one shared connection-pooled transport (safe to fan out under
+`pmap`).
+
+**The error model mirrors `capture`/`capture_all`: a completed exchange is data, a failure
+to complete is an `Err`.** A 4xx/5xx is a normal answer — you get `{status: 404, ok:
+false, …}`, never an error. Only a transport failure — DNS, connection refused, **timeout**
+(carries `err_code` `124`, like a subprocess), TLS failure, a bad URL, or a body over
+`max_body` — is a catchable `Err`. So `?` means "I couldn't reach the server" (which should
+bubble), and `//` masks only that:
+
+```drang
+$r := http_get($url)
+if is_err($r) {
+  if err_code($r) == 124 { say("timed out") } else { say("unreachable") }
+} else if $r.status == 404 { say("not found") }           # an answer, not an error
+  else if $r.ok           { say(from_json($r.body).name) }
+
+$health := http_get($url) // {status: 0, ok: false}       # // masks ONLY a transport failure
+$statuses := $urls |> pmap(|$u| http_get($u, {timeout: 2000}) // {status: 0}) |> map(|$r| $r.status)
+```
+
+---
+
 ## One-liner mode
 
 `-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
@@ -3018,6 +3067,16 @@ reference types; values are deep-copied on send and on `await`.
 | `recv_ok` | `recv_ok(c)` | Like `recv` but returns `[value, ok]` (ok=false when closed). |
 | `close` | `close(c)` | Close a channel (safe from any goroutine); returns nil. |
 | `drain` | `drain(c)` | Collect all remaining values into an array, blocking until closed. |
+
+### HTTP
+
+Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTTP status (incl. 4xx/5xx) is data in the returned `{status, ok, body, headers, url}` map. `opts`: `headers`, `body`, `json`, `timeout` (ms; 0=∞), `redirects` (0=don't follow), `max_body` (0=∞), `insecure`. Defaults: 30s timeout, follow ≤10 redirects, TLS on, 32 MiB body cap.
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `http` | `http(method, url, opts?)` | Request with any method; the primitive. |
+| `http_get` | `http_get(url, opts?)` | GET. |
+| `http_post` | `http_post(url, body, opts?)` | POST a string body (use `http(..., {json: x})` for JSON). |
 
 ### System
 
