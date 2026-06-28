@@ -1,6 +1,7 @@
 package printer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/parser"
@@ -8,12 +9,11 @@ import (
 
 func mustFormat(t *testing.T, src string) string {
 	t.Helper()
-	p := parser.New(src)
-	prog := p.ParseProgram()
-	if errs := p.Errors(); len(errs) > 0 {
-		t.Fatalf("parse %q: %v", src, errs)
+	out, err := Format(src)
+	if err != nil {
+		t.Fatalf("format %q: %v", src, err)
 	}
-	return Program(prog)
+	return out
 }
 
 // corpus covers most node types; used for the reparse + idempotence invariants.
@@ -61,6 +61,9 @@ var corpus = []string{
 	`BEGIN { say(1) }`,
 	`|$x| $x + 1`,
 	`|$x| { say($x); $x }`,
+	`[1] |> map(|$c| ({a: $c, b: 2}))`, // map-bodied lambda needs parens
+	`({a: 1})`,                         // map literal as a statement needs parens
+	`({a: 1}).x`,                       // brace-leading field access
 }
 
 // TestReparseAndIdempotent is the core correctness invariant: formatted output must
@@ -78,6 +81,45 @@ func TestReparseAndIdempotent(t *testing.T) {
 			t.Errorf("not idempotent for %q:\n  once=%q\n twice=%q", src, once, twice)
 		}
 	}
+}
+
+// TestComments verifies comments survive formatting (the drop-guard) and land in
+// sensible places: leading, same-line trailing, inside blocks, before a closing brace,
+// floating, and at EOF — and that the result is idempotent.
+func TestComments(t *testing.T) {
+	src := "# file header\n" +
+		"$x := 1  # trailing decl\n" +
+		"\n" +
+		"fn .f($a) {\n" +
+		"\t# leading inside\n" +
+		"\tsay($a)  # trailing inside\n" +
+		"\t# before close\n" +
+		"}\n" +
+		"\n" +
+		"# floating block\n" +
+		"say($x)  # final\n" +
+		"# eof\n"
+
+	out := mustFormat(t, src) // Format's drop-guard already fails if any comment is lost
+	for _, c := range []string{
+		"# file header", "# trailing decl", "# leading inside",
+		"# trailing inside", "# before close", "# floating block", "# final", "# eof",
+	} {
+		if !strings.Contains(out, c) {
+			t.Errorf("comment %q missing from:\n%s", c, out)
+		}
+	}
+	if again := mustFormat(t, out); again != out {
+		t.Errorf("comments not idempotent:\n--- once ---\n%s--- twice ---\n%s", out, again)
+	}
+	// trailing comments must stay on the same line as their code
+	if !strings.Contains(out, "$x := 1  # trailing decl") {
+		t.Errorf("trailing decl comment not attached:\n%s", out)
+	}
+	if !strings.Contains(out, "say($a)  # trailing inside") {
+		t.Errorf("trailing in-block comment not attached:\n%s", out)
+	}
+	t.Logf("formatted:\n%s", out)
 }
 
 // TestFormatGolden locks in the canonical style for representative constructs.
@@ -100,6 +142,8 @@ func TestFormatGolden(t *testing.T) {
 		{"if-else", `if x{say(1)}else{say(2)}`, "if x {\n\tsay(1)\n} else {\n\tsay(2)\n}\n"},
 		{"postfix-if", `say(1) if c`, "say(1) if c\n"},
 		{"postfix-unless", `say(1) unless c`, "say(1) unless c\n"},
+		{"map-lambda-body", `xs |> map(|$c| ({a: $c}))`, "xs |> map(|$c| ({a: $c}))\n"},
+		{"map-statement", `({a: 1})`, "({a: 1})\n"},
 	}
 	for _, c := range cases {
 		if got := mustFormat(t, c.in); got != c.want {

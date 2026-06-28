@@ -3,18 +3,16 @@ package eval
 import (
 	"testing"
 
-	"github.com/anafalanx/drang/internal/parser"
 	"github.com/anafalanx/drang/internal/printer"
 )
 
 func fmtSrc(t *testing.T, src string) string {
 	t.Helper()
-	p := parser.New(src)
-	prog := p.ParseProgram()
-	if errs := p.Errors(); len(errs) > 0 {
-		t.Fatalf("parse %q: %v", src, errs)
+	out, err := printer.Format(src)
+	if err != nil {
+		t.Fatalf("format %q: %v", src, err)
 	}
-	return printer.Program(prog)
+	return out
 }
 
 // TestFmtRunEquality is the semantic-fidelity invariant for the formatter: a program
