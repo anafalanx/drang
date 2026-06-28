@@ -93,6 +93,11 @@ func TestStdlibWalls(t *testing.T) {
 		// math
 		{"sqrt", `say(sqrt(9), sqrt(2))`, "3 1.4142135623730951\n"},
 		{"sqrt-neg", `say(sqrt(-1) // "neg")`, "neg\n"},
+		// NaN must not leak silently (NaN sourced from inf - inf); float() stays finite
+		{"sqrt-nan", `say(sqrt(pow(0.0, -1) - pow(0.0, -1)) // "nan")`, "nan\n"},
+		{"log-nan", `say(log(pow(0.0, -1) - pow(0.0, -1)) // "nan")`, "nan\n"},
+		{"float-inf", `say(float("inf") // "noninf")`, "noninf\n"},
+		{"float-nan", `say(float("nan") // "nonnan")`, "nonnan\n"},
 		{"pow-int", `say(pow(2, 10))`, "1024\n"},
 		{"pow-float", `say(pow(9, 0.5))`, "3\n"},
 		{"pow-overflow", `say(pow(2, 100) // "of")`, "of\n"},

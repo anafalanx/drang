@@ -146,6 +146,9 @@ func builtinSqrt(args []value.Value) (value.Value, error) {
 	if !a.IsNumber() {
 		return value.MakeErr("sqrt: expected a number, got "+a.TypeName(), 1), nil
 	}
+	if math.IsNaN(a.Num()) {
+		return value.MakeErr("sqrt: of NaN", 1), nil
+	}
 	if a.Num() < 0 {
 		return value.MakeErr("sqrt: of a negative number", 1), nil
 	}
@@ -203,8 +206,8 @@ func builtinLog(args []value.Value) (value.Value, error) {
 	if !x.IsNumber() {
 		return value.MakeErr("log: expected a number, got "+x.TypeName(), 1), nil
 	}
-	if x.Num() <= 0 {
-		return value.MakeErr("log: of a non-positive number", 1), nil
+	if math.IsNaN(x.Num()) || x.Num() <= 0 {
+		return value.MakeErr("log: of NaN or a non-positive number", 1), nil
 	}
 	if len(args) == 1 {
 		return value.MakeFloat(math.Log(x.Num())), nil
@@ -213,7 +216,7 @@ func builtinLog(args []value.Value) (value.Value, error) {
 	if !b.IsNumber() {
 		return value.MakeErr("log: base must be a number, got "+b.TypeName(), 1), nil
 	}
-	if b.Num() <= 0 || b.Num() == 1 {
+	if math.IsNaN(b.Num()) || b.Num() <= 0 || b.Num() == 1 {
 		return value.MakeErr("log: base must be positive and not 1", 1), nil
 	}
 	return value.MakeFloat(math.Log(x.Num()) / math.Log(b.Num())), nil

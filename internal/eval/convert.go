@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,10 @@ func builtinFloat(args []value.Value) (value.Value, error) {
 		f, err := strconv.ParseFloat(strings.TrimSpace(a.AsStr()), 64)
 		if err != nil {
 			return value.MakeErr(fmt.Sprintf("cannot parse %q as float", a.AsStr()), 1), nil
+		}
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			// keep float() finite — "inf"/"nan" parse, but drang avoids silent NaN/Inf
+			return value.MakeErr(fmt.Sprintf("cannot parse %q as a finite float", a.AsStr()), 1), nil
 		}
 		return value.MakeFloat(f), nil
 	default:
