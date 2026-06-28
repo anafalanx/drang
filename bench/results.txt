@@ -1,25 +1,27 @@
 drang : C:\zmal\_drang\drang.exe
 python: C:\zmal\r\python\cpython-3.14.6-windows-x86_64-none\python.exe
-repeat=3 (min wall-clock ms, lower=faster), timeout=300s
-startup baseline: drang 17.2 ms | python 44.9 ms
+repeat=5 (min wall-clock ms, lower=faster), timeout=300s
+startup baseline: drang 24.5 ms | python 46.3 ms
 
 benchmark        drang ms  python ms   ratio  status
 ----------------------------------------------------------
-fib                1060.7      225.8    4.7x  ok
-loop_sum           2352.0      373.8    6.3x  ok
-sieve              2713.7      411.6    6.6x  ok
-string_join         192.6       99.6    1.9x  ok
-array_hof           691.0      199.4    3.5x  ok
-wordcount           398.8       93.5    4.3x  ok
-sort_ints           713.6      193.8    3.7x  ok
-sort_records        532.0      198.8    2.7x  ok
-regex_count         317.4      219.5    1.4x  ok
-nested_loop        3689.6      612.0    6.0x  ok
-closures            264.0      165.3    1.6x  ok
-collatz            7237.9     1563.9    4.6x  ok
-dict_lookup         435.4      271.7    1.6x  ok
-str_ops             408.6      164.6    2.5x  ok
-tak                 639.8      138.8    4.6x  ok
+fib                 994.1      237.0    4.2x  ok
+loop_sum           2349.0      516.6    4.5x  ok
+sieve              3202.9      513.7    6.2x  ok
+string_join         227.3      116.2    2.0x  ok
+array_hof           801.4      192.3    4.2x  ok
+wordcount           442.1      109.4    4.0x  ok
+sort_ints           779.1      200.0    3.9x  ok
+sort_records        598.6      180.6    3.3x  ok
+regex_count         359.6      254.2    1.4x  ok
+nested_loop        4040.7      444.9    9.1x  ok
+closures            249.4      126.3    2.0x  ok
+collatz            7717.0     2108.7    3.7x  ok
+dict_lookup         406.2      191.7    2.1x  ok
+str_ops             559.8      209.8    2.7x  ok
+tak                 824.5      236.0    3.5x  ok
 
 15/15 matched.  drang is this many times Python's wall-clock:
-  min 1.4x   median 3.7x   geomean 3.3x   max 6.6x
+  min 1.4x   median 3.7x   geomean 3.4x   max 9.1x
+
+(drang 0.4, git 45617b4; CPython 3.14.6; 2026-06-28)
