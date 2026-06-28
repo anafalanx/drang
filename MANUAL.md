@@ -1470,6 +1470,12 @@ builtins above, available unqualified like any builtin:
 | `pad(s, width)` | left-justify by padding the right with spaces (use `format`'s `{:>n}` for right-justify) |
 | `capitalize(s)` | first character upper, the rest lower |
 | `reverse(s)` | reverse a string by characters (rune-correct) |
+| `dedent(s)` | strip the common leading indentation from every line |
+| `clamp(x, lo, hi)` | constrain `x` to the range `[lo, hi]` |
+| `sign(x)` | `-1`, `0`, or `1` |
+| `get_in(data, path)` | follow a path of keys/indices into nested maps/arrays; nil if any step is missing |
+| `deep_merge(a, b)` | recursively merge two maps into a new map (`b` wins; nested maps merged) |
+| `retry(n, delay_ms, f)` | call `f()` up to `n` times, returning the first non-error result (waiting `delay_ms` between) |
 
 Writing part of the stdlib in drang keeps the Go core small and pressure-tests the
 language; the rule for what goes in Go vs drang is recorded in DESIGN.
@@ -3107,6 +3113,39 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 | `arch` | `arch()` | CPU architecture (`amd64`/`arm64`/…). |
 | `home` | `home()` | Current user's home directory; failure → Err. |
 | `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |
+
+### Date & time
+
+A point in time is epoch seconds (a float); see the Date-and-time chapter. `strftime`/`parse_time`/`date_parts` take an optional trailing `{utc: true}` map (local time otherwise).
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `now` | `now()` | Current time as epoch seconds (float). |
+| `sleep` | `sleep(secs)` | Pause for `secs` seconds (fractional ok). |
+| `strftime` | `strftime(epoch, fmt, {utc}?)` | Format an epoch via `%`-codes (local, or UTC). |
+| `parse_time` | `parse_time(str, fmt, {utc}?)` | Parse a string back to an epoch, or Err. |
+| `date_parts` | `date_parts(epoch, {utc}?)` | Map of `year month day hour minute second weekday yearday`. |
+
+### Hashing & encoding
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `sha256` / `sha1` / `md5` | `sha256(s)` | Hex digest of a string. |
+| `to_base64` / `from_base64` | `to_base64(s)` | Standard base64 encode / decode (decode → Err on bad input). |
+| `to_hex` / `from_hex` | `to_hex(s)` | Hex encode / decode (decode → Err on bad input). |
+| `url_encode` / `url_decode` | `url_encode(s)` | Percent-encode / decode (decode → Err on bad input). |
+
+### Randomness
+
+`rand`/`rand_int`/`shuffle`/`sample` use a fast auto-seeded generator (not for secrets); `uuid` uses the cryptographic generator.
+
+| Builtin | Signature | Description |
+|---|---|---|
+| `rand` | `rand()` | A float in `[0, 1)`. |
+| `rand_int` | `rand_int(lo, hi)` | A random int in `[lo, hi)`. |
+| `shuffle` | `shuffle(arr)` | A new array, randomly permuted. |
+| `sample` | `sample(arr, n?)` | A random element, or `n` distinct elements. |
+| `uuid` | `uuid()` | A random (v4) UUID string. |
 
 ---
 

@@ -63,6 +63,18 @@ func TestPrelude(t *testing.T) {
 		{"capitalize", `say(capitalize("hELLO"))`, "Hello\n"},
 		{"reverse", `say(reverse("abc"))`, "cba\n"},
 		{"reverse-rune", `say(reverse("héllo"))`, "olléh\n"},
+		{"dedent", `say(dedent("    a\n      b") == "a\n  b")`, "true\n"},
+		// numbers
+		{"clamp", `say(clamp(15, 0, 10), clamp(-3, 0, 10), clamp(5, 0, 10))`, "10 0 5\n"},
+		{"sign", `say(sign(-4), sign(0), sign(2.5))`, "-1 0 1\n"},
+		// nested data
+		{"get_in", `say(get_in({"a": {"b": [10, 20]}}, ["a", "b", 1]))`, "20\n"},
+		{"get_in-miss", `say(get_in({"a": 1}, ["b"]) // "miss")`, "miss\n"},
+		{"get_in-oob", `say(get_in({"a": [1, 2]}, ["a", 5]) // "oob")`, "oob\n"},
+		{"deep_merge", `say(to_json(deep_merge({"a": 1, "x": {"p": 1}}, {"x": {"q": 2}})))`, `{"a":1,"x":{"p":1,"q":2}}` + "\n"},
+		// control
+		{"retry-succeeds", "$n := 0\n$r := retry(3, 0, || { $n = $n + 1; if $n < 3 { return fail(\"x\") } $n })\nsay($r)", "3\n"},
+		{"retry-all-fail", `say(is_err(retry(2, 0, || fail("no"))))`, "true\n"},
 		// a user .flatten coexists with the bare prelude flatten — no shadow, no clobber
 		{"user-dot-coexists-with-prelude", `fn .flatten($x) { "mine" }  say(.flatten([1]) ~ "/" ~ to_json(flatten([[1],[2]])))`, "mine/[1,2]\n"},
 	}
@@ -84,6 +96,7 @@ func TestRunPreludeDefinesGlobals(t *testing.T) {
 		"flatten", "sum_by", "tally", "count_by", "chunk", "zip",
 		"group_by", "partition", "uniq_by", "enumerate", "mean", "median",
 		"intersect", "union", "difference", "pad", "capitalize", "reverse",
+		"dedent", "clamp", "sign", "get_in", "deep_merge", "retry",
 	} {
 		if _, ok := env.get(name); !ok {
 			t.Errorf("prelude did not define %q", name)

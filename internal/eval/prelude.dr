@@ -200,3 +200,90 @@ fn reverse($s) {
   }
   join($out, "")
 }
+
+# strip the common leading indentation from every line (like a <<~ heredoc, but for any
+# string); blank lines are ignored when measuring. A trailing newline is not preserved
+# (lines() semantics). dedent("  a\n    b") -> "a\n  b"
+fn dedent($s) {
+  $ls := lines($s)
+  $min := -1
+  for $line in $ls {
+    if trim($line) == "" { next }
+    $cs := chars($line)
+    $w := 0
+    while $w < len($cs) and ($cs[$w] == " " or $cs[$w] == "\t") { $w = $w + 1 }
+    if $min < 0 or $w < $min { $min = $w }
+  }
+  if $min <= 0 { return $s }
+  $out := []
+  for $line in $ls {
+    if len($line) >= $min { push($out, $line[$min..len($line) - 1]) } else { push($out, "") }
+  }
+  join($out, "\n")
+}
+
+# --- numbers ---
+
+# constrain x to the range [lo, hi]: clamp(15, 0, 10) -> 10, clamp(-3, 0, 10) -> 0
+fn clamp($x, $lo, $hi) { max($lo, min($x, $hi)) }
+
+# the sign of a number: sign(-4) -> -1, sign(0) -> 0, sign(2.5) -> 1
+fn sign($x) {
+  if $x < 0 { return -1 }
+  if $x > 0 { return 1 }
+  0
+}
+
+# --- nested data ---
+
+# follow a path of keys/indices into nested maps/arrays, returning nil if any step is
+# missing or not descendable: get_in({a: {b: [10, 20]}}, ["a", "b", 1]) -> 20
+fn get_in($data, $path) {
+  $cur := $data
+  for $k in $path {
+    $t := type($cur)
+    if $t == "map" {
+      if has($cur, $k) { $cur = $cur[$k] } else { return }
+    } else if $t == "array" {
+      if type($k) == "int" and $k >= 0 - len($cur) and $k < len($cur) {
+        $cur = $cur[$k]
+      } else {
+        return
+      }
+    } else {
+      return
+    }
+  }
+  $cur
+}
+
+# recursively merge two maps into a new map; b wins on a scalar conflict, nested maps are
+# merged: deep_merge({a: 1, x: {p: 1}}, {x: {q: 2}}) -> {a: 1, x: {p: 1, q: 2}}
+fn deep_merge($a, $b) {
+  $out := {}
+  for $k in keys($a) { $out[$k] = $a[$k] }
+  for $k in keys($b) {
+    if has($out, $k) and type($out[$k]) == "map" and type($b[$k]) == "map" {
+      $out[$k] = deep_merge($out[$k], $b[$k])
+    } else {
+      $out[$k] = $b[$k]
+    }
+  }
+  $out
+}
+
+# --- control ---
+
+# call f() up to n times, returning the first non-error result; on an error value it waits
+# delay_ms then retries, and returns the last error if all attempts fail. The policy
+# (which errors, what backoff) is the caller's: retry(3, 200, || http_get($url))
+fn retry($n, $delay_ms, $f) {
+  $r := $f()
+  $attempt := 1
+  while is_err($r) and $attempt < $n {
+    sleep($delay_ms / 1000.0)
+    $r = $f()
+    $attempt = $attempt + 1
+  }
+  $r
+}
