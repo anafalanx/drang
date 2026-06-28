@@ -75,7 +75,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 |------|----------------|------|--------|
 | Rebuild + release/version discipline | the local `drang.exe` had silently fallen ~9h behind HEAD; add `z build` + version stamp + a release check | S | PARTIAL (binary now current) |
 | ~~`drang test`~~ | **DONE**: `example` assertions (`== `/ truthy / `fails`, a no-op in normal runs) + the runner (per-file pass/fail, non-zero exit) + **golden-output snapshots** (sibling `.golden`, captured-stdout diff, `--update` to re-bless) | M | ✅ DONE |
-| `drang fmt` (+ `--fix` = the edition/migration mechanism) | own-the-AST migrations as the taxonomy evolves; `--fix` rule design OPEN | M | NOT-STARTED |
+| ~~`drang fmt` (+ `--fix` = the edition/migration mechanism)~~ | **DONE**: faithful canonical formatter (comments preserved + drop-guard, surface-faithful via AST provenance, width-100 wrapping); CLI `-w`/`--check`/`-l`/`-d`; `--fix` ships the AST-rewrite migration hook (empty rule set today) | L | ✅ DONE |
 | `-i` in-place edit for one-liner mode | `perl -i -pe` is the canonical text-munge | S–M | DEFERRED |
 | REPL polish / editor support / LSP | real adoption infra, but one-user project — low priority | L | NOT-STARTED |
 
@@ -132,9 +132,10 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
 4. ~~**Hashing + encodings + random (b).**~~ ✅ Done — `sha256`/`md5`, base64/hex/url, `rand`/`shuffle`/`uuid`.
 5. ~~**`drang test` (c).**~~ ✅ Done — `example` assertions + the `drang test` runner.
 
-**The recommended next-5 is complete.** A Perl/Python refugee can now do real text+glue
-work without hitting a wall. The strongest remaining items (see the grouped lists
-above): **`drang fmt`** (c) and one-liner **`-i`** in-place edit (c), then the
-remaining §(a) items — char ranges and the stringy-coercion decision — and the
-**named-capture→map** regex-ergonomics builtin. (Default params and slices are done;
-`=~`/`s///` is deliberately out of scope.)
+**The recommended next-5 is complete, and `drang fmt` has since shipped** (a faithful,
+comment-preserving canonical formatter with width-100 wrapping and the `--fix` migration
+hook). A Perl/Python refugee can now do real text+glue work, and keep it tidy, without
+hitting a wall. The strongest remaining items (see the grouped lists above): one-liner
+**`-i`** in-place edit (c), then the remaining §(a) items — char ranges and the
+stringy-coercion decision — and the **named-capture→map** regex-ergonomics builtin.
+(Default params and slices are done; `=~`/`s///` is deliberately out of scope.)

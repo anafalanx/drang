@@ -24,6 +24,7 @@
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
 - [Testing: `drang test`](#testing-drang-test)
+- [Formatting: `drang fmt`](#formatting-drang-fmt)
 - [Quick reference: builtins](#quick-reference-builtins)
 - [Not Yet — Known Gaps and Surprises](#not-yet-known-gaps-and-surprises)
 
@@ -2762,6 +2763,63 @@ A golden test assumes the script's output is **deterministic and complete when t
 level finishes**: `await` any `spawn`ed tasks before the end (a detached task's output
 may not make it into the capture), and avoid output whose line order depends on `pmap`
 scheduling.
+
+---
+
+## Formatting: `drang fmt`
+
+`drang fmt` reformats drang source into one canonical style. Like `gofmt`, it is
+opinionated and has no configuration knobs. It preserves comments and never changes what a
+program *does* — only how it reads.
+
+```
+$ drang fmt script.dr            # print formatted source to stdout
+$ drang fmt -w script.dr         # rewrite the file in place
+$ drang fmt -w src/              # rewrite every *.dr under a directory
+$ drang fmt --check src/         # exit non-zero if anything is unformatted (CI gate)
+$ cat script.dr | drang fmt      # filter stdin to stdout
+```
+
+With no paths it reads stdin and writes to stdout; directory paths are searched for `*.dr`
+files (skipping `.git` and dot-directories).
+
+| flag | effect |
+|---|---|
+| `-w`, `--write` | rewrite each changed file in place, atomically |
+| `-c`, `--check` | list unformatted files to stderr; exit non-zero (for CI) |
+| `-l`, `--list`  | list files that would change to stdout |
+| `-d`, `--diff`  | print a diff of the changes |
+| `--fix`         | also apply migration rewrites (see below) |
+
+Exit status is `0` when everything is already formatted, `1` when a file would change
+(under `--check`/`-l`/`-d`) or a file errors, `2` for a usage error.
+
+### What it does
+
+- **Indentation** is tabs, one per nesting level; braced blocks are always multi-line.
+- **Spacing** is normalized: one space around binary, assignment, and `|>` operators;
+  tight `..` ranges and prefix `-`/`!`; `, ` between elements; `key: value` in maps.
+- **Blank lines** are collapsed, with one kept around each top-level function.
+- **Parentheses** are reduced to the minimum precedence requires: `(1 + 2) * 3` keeps its
+  parens, `1 + (2 * 3)` loses them.
+- **Long lines wrap** at ~100 columns — a `|>` pipeline breaks at every stage; a long
+  call, array, or map puts one element per line.
+- **Your surface is kept faithful.** String quoting and the `qq`/`q`/heredoc forms,
+  `qw{…}` word lists, regex literals, numeric spelling, `|>` pipelines, and postfix
+  modifiers (`say(x) if c`) are reprinted *as written*, not rewritten into an equivalent.
+
+Comments are preserved and re-attached by position (leading, same-line trailing, and
+floating). `drang fmt` verifies its own output before writing: if reformatting would drop
+a comment or produce source that no longer parses, it aborts that file untouched (and
+exits non-zero) rather than risk corrupting your code. Formatting is **idempotent** —
+running it on already-formatted source is a no-op.
+
+### `--fix`: migrations
+
+drang has no version pragma. Instead, a language revision that renames or reshapes a
+construct ships a mechanical source rewrite, applied by `drang fmt --fix`. Today there are
+no such rewrites, so `--fix` behaves exactly like `fmt`; when a future revision needs one,
+`drang fmt --fix -w src/` will migrate a whole codebase in a single pass.
 
 ---
 
