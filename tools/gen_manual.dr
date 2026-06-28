@@ -1,0 +1,275 @@
+# gen_manual.dr — render MANUAL.md into a styled docs/manual.html for drang.dev.
+# The drang manual, built by drang. Run from the repo root:  drang tools/gen_manual.dr
+# Covers the Markdown subset the manual actually uses: ATX headings (#..####), fenced
+# code blocks, GFM pipe tables, flat unordered lists, blockquotes, --- rules, and inline
+# code / **bold** / *italic* / [links].
+
+# --- inline helpers ---
+
+fn .esc($s) {
+  $s = replace($s, "&", "&amp;")
+  $s = replace($s, "<", "&lt;")
+  $s = replace($s, ">", "&gt;")
+  $s
+}
+
+# GitHub-style heading slug: lowercase, keep [a-z0-9_], spaces/hyphens -> "-",
+# collapse repeats, trim. Matches the in-doc TOC anchors.
+fn .slug($s) {
+  $allowed := "abcdefghijklmnopqrstuvwxyz0123456789_"
+  $parts := []
+  for $c in chars(lower($s)) {
+    if contains($allowed, $c) { push($parts, $c) }
+    else if $c == " " or $c == "-" { push($parts, "-") }
+  }
+  $out := join($parts, "")
+  while contains($out, "--") { $out = replace($out, "--", "-") }
+  trim($out, "-")
+}
+
+# Inline Markdown -> HTML. A manual char scanner (not regex) so escaping and the
+# code/bold/italic/link tokens compose cleanly. Code spans are literal (escaped, no
+# nested formatting); bold/italic/link inners recurse so `code` works inside them.
+fn .inline($s) {
+  $cs := chars($s)
+  $n := len($cs)
+  $parts := []
+  $i := 0
+  while $i < $n {
+    $c := $cs[$i]
+    if $c == "`" {
+      $j := $i + 1
+      $buf := []
+      while $j < $n and $cs[$j] != "`" { push($buf, $cs[$j]); $j = $j + 1 }
+      if $j < $n {
+        push($parts, "<code>"); push($parts, .esc(join($buf, ""))); push($parts, "</code>")
+        $i = $j + 1
+      } else {
+        push($parts, "`"); $i = $i + 1
+      }
+    } else if $c == "*" and ($i + 1) < $n and $cs[$i + 1] == "*" {
+      $j := $i + 2
+      $buf := []
+      $found := false
+      while $j < $n {
+        if ($j + 1) < $n and $cs[$j] == "*" and $cs[$j + 1] == "*" { $found = true; break }
+        push($buf, $cs[$j]); $j = $j + 1
+      }
+      if $found {
+        push($parts, "<strong>"); push($parts, .inline(join($buf, ""))); push($parts, "</strong>")
+        $i = $j + 2
+      } else {
+        push($parts, "*"); $i = $i + 1
+      }
+    } else if $c == "*" {
+      $j := $i + 1
+      $buf := []
+      $found := false
+      while $j < $n {
+        if $cs[$j] == "*" { $found = true; break }
+        push($buf, $cs[$j]); $j = $j + 1
+      }
+      if $found {
+        push($parts, "<em>"); push($parts, .inline(join($buf, ""))); push($parts, "</em>")
+        $i = $j + 1
+      } else {
+        push($parts, "*"); $i = $i + 1
+      }
+    } else if $c == "[" {
+      $j := $i + 1
+      $txt := []
+      while $j < $n and $cs[$j] != "]" { push($txt, $cs[$j]); $j = $j + 1 }
+      if $j < $n and ($j + 1) < $n and $cs[$j + 1] == "(" {
+        $k := $j + 2
+        $url := []
+        while $k < $n and $cs[$k] != ")" { push($url, $cs[$k]); $k = $k + 1 }
+        if $k < $n {
+          push($parts, "<a href=\""); push($parts, .esc(join($url, ""))); push($parts, "\">")
+          push($parts, .inline(join($txt, ""))); push($parts, "</a>")
+          $i = $k + 1
+        } else {
+          push($parts, "["); $i = $i + 1
+        }
+      } else {
+        push($parts, "["); $i = $i + 1
+      }
+    } else if $c == "&" {
+      push($parts, "&amp;"); $i = $i + 1
+    } else if $c == "<" {
+      push($parts, "&lt;"); $i = $i + 1
+    } else if $c == ">" {
+      push($parts, "&gt;"); $i = $i + 1
+    } else {
+      push($parts, $c); $i = $i + 1
+    }
+  }
+  join($parts, "")
+}
+
+fn .para($buf) {
+  if len($buf) == 0 { return "" }
+  "<p>" ~ .inline(join($buf, " ")) ~ "</p>"
+}
+
+# is this line a GFM table separator row, e.g.  |---|:--:|---|
+fn .isSep($s) {
+  if len($s) == 0 { return false }
+  if !contains($s, "-") { return false }
+  for $c in chars($s) {
+    if !contains("|:- ", $c) { return false }
+  }
+  true
+}
+
+# split a table row into trimmed cells, dropping the empty edges from leading/trailing |
+fn .cells($line) {
+  $raw := split(trim($line), "|")
+  $cs := []
+  for $x in $raw { push($cs, trim($x)) }
+  if len($cs) > 1 and $cs[0] == "" { $cs = $cs[1..(len($cs) - 1)] }
+  if len($cs) > 1 and $cs[len($cs) - 1] == "" { $cs = $cs[0..(len($cs) - 2)] }
+  $cs
+}
+
+# --- block parser ---
+
+$md := read_file("MANUAL.md")
+$lines := lines($md)
+$nl := len($lines)
+$out := []
+$para := []
+$i := 0
+
+while $i < $nl {
+  $line := $lines[$i]
+  $t := trim($line)
+
+  $isFence := starts_with($t, "```")
+  $isHeading := starts_with($t, "#")
+  $isHr := $t == "---"
+  $isQuote := starts_with($t, ">")
+  $isList := starts_with($t, "- ") or starts_with($t, "* ")
+  $isBlank := $t == ""
+  $isTable := contains($t, "|") and ($i + 1) < $nl and .isSep(trim($lines[$i + 1]))
+
+  if $isFence or $isHeading or $isHr or $isQuote or $isList or $isBlank or $isTable {
+    $p := .para($para)
+    if $p != "" { push($out, $p) }
+    $para = []
+  }
+
+  if $isBlank {
+    $i = $i + 1
+  } else if $isFence {
+    $ca := chars($t)
+    $lang := ""
+    if len($ca) > 3 { $lang = trim(join($ca[3..(len($ca) - 1)], "")) }
+    $code := []
+    $j := $i + 1
+    while $j < $nl and !starts_with(trim($lines[$j]), "```") { push($code, $lines[$j]); $j = $j + 1 }
+    $cls := ""
+    if $lang != "" { $cls = " class=\"language-" ~ $lang ~ "\"" }
+    push($out, "<pre><code" ~ $cls ~ ">" ~ .esc(join($code, "\n")) ~ "</code></pre>")
+    $i = $j + 1
+  } else if $isTable {
+    $header := .cells($lines[$i])
+    $rows := []
+    $j := $i + 2
+    while $j < $nl {
+      $rt := trim($lines[$j])
+      if $rt == "" or !contains($rt, "|") { break }
+      push($rows, .cells($lines[$j]))
+      $j = $j + 1
+    }
+    $tb := []
+    push($tb, "<table><thead><tr>")
+    for $h in $header { push($tb, "<th>" ~ .inline($h) ~ "</th>") }
+    push($tb, "</tr></thead><tbody>")
+    for $row in $rows {
+      push($tb, "<tr>")
+      for $cell in $row { push($tb, "<td>" ~ .inline($cell) ~ "</td>") }
+      push($tb, "</tr>")
+    }
+    push($tb, "</tbody></table>")
+    push($out, join($tb, ""))
+    $i = $j
+  } else if $isHeading {
+    $ca := chars($t)
+    $level := 0
+    while $level < len($ca) and $ca[$level] == "#" { $level = $level + 1 }
+    if $level > 6 { $level = 6 }
+    $htext := ""
+    if $level < len($ca) { $htext = trim(join($ca[$level..(len($ca) - 1)], "")) }
+    $id := .slug($htext)
+    $hn := str($level)
+    push($out, "<h" ~ $hn ~ " id=\"" ~ $id ~ "\">" ~ .inline($htext) ~ "</h" ~ $hn ~ ">")
+    $i = $i + 1
+  } else if $isHr {
+    push($out, "<hr>")
+    $i = $i + 1
+  } else if $isQuote {
+    $bq := []
+    while $i < $nl and starts_with(trim($lines[$i]), ">") {
+      $ln := trim($lines[$i])
+      $lc := chars($ln)
+      $content := ""
+      if len($lc) > 1 { $content = trim(join($lc[1..(len($lc) - 1)], "")) }
+      push($bq, .inline($content))
+      $i = $i + 1
+    }
+    push($out, "<blockquote>" ~ join($bq, " ") ~ "</blockquote>")
+  } else if $isList {
+    $items := []
+    while $i < $nl {
+      $lt := trim($lines[$i])
+      if starts_with($lt, "- ") or starts_with($lt, "* ") {
+        $lc := chars($lt)
+        $content := ""
+        if len($lc) > 2 { $content = join($lc[2..(len($lc) - 1)], "") }
+        push($items, "<li>" ~ .inline($content) ~ "</li>")
+        $i = $i + 1
+      } else {
+        break
+      }
+    }
+    push($out, "<ul>" ~ join($items, "") ~ "</ul>")
+  } else {
+    push($para, $t)
+    $i = $i + 1
+  }
+}
+
+$p := .para($para)
+if $p != "" { push($out, $p) }
+$body := join($out, "\n")
+
+# --- HTML shell (same skin as the landing page) ---
+
+$favicon := "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f46e5'/%3E%3Ctext x='16' y='23' font-family='ui-monospace,monospace' font-size='21' font-weight='600' fill='white' text-anchor='middle'%3Ed%3C/text%3E%3C/svg%3E"
+
+$h := []
+push($h, "<!DOCTYPE html>")
+push($h, "<html lang=\"en\">")
+push($h, "<head>")
+push($h, "<meta charset=\"utf-8\">")
+push($h, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+push($h, "<title>drang manual</title>")
+push($h, "<meta name=\"description\" content=\"The drang language manual. A small, parallel, Perl-inspired scripting language for text, glue, and orchestration.\">")
+push($h, "<link rel=\"canonical\" href=\"https://drang.dev/manual.html\">")
+push($h, "<meta name=\"theme-color\" content=\"#fcfcfd\" media=\"(prefers-color-scheme: light)\">")
+push($h, "<meta name=\"theme-color\" content=\"#0e0f13\" media=\"(prefers-color-scheme: dark)\">")
+push($h, "<link rel=\"icon\" href=\"" ~ $favicon ~ "\">")
+push($h, "<link rel=\"stylesheet\" href=\"style.css\">")
+push($h, "</head>")
+push($h, "<body>")
+push($h, "<a class=\"skip\" href=\"#main\">Skip to content</a>")
+push($h, "<header><a class=\"brand\" href=\"/\">drang</a><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><button class=\"toggle\" id=\"theme\" aria-label=\"Toggle dark mode\" title=\"Toggle theme\">◑</button></nav></header>")
+push($h, "<main id=\"main\" class=\"wrap\"><div class=\"prose\">")
+push($h, $body)
+push($h, "</div></main>")
+push($h, "<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.4 · built by drang</div></footer>")
+push($h, "<script src=\"site.js\"></script>")
+push($h, "</body></html>")
+
+write_file("docs/manual.html", join($h, "\n"))
+say("wrote docs/manual.html (" ~ str(len($out)) ~ " blocks)")
