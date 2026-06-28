@@ -2204,10 +2204,23 @@ drang's edition/migration mechanism (`fmt --fix`). Decisions (owner-approved):
 - **Zero config knobs; ship the empty `--fix` hook now** (identity pass + one smoke
   rule), since it's the stated edition mechanism.
 
-Staged plan: (1) comment capture [done], (2) literal/structural provenance, (3) core
-printer, (4) comment associator + drop-guard, (5) wrapping engine (width 100), (6)
-CLI (`drang fmt [-w|--check|-d]`, stdin, dir recursion), (7) test harness + golden
-corpus (round-trip, idempotence `fmt(fmt(x))==fmt(x)`, run-before==run-after on real
-`.dr` files), (8) `--fix` hook. Also surfaced: numeric literals with `_`/hex/exp do
-not lex today (`1_000` → `1` + `_000`) — a latent gap to fix when adding number
-provenance.
+Staged plan — ALL SHIPPED: (1) comment capture ✓, (2) literal/structural provenance ✓
+(faithful Pipe + Interp nodes, Raw on leaf literals, postfix/qw flags — eval unchanged,
+adversarially reviewed sound), (3) core printer (`internal/printer`, precedence-driven
+minimal parens, surface-faithful via Raw) ✓, (4) comment associator + drop-guard ✓
+(side-table cursor: leading/trailing/before-`}`; the guard re-parses output and compares
+the comment multiset — it caught the map-bodied-lambda paren bug), (5) wrapping (width
+100; pipes break with a trailing `|>`, lists go one-per-line, no trailing comma since
+drang calls reject it) ✓, (6) CLI `drang fmt [-w|--check|-l|-d]` + stdin + dir recursion
+✓, (7) tests: reparse + idempotence corpus, run-before==run-after, every bench/examples
+`.dr` formats clean+idempotent ✓, (8) `--fix` AST-rewrite hook (Walk + empty rule set) ✓.
+
+Implementation notes for the record:
+- The eval AST is intentionally lossy, so faithfulness came from per-node *provenance*,
+  NOT un-desugaring (the grain-aligned line: faithful nodes only where desugaring changes
+  tree SHAPE — `|>`→Pipe, interpolation→Interp; flags where only surface differs —
+  postfix modifiers, qw; Raw text on leaf literals). Pipe/Interp lower to the exact
+  pre-existing desugarings in eval/compiler, so the interpreter is byte-identical.
+- Numeric `_`/hex/exp literals still do not lex (`1_000` → `1` + `_000`); fmt stores the
+  current verbatim lexeme as Raw, so it is correct on the subset that parses. Real numeric
+  separators/bases remain a separate, deferred language feature.
