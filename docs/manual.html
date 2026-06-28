@@ -15,17 +15,17 @@
 <a class="skip" href="#main">Skip to content</a>
 <header><a class="brand" href="/">drang</a><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><button class="toggle" id="theme" aria-label="Toggle dark mode" title="Toggle theme">◑</button></nav></header>
 <main id="main" class="wrap"><div class="prose">
-<h1 id="drang-language-manual">drang — Language Manual</h1>
-<p><em>A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration — implemented in Go.</em></p>
+<h1 id="drang-language-manual">drang: Language Manual</h1>
+<p><em>A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration, implemented in Go.</em></p>
 <p><em>Covers drang 0.4.</em></p>
 <blockquote>Every code example in this manual was executed against the interpreter; the shown output is real.</blockquote>
 <h2 id="contents">Contents</h2>
-<ul><li><a href="#introduction">Introduction</a></li><li><a href="#lexical-structure-declarations-types-and-operators">Lexical Structure, Declarations, Types, and Operators</a></li><li><a href="#strings">Strings</a></li><li><a href="#control-flow">Control flow</a></li><li><a href="#functions-lambdas-closures-and-pipelines">Functions, Lambdas, Closures, and Pipelines</a></li><li><a href="#arrays-maps-and-the-collection-toolkit">Arrays, Maps, and the Collection Toolkit</a></li><li><a href="#errors-as-values">Errors as Values</a></li><li><a href="#regular-expressions">Regular expressions</a></li><li><a href="#external-commands-concurrency">External Commands &amp; Concurrency</a></li><li><a href="#in-language-concurrency">In-language concurrency</a></li><li><a href="#files-and-paths">Files and Paths</a></li><li><a href="#json">JSON</a></li><li><a href="#csv">CSV</a></li><li><a href="#date-and-time">Date and time</a></li><li><a href="#hashing-encoding-and-randomness">Hashing, encoding, and randomness</a></li><li><a href="#http-client">HTTP client</a></li><li><a href="#one-liner-mode">One-liner mode</a></li><li><a href="#modules-use">Modules: <code>use</code></a></li><li><a href="#testing-drang-test">Testing: <code>drang test</code></a></li><li><a href="#formatting-drang-fmt">Formatting: <code>drang fmt</code></a></li><li><a href="#quick-reference-builtins">Quick reference: builtins</a></li><li><a href="#not-yet-known-gaps-and-surprises">Not Yet — Known Gaps and Surprises</a></li></ul>
+<ul><li><a href="#introduction">Introduction</a></li><li><a href="#lexical-structure-declarations-types-and-operators">Lexical Structure, Declarations, Types, and Operators</a></li><li><a href="#strings">Strings</a></li><li><a href="#control-flow">Control flow</a></li><li><a href="#functions-lambdas-closures-and-pipelines">Functions, Lambdas, Closures, and Pipelines</a></li><li><a href="#arrays-maps-and-the-collection-toolkit">Arrays, Maps, and the Collection Toolkit</a></li><li><a href="#errors-as-values">Errors as Values</a></li><li><a href="#regular-expressions">Regular expressions</a></li><li><a href="#external-commands-concurrency">External Commands &amp; Concurrency</a></li><li><a href="#in-language-concurrency">In-language concurrency</a></li><li><a href="#files-and-paths">Files and Paths</a></li><li><a href="#json">JSON</a></li><li><a href="#csv">CSV</a></li><li><a href="#date-and-time">Date and time</a></li><li><a href="#hashing-encoding-and-randomness">Hashing, encoding, and randomness</a></li><li><a href="#http-client">HTTP client</a></li><li><a href="#one-liner-mode">One-liner mode</a></li><li><a href="#modules-use">Modules: <code>use</code></a></li><li><a href="#testing-drang-test">Testing: <code>drang test</code></a></li><li><a href="#formatting-drang-fmt">Formatting: <code>drang fmt</code></a></li><li><a href="#quick-reference-builtins">Quick reference: builtins</a></li><li><a href="#not-yet-known-gaps-and-surprises">Not Yet: Known Gaps and Surprises</a></li></ul>
 <h2 id="introduction">Introduction</h2>
-<p>drang is a small, Perl-inspired scripting language for <strong>text processing and system glue</strong> — the niche awk, sed, and Perl one-liners have always owned — implemented in Go. Its tagline is <em>"reads like Ruby, thinks like Perl, runs like Go."</em> It is a personal daily-driver: the language you reach for to wrangle text, shell out to other programs, and orchestrate small jobs.</p>
+<p>drang is a small, Perl-inspired scripting language for <strong>text processing and system glue</strong> (the niche awk, sed, and Perl one-liners have always owned) implemented in Go. Its tagline is <em>"reads like Ruby, thinks like Perl, runs like Go."</em> It is a personal daily-driver: the language you reach for to wrangle text, shell out to other programs, and orchestrate small jobs.</p>
 <p>Four ideas define it:</p>
-<ul><li><strong>Perl's soul, not its warts.</strong> First-class regex, terse one-liners, a single <code>$</code> sigil on every variable, and string interpolation — but without scalar/list context, typeglobs, <code>bless</code>, or the punctuation-variable zoo. One sigil covers all data: <code>$x</code> whether it holds a number, string, array, or hash. (Names carry their kind: <code>$</code> for data, <code>.</code> for your own functions, bare for builtins — see Functions.)</li><li><strong>Effortless parallelism.</strong> Real multi-core execution with no GIL, made safe <em>by subtraction</em> — top-level bindings are frozen constants and there are no mutable globals, so data-parallel combinators like <code>pmap</code> run lock-free.</li><li><strong>First-class errors.</strong> Failures are ordinary values you can inspect (<code>is_err</code>, <code>err_msg</code>, <code>err_code</code>) or propagate with a trailing <code>?</code>. There is no <code>$@</code> global and no exceptions-by-default; a dropped failure is a deliberate choice, not an accident.</li><li><strong>Complete via Go.</strong> The standard library is a curated binding over Go's — strings, files, <code>os/exec</code>, regex (RE2) — not a from-scratch reimplementation.</li></ul>
-<p>Under the hood drang runs on a tree-walking interpreter alongside a register bytecode VM kept byte-for-byte in lockstep with it, but that is an implementation detail — the language behaves identically either way.</p>
+<ul><li><strong>Perl's soul, not its warts.</strong> First-class regex, terse one-liners, a single <code>$</code> sigil on every variable, and string interpolation, but without scalar/list context, typeglobs, <code>bless</code>, or the punctuation-variable zoo. One sigil covers all data: <code>$x</code> whether it holds a number, string, array, or hash. (Names carry their kind: <code>$</code> for data, <code>.</code> for your own functions, bare for builtins; see Functions.)</li><li><strong>Effortless parallelism.</strong> Real multi-core execution with no GIL, made safe <em>by subtraction</em>: top-level bindings are frozen constants and there are no mutable globals, so data-parallel combinators like <code>pmap</code> run lock-free.</li><li><strong>First-class errors.</strong> Failures are ordinary values you can inspect (<code>is_err</code>, <code>err_msg</code>, <code>err_code</code>) or propagate with a trailing <code>?</code>. There is no <code>$@</code> global and no exceptions-by-default; a dropped failure is a deliberate choice, not an accident.</li><li><strong>Complete via Go.</strong> The standard library is a curated binding over Go's (strings, files, <code>os/exec</code>, regex (RE2)) not a from-scratch reimplementation.</li></ul>
+<p>Under the hood drang runs on a tree-walking interpreter alongside a register bytecode VM kept byte-for-byte in lockstep with it, but that is an implementation detail. The language behaves identically either way.</p>
 <h3 id="running-programs">Running programs</h3>
 <p>drang reads a program from one of four places.</p>
 <p><strong>A file</strong> (<code>.dr</code> extension):</p>
@@ -33,16 +33,16 @@
 <p><strong>Inline</strong>, with <code>-e</code>:</p>
 <pre><code>drang -e 'say("hello, world")'</code></pre>
 <pre><code>hello, world</code></pre>
-<p><strong>Piped stdin</strong> — when stdin is not a terminal, drang runs it as the program, so <code>cat foo.dr | drang</code> works:</p>
+<p><strong>Piped stdin</strong>: when stdin is not a terminal, drang runs it as the program, so <code>cat foo.dr | drang</code> works:</p>
 <pre><code>echo 'say("from stdin")' | drang</code></pre>
 <pre><code>from stdin</code></pre>
-<p><strong>The REPL</strong> — run <code>drang</code> with no program on an interactive terminal (this is also what double-clicking the executable does), or force it with <code>drang --repl</code>. State persists across submissions:</p>
+<p><strong>The REPL</strong>: run <code>drang</code> with no program on an interactive terminal (this is also what double-clicking the executable does), or force it with <code>drang --repl</code>. State persists across submissions:</p>
 <pre><code>drang&gt; $x := 21
 21
 drang&gt; $x * 2
 42
 drang&gt; exit</code></pre>
-<p>Finally, <strong>a standalone executable</strong>: <code>drang build app.dr -o app</code> compiles a script into a single self-contained binary — the drang runtime with your program embedded — that needs no separate interpreter. Running it executes the embedded program, with arguments exposed as <code>$ARGV</code>. The build validates that the script parses and refuses to overwrite the source or the running interpreter; Windows and Linux are supported natively, and on macOS it best-effort ad-hoc re-signs the result.</p>
+<p>Finally, <strong>a standalone executable</strong>: <code>drang build app.dr -o app</code> compiles a script into a single self-contained binary (the drang runtime with your program embedded) that needs no separate interpreter. Running it executes the embedded program, with arguments exposed as <code>$ARGV</code>. The build validates that the script parses and refuses to overwrite the source or the running interpreter; Windows and Linux are supported natively, and on macOS it best-effort ad-hoc re-signs the result.</p>
 <h3 id="flags">Flags</h3>
 <p>Leading flags are consumed up to the first non-flag token (the program); everything after the program becomes script arguments.</p>
 <table><thead><tr><th>Flag</th><th>Effect</th></tr></thead><tbody><tr><td><code>--run</code></td><td>Run the program (the default; rarely written explicitly).</td></tr><tr><td><code>--ast</code></td><td>Print the parsed AST instead of running.</td></tr><tr><td><code>--tokens</code></td><td>Print the token stream instead of running.</td></tr><tr><td><code>--version</code>, <code>-V</code></td><td>Print the version and exit.</td></tr><tr><td><code>--help</code>, <code>-h</code></td><td>Print usage and exit.</td></tr></tbody></table>
@@ -56,7 +56,7 @@ drang&gt; exit</code></pre>
 <pre><code>foo bar</code></pre>
 <pre><code>drang -e 'say($ENV["FOO"])'    # with FOO=bar in the environment</code></pre>
 <pre><code>bar</code></pre>
-<p>For real command-line tools, <code>parse_args</code> turns <code>$ARGV</code> into a flat map — <code>--flag</code> becomes <code>true</code>, <code>--key=val</code> (or <code>--key val</code> when <code>key</code> is named in the optional second argument) becomes a string, and the leftover positionals collect under <code>"_"</code>:</p>
+<p>For real command-line tools, <code>parse_args</code> turns <code>$ARGV</code> into a flat map: <code>--flag</code> becomes <code>true</code>, <code>--key=val</code> (or <code>--key val</code> when <code>key</code> is named in the optional second argument) becomes a string, and the leftover positionals collect under <code>"_"</code>:</p>
 <pre><code>drang -e '$o := parse_args($ARGV, ["out"]); say($o.out); say($o["_"])' --out=build x.dr y.dr</code></pre>
 <pre><code>build
 [x.dr, y.dr]</code></pre>
@@ -67,7 +67,7 @@ say($d.users[1].name)
 say("count: ${len($d.users)}")</code></pre>
 <pre><code>alan
 count: 2</code></pre>
-<p>Subroutines use <code>fn</code> and carry a leading-dot sigil (<code>fn .name</code>, called <code>.name</code> — more on the three name sigils later), are first-class values, and pair with the higher-order combinators (<code>map</code>, <code>filter</code>, <code>reduce</code>, …) using <code>|args| body</code> lambdas. Loops are <code>for</code>-in over ranges, with postfix modifiers for one-liners:</p>
+<p>Subroutines use <code>fn</code> and carry a leading-dot sigil (<code>fn .name</code>, called <code>.name</code>, more on the three name sigils later), are first-class values, and pair with the higher-order combinators (<code>map</code>, <code>filter</code>, <code>reduce</code>, …) using <code>|args| body</code> lambdas. Loops are <code>for</code>-in over ranges, with postfix modifiers for one-liners:</p>
 <pre><code class="language-drang">$xs := [1, 2, 3, 4]
 say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))
 for $n in 1..5 { say($n) if $n % 2 == 1 }</code></pre>
@@ -75,7 +75,7 @@ for $n in 1..5 { say($n) if $n % 2 == 1 }</code></pre>
 1
 3
 5</code></pre>
-<p>And the headline trick — counting words across files <strong>in parallel</strong>, propagating any read failure with <code>?</code>, with no locks and no threads to manage:</p>
+<p>And the headline trick: counting words across files <strong>in parallel</strong>, propagating any read failure with <code>?</code>, with no locks and no threads to manage:</p>
 <pre><code class="language-drang">fn .wc($path) { len(split(trim(read_file($path)?), " ")) }
 $files ::= ["a.txt", "b.txt"]
 $counts := pmap($files, .wc)
@@ -89,7 +89,7 @@ say("total:", reduce($counts, 0, |$a, $b| $a + $b))</code></pre>
 <pre><code class="language-drang"># a full-line comment
 $x := 10   # a trailing comment</code></pre>
 <h3 id="statement-termination">Statement termination</h3>
-<p>A newline ends a statement whenever the line <em>could</em> end there — that is, when the previous token is something that can finish an expression (a literal, a <code>$var</code>, an identifier, a closing <code>)</code> <code>}</code> <code>]</code>, or a <code>?</code>). Inside <code>(</code> or <code>[</code>, newlines are insignificant, so long calls and pipelines wrap freely; inside <code>{</code> blocks and at top level they terminate. A <code>;</code> also separates statements, letting you put several on one line:</p>
+<p>A newline ends a statement whenever the line <em>could</em> end there: that is, when the previous token is something that can finish an expression (a literal, a <code>$var</code>, an identifier, a closing <code>)</code> <code>}</code> <code>]</code>, or a <code>?</code>). Inside <code>(</code> or <code>[</code>, newlines are insignificant, so long calls and pipelines wrap freely; inside <code>{</code> blocks and at top level they terminate. A <code>;</code> also separates statements, letting you put several on one line:</p>
 <pre><code class="language-drang">$a := 1; $b := 2; say($a + $b)</code></pre>
 <pre><code>3</code></pre>
 <h3 id="declarations-and-assignment">Declarations and assignment</h3>
@@ -110,15 +110,15 @@ $k = 2</code></pre>
   at &lt;-e&gt;:2:6
     $k = 2
          ^</code></pre>
-<p>A constant is <strong>deeply immutable</strong>, not just an unrebindable name: if you bind a container to a constant, its contents are frozen too. Mutating one — by index/field assignment, <code>push</code>, <code>pop</code>, or <code>delete</code> — is an error.</p>
+<p>A constant is <strong>deeply immutable</strong>, not just an unrebindable name: if you bind a container to a constant, its contents are frozen too. Mutating one (by index/field assignment, <code>push</code>, <code>pop</code>, or <code>delete</code>) is an error.</p>
 <pre><code class="language-drang">$TABLE ::= {"a": 1, "b": 2}
 $TABLE["c"] = 3            # error: cannot modify a frozen map
 $NAMES ::= ["ana", "bo"]
 push($NAMES, "cy")        # error value: cannot push to a frozen array</code></pre>
-<p>This is what makes a constant safe to share read-only across <code>pmap</code>/<code>spawn</code> workers without copying or locking — a worker reads it freely, and an accidental write fails loudly instead of racing. (Mutable <code>:=</code> containers are <em>not</em> frozen; sharing a mutable container into parallel callbacks and writing it is still a data race you must avoid — collect each callback's return value instead.) Freezing follows the object: binding an existing mutable container to a constant (<code>$C ::= $existing</code>) freezes that object, so <code>$existing</code> becomes read-only too — bind a fresh literal, or a copy, if you need the original to stay mutable.</p>
+<p>This is what makes a constant safe to share read-only across <code>pmap</code>/<code>spawn</code> workers without copying or locking: a worker reads it freely, and an accidental write fails loudly instead of racing. (Mutable <code>:=</code> containers are <em>not</em> frozen; sharing a mutable container into parallel callbacks and writing it is still a data race you must avoid: collect each callback's return value instead.) Freezing follows the object: binding an existing mutable container to a constant (<code>$C ::= $existing</code>) freezes that object, so <code>$existing</code> becomes read-only too. Bind a fresh literal, or a copy, if you need the original to stay mutable.</p>
 <h3 id="value-types-at-a-glance">Value types at a glance</h3>
 <table><thead><tr><th>Type</th><th>Example literal / how you get one</th></tr></thead><tbody><tr><td><code>nil</code></td><td>the absent/empty value (e.g. a missing map key); <strong>no <code>nil</code> literal keyword</strong></td></tr><tr><td><code>bool</code></td><td><code>true</code>, <code>false</code></td></tr><tr><td><code>int</code></td><td><code>42</code> (64-bit signed)</td></tr><tr><td><code>float</code></td><td><code>3.5</code> (64-bit)</td></tr><tr><td><code>string</code></td><td><code>"hello"</code></td></tr><tr><td><code>error</code></td><td>from <code>fail("...")</code> and fallible builtins</td></tr><tr><td><code>array</code></td><td><code>[1, 2, 3]</code></td></tr><tr><td><code>map</code></td><td><code>{"a": 1, "b": 2}</code> (insertion-ordered)</td></tr><tr><td><code>range</code></td><td><code>1..5</code> (inclusive)</td></tr><tr><td><code>function</code></td><td>a lambda `</td><td>$x</td><td>$x * 2<code>, or </code>fn .name<code> declared and referenced as </code>.name`</td></tr><tr><td><code>regex</code></td><td><code>re("[0-9]+")</code></td></tr></tbody></table>
-<p>(The concurrency section adds channel, task, and process handles.) <code>nil</code> is a real runtime value but has no source literal — writing <code>nil</code> yields <code>undefined: nil</code>. You obtain it from, e.g., an absent map key:</p>
+<p>(The concurrency section adds channel, task, and process handles.) <code>nil</code> is a real runtime value but has no source literal: writing <code>nil</code> yields <code>undefined: nil</code>. You obtain it from, e.g., an absent map key:</p>
 <pre><code class="language-drang">$m := {}
 say($m["absent"])</code></pre>
 <pre><code>nil</code></pre>
@@ -133,7 +133,7 @@ say(1..3)</code></pre>
 {a: 1, b: 2}
 1..3</code></pre>
 <h3 id="truthiness">Truthiness</h3>
-<p>Falsy: <code>nil</code>, <code>false</code>, <code>0</code>, <code>0.0</code>, <code>""</code>, and <strong>empty</strong> containers (<code>[]</code>, <code>{}</code>, and an empty range). Everything else is truthy — including non-empty containers, functions, and <em>error values</em>.</p>
+<p>Falsy: <code>nil</code>, <code>false</code>, <code>0</code>, <code>0.0</code>, <code>""</code>, and <strong>empty</strong> containers (<code>[]</code>, <code>{}</code>, and an empty range). Everything else is truthy, including non-empty containers, functions, and <em>error values</em>.</p>
 <pre><code class="language-drang">fn .t($v) { if $v { say("truthy") } else { say("falsy") } }
 $m := {}
 .t($m["missing"]); .t(false); .t(0); .t(0.0); .t(""); .t([]); .t({})
@@ -151,21 +151,21 @@ truthy
 truthy
 truthy
 truthy</code></pre>
-<p>An error is truthy, so an <code>if</code> on it takes the true branch — use <code>is_err</code> to test for errors rather than truthiness:</p>
+<p>An error is truthy, so an <code>if</code> on it takes the true branch. Use <code>is_err</code> to test for errors rather than truthiness:</p>
 <pre><code class="language-drang">$e := fail("boom")
 if $e { say("err is truthy") }
 say(is_err($e))</code></pre>
 <pre><code>err is truthy
 true</code></pre>
 <h3 id="operators">Operators</h3>
-<p><strong>Arithmetic</strong> <code>+ - * / %</code>. With two ints, <code>+ - * %</code> stay int. The big gotcha: <code>/</code> between two ints yields a <strong>float</strong> — there is <strong>no integer-division operator</strong>. For a truncated integer quotient, wrap with <code>int(...)</code>.</p>
+<p><strong>Arithmetic</strong> <code>+ - * / %</code>. With two ints, <code>+ - * %</code> stay int. The big gotcha: <code>/</code> between two ints yields a <strong>float</strong>. There is <strong>no integer-division operator</strong>. For a truncated integer quotient, wrap with <code>int(...)</code>.</p>
 <pre><code class="language-drang">say(7 + 2, 7 - 2, 7 * 2, 7 % 2)   # int in, int out
 say(7 / 2)                        # / always produces a float
 say(int(7 / 2))                   # truncate back to int</code></pre>
 <pre><code>9 5 14 1
 3.5
 3</code></pre>
-<p><code>%</code> requires integer operands. Division or modulo by zero is a runtime error (<code>division by zero</code> / <code>modulo by zero</code>). Arithmetic operators do not coerce strings — <code>"a" + "b"</code> errors; use <code>~</code> to concatenate.</p>
+<p><code>%</code> requires integer operands. Division or modulo by zero is a runtime error (<code>division by zero</code> / <code>modulo by zero</code>). Arithmetic operators do not coerce strings: <code>"a" + "b"</code> errors; use <code>~</code> to concatenate.</p>
 <p><strong>String concat</strong> <code>~</code>:</p>
 <pre><code class="language-drang">say("foo" ~ "bar" ~ "!")</code></pre>
 <pre><code>foobar!</code></pre>
@@ -174,7 +174,7 @@ say(int(7 / 2))                   # truncate back to int</code></pre>
 say(1 &lt;=&gt; 2, 2 &lt;=&gt; 2, 3 &lt;=&gt; 2)</code></pre>
 <pre><code>true true true
 -1 0 1</code></pre>
-<p><strong>Logical</strong> <code>and</code> / <code>or</code> / <code>not</code> (and <code>!</code> as a prefix synonym for <code>not</code>). <code>and</code>/<code>or</code> short-circuit — the right side is not evaluated when the left already decides the result:</p>
+<p><strong>Logical</strong> <code>and</code> / <code>or</code> / <code>not</code> (and <code>!</code> as a prefix synonym for <code>not</code>). <code>and</code>/<code>or</code> short-circuit: the right side is not evaluated when the left already decides the result:</p>
 <pre><code class="language-drang">fn .boom() { say("boom ran"); true }
 say(false and .boom())
 say(true or .boom())
@@ -182,7 +182,7 @@ say(!true, not false)</code></pre>
 <pre><code>false
 true
 false true</code></pre>
-<p>(<code>boom ran</code> never prints — both calls are short-circuited.)</p>
+<p>(<code>boom ran</code> never prints, both calls are short-circuited.)</p>
 <p><strong>Compound assignment</strong> <code>+= -= *= /=</code>. Note that <code>/=</code> follows <code>/</code>'s float rule:</p>
 <pre><code class="language-drang">$n := 10
 $n += 5    # 15
@@ -195,8 +195,8 @@ say($n)</code></pre>
 <pre><code class="language-drang">say(len(1..5))</code></pre>
 <pre><code>5</code></pre>
 <h3 id="what-is-not-in-the-language">What is <em>not</em> in the language</h3>
-<p>These are deliberate omissions — each is a parse error, not a missing feature you can polyfill with syntax:</p>
-<ul><li><strong>No ternary</strong> <code>?: </code> — use <code>if/else</code>.</li><li><strong>No exponent</strong> <code>**</code> — there is no power operator.</li><li><strong>No bitwise</strong> operators (<code>&amp;</code>, <code>|</code>, <code>^</code>, <code>&lt;&lt;</code>, <code>&gt;&gt;</code>).</li><li><strong>No increment/decrement</strong> <code>++</code> / <code>--</code> — use <code>+= 1</code> / <code>-= 1</code>.</li><li><strong>No Perl regex operators</strong> (<code>=~</code>, <code>s///</code>) or <code>$1..$n</code> capture variables — drang uses <code>qr//</code> literals with the <code>match</code>/<code>gsub</code>/<code>matches</code>/<code>find_all</code> builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.</li></ul>
+<p>These are deliberate omissions. Each is a parse error, not a missing feature you can polyfill with syntax:</p>
+<ul><li><strong>No ternary</strong> <code>?: </code>: use <code>if/else</code>.</li><li><strong>No exponent</strong> <code>**</code>: there is no power operator.</li><li><strong>No bitwise</strong> operators (<code>&amp;</code>, <code>|</code>, <code>^</code>, <code>&lt;&lt;</code>, <code>&gt;&gt;</code>).</li><li><strong>No increment/decrement</strong> <code>++</code> / <code>--</code>: use <code>+= 1</code> / <code>-= 1</code>.</li><li><strong>No Perl regex operators</strong> (<code>=~</code>, <code>s///</code>) or <code>$1..$n</code> capture variables: drang uses <code>qr//</code> literals with the <code>match</code>/<code>gsub</code>/<code>matches</code>/<code>find_all</code> builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.</li></ul>
 <pre><code class="language-drang">say(2 ** 3)</code></pre>
 <pre><code># parse errors in &lt;-e&gt;
 line 1: unexpected STAR "*"
@@ -209,7 +209,7 @@ line 2: unexpected PLUS "+"</code></pre>
 <h2 id="strings">Strings</h2>
 <p>drang strings are UTF-8 text. The most common form is a double-quoted literal, which both processes escapes and interpolates <code>$</code> expressions. Several quote operators and heredocs give you raw, interpolated, and word-list variants.</p>
 <h3 id="string-literals-and-the-lenient-escape-policy">String literals and the lenient escape policy</h3>
-<p>Inside <code>"..."</code>, exactly five escapes are decoded: <code>\n</code>, <code>\t</code>, <code>\r</code>, <code>\\</code>, and <code>\"</code>. Any other backslash escape is <strong>left intact</strong> — the backslash and the following character are kept verbatim. This "lenient" policy is deliberate: it makes regex classes and Windows paths far less painful, since you don't have to double every backslash.</p>
+<p>Inside <code>"..."</code>, exactly five escapes are decoded: <code>\n</code>, <code>\t</code>, <code>\r</code>, <code>\\</code>, and <code>\"</code>. Any other backslash escape is <strong>left intact</strong>: the backslash and the following character are kept verbatim. This "lenient" policy is deliberate: it makes regex classes and Windows paths far less painful, since you don't have to double every backslash.</p>
 <pre><code class="language-drang">say("a\tb\nc")
 say("\d+")</code></pre>
 <pre><code>a	b
@@ -234,12 +234,12 @@ $x stays literal, 42 splices</code></pre>
 <pre><code class="language-drang">$a := [10, 20, 30]
 say("second is ${$a[1]}")</code></pre>
 <pre><code>second is 20</code></pre>
-<p>One limitation: a <code>${...}</code> body cannot itself contain a double-quoted string while inside a <code>"..."</code> literal — the nested <code>"</code> confuses brace matching and you get an <code>unterminated ${...}</code> parse error. Reach for <code>qq{...}</code> (a different delimiter) when the interpolated expression needs a string literal:</p>
+<p>One limitation: a <code>${...}</code> body cannot itself contain a double-quoted string while inside a <code>"..."</code> literal. The nested <code>"</code> confuses brace matching and you get an <code>unterminated ${...}</code> parse error. Reach for <code>qq{...}</code> (a different delimiter) when the interpolated expression needs a string literal:</p>
 <pre><code class="language-drang">say(qq{up is ${upper("hi")}})</code></pre>
 <pre><code>up is HI</code></pre>
 <h3 id="quote-operators">Quote operators</h3>
 <p>Three quote operators avoid escaping gymnastics. The delimiter follows the operator with <strong>no space</strong>; allowed delimiters are <code>( [ { / |</code>. The paired ones (<code>()</code>, <code>[]</code>, <code>{}</code>) <strong>nest</strong>; <code>/</code> and <code>|</code> simply run to the next matching delimiter.</p>
-<ul><li><strong><code>q{...}</code></strong> — raw. No interpolation, no escape processing at all.</li><li><strong><code>qq{...}</code></strong> — interpolated, exactly like <code>"..."</code>.</li><li><strong><code>qw{...}</code></strong> — whitespace-split word list, producing an <strong>array</strong>.</li></ul>
+<ul><li><strong><code>q{...}</code></strong>: raw. No interpolation, no escape processing at all.</li><li><strong><code>qq{...}</code></strong>: interpolated, exactly like <code>"..."</code>.</li><li><strong><code>qw{...}</code></strong>: whitespace-split word list, producing an <strong>array</strong>.</li></ul>
 <pre><code class="language-drang">$x := 9
 say(q{no $x interp, \n stays literal})
 say(qq{x=$x and a \t tab})
@@ -255,7 +255,7 @@ x=9 and a 	 tab
 say(qq|x is ${3 + 4}|)</code></pre>
 <pre><code>outer {inner} done
 x is 7</code></pre>
-<p><code>qw{...}</code> is a real array — splits on runs of whitespace and works with the usual array tools:</p>
+<p><code>qw{...}</code> is a real array: splits on runs of whitespace and works with the usual array tools:</p>
 <pre><code class="language-drang">$w := qw{one  two   three}
 say(len($w))
 say($w[1])
@@ -263,10 +263,10 @@ say(join(qw{a b c}, "+"))</code></pre>
 <pre><code>3
 two
 a+b+c</code></pre>
-<p>Note: the quote body is taken literally — there is no backslash escaping of the delimiter itself, so pick a delimiter the content avoids (or a nesting paired one).</p>
+<p>Note: the quote body is taken literally: there is no backslash escaping of the delimiter itself, so pick a delimiter the content avoids (or a nesting paired one).</p>
 <h3 id="heredocs">Heredocs</h3>
 <p>A heredoc starts with <code>&lt;&lt;TAG</code> and runs on the following lines until a line equal to <code>TAG</code>. The opener <strong>must be the last thing on its line</strong>. Forms:</p>
-<ul><li><strong><code>&lt;&lt;END</code></strong> and <strong><code>&lt;&lt;"END"</code></strong> — interpolate, like <code>qq</code>/<code>"..."</code>.</li><li><strong><code>&lt;&lt;'END'</code></strong> — raw, like <code>q</code>.</li><li><strong><code>&lt;&lt;~END</code></strong> — strips the common leading indentation of the body (the terminator may be indented too).</li></ul>
+<ul><li><strong><code>&lt;&lt;END</code></strong> and <strong><code>&lt;&lt;"END"</code></strong>: interpolate, like <code>qq</code>/<code>"..."</code>.</li><li><strong><code>&lt;&lt;'END'</code></strong>: raw, like <code>q</code>.</li><li><strong><code>&lt;&lt;~END</code></strong>: strips the common leading indentation of the body (the terminator may be indented too).</li></ul>
 <pre><code class="language-drang">$name := "world"
 $msg := &lt;&lt;END
 Hello, $name!
@@ -300,7 +300,7 @@ say("héllo"[1])        # é      (rune-aware)
 say("hello"[1..3])     # ell    (inclusive)
 say("héllo"[0..1])     # hé
 say("hi"[9] // "?")    # ?      (out of range -&gt; catchable error)</code></pre>
-<p>Indexing is by Unicode <strong>code point</strong> (rune), not grapheme cluster: a character built from several code points — a combining mark (<code>e</code>+◌́), a flag, or a ZWJ emoji — spans more than one index. Indexing reads only — <code>s[i] = …</code> is not assignment; build a new string instead.</p>
+<p>Indexing is by Unicode <strong>code point</strong> (rune), not grapheme cluster: a character built from several code points, a combining mark (<code>e</code>+◌́), a flag, or a ZWJ emoji, spans more than one index. Indexing reads only: <code>s[i] = …</code> is not assignment; build a new string instead.</p>
 <h3 id="string-builtins">String builtins</h3>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Notes</th></tr></thead><tbody><tr><td><code>upper</code> / <code>lower</code></td><td><code>(s)</code></td><td>ASCII/Unicode case fold</td></tr><tr><td><code>trim</code></td><td><code>(s, cutset?)</code></td><td>trims whitespace, or the given cutset of chars</td></tr><tr><td><code>split</code></td><td><code>(s, sep?)</code></td><td>no <code>sep</code> → split on whitespace runs; <code>""</code> → split into runes; else split on <code>sep</code></td></tr><tr><td><code>join</code></td><td><code>(array, sep?)</code></td><td>renders each element and joins with <code>sep</code> (default <code>""</code>)</td></tr><tr><td><code>replace</code></td><td><code>(s, old, new)</code></td><td>replaces all occurrences</td></tr><tr><td><code>contains</code></td><td><code>(s, needle)</code></td><td>substring test (also works on arrays)</td></tr><tr><td><code>starts_with</code> / <code>ends_with</code></td><td><code>(s, prefix/suffix)</code></td><td>boolean</td></tr><tr><td><code>repeat</code></td><td><code>(s, n)</code></td><td><code>n</code> copies; <code>n</code> must be an int</td></tr><tr><td><code>chars</code></td><td><code>(s)</code></td><td>array of single-rune strings</td></tr><tr><td><code>lines</code></td><td><code>(s)</code></td><td>CRLF-normalized; drops one trailing newline; <code>""</code> → <code>[]</code></td></tr><tr><td><code>format</code></td><td><code>(template, args...)</code></td><td><code>{}</code> placeholders; counts must match</td></tr></tbody></table>
 <pre><code class="language-drang">say(upper("Hi"))
@@ -326,7 +326,7 @@ true
 ababab
 [h, é, y]
 [a, b, c]</code></pre>
-<p>Note <code>join</code> is polymorphic: <code>join(array, sep)</code> is the string join shown above, but <code>join</code> called on plain string arguments instead joins them as <strong>path</strong> components — see the filesystem section.</p>
+<p>Note <code>join</code> is polymorphic: <code>join(array, sep)</code> is the string join shown above, but <code>join</code> called on plain string arguments instead joins them as <strong>path</strong> components, see the filesystem section.</p>
 <h3 id="format-and-its-placeholders"><code>format</code> and its placeholders</h3>
 <p><code>format</code> substitutes each <code>{}</code> placeholder with the next argument. Use <code>{{</code> and <code>}}</code> for literal braces.</p>
 <pre><code class="language-drang">say(format("{} + {} = {}", 2, 3, 5))
@@ -334,9 +334,9 @@ say(format("set {{x}} to {}", 9))</code></pre>
 <pre><code>2 + 3 = 5
 set {x} to 9</code></pre>
 <h4 id="format-specs-spec">Format specs: <code>{:spec}</code></h4>
-<p>A placeholder may carry a <strong>format spec</strong> after a colon — <code>{:spec}</code> — to control width, alignment, precision, sign, and number base. The grammar is a Python/Rust-inspired subset:</p>
+<p>A placeholder may carry a <strong>format spec</strong> after a colon (<code>{:spec}</code>) to control width, alignment, precision, sign, and number base. The grammar is a Python/Rust-inspired subset:</p>
 <pre><code>{:[[fill]align][sign][#][0][width][.precision][type]}</code></pre>
-<ul><li><strong>align</strong> — <code>&lt;</code> left, <code>&gt;</code> right, <code>^</code> center. Numbers default to right, everything else to left.</li><li><strong>fill</strong> — any character placed <em>before</em> an align char (<code>{:*^10}</code> centers with <code>*</code>); defaults to a space.</li><li><strong>sign</strong> — <code>+</code> shows a sign on positives too; a space reserves a column for it.</li><li><strong><code>#</code></strong> — alternate form (<code>0x</code> / <code>0o</code> / <code>0b</code> prefixes for the <code>x</code> / <code>o</code> / <code>b</code> types).</li><li><strong><code>0</code></strong> — sign-aware zero-padding to the width.</li><li><strong>width</strong> / <strong><code>.precision</code></strong> — minimum field width, and decimal places (floats) or max length (strings).</li><li><strong>type</strong> — <code>d</code> int · <code>b</code> / <code>o</code> / <code>x</code> / <code>X</code> binary/octal/hex · <code>f</code> / <code>e</code> / <code>g</code> (and <code>F</code> / <code>E</code> / <code>G</code>) float · <code>s</code> string · <code>%</code> percent (×100 with a <code>%</code> suffix).</li></ul>
+<ul><li><strong>align</strong>: <code>&lt;</code> left, <code>&gt;</code> right, <code>^</code> center. Numbers default to right, everything else to left.</li><li><strong>fill</strong>: any character placed <em>before</em> an align char (<code>{:*^10}</code> centers with <code>*</code>); defaults to a space.</li><li><strong>sign</strong>: <code>+</code> shows a sign on positives too; a space reserves a column for it.</li><li><strong><code>#</code></strong>: alternate form (<code>0x</code> / <code>0o</code> / <code>0b</code> prefixes for the <code>x</code> / <code>o</code> / <code>b</code> types).</li><li><strong><code>0</code></strong>: sign-aware zero-padding to the width.</li><li><strong>width</strong> / <strong><code>.precision</code></strong>: minimum field width, and decimal places (floats) or max length (strings).</li><li><strong>type</strong>: <code>d</code> int · <code>b</code> / <code>o</code> / <code>x</code> / <code>X</code> binary/octal/hex · <code>f</code> / <code>e</code> / <code>g</code> (and <code>F</code> / <code>E</code> / <code>G</code>) float · <code>s</code> string · <code>%</code> percent (×100 with a <code>%</code> suffix).</li></ul>
 <pre><code class="language-drang">say(format("{:.2f}", 3.14159))      # fixed decimals
 say(format("[{:&gt;8}]", "hi"))        # right-align in a field of 8
 say(format("[{:*^9}]", "hi"))       # center, '*' fill
@@ -351,13 +351,13 @@ say(format("{:.1%}", 0.1234))       # percent</code></pre>
 0xff
 +42
 12.3%</code></pre>
-<p>A spec that doesn't fit the value is a catchable error — <code>{:d}</code> on a string, or an unknown type, returns an <code>Err</code> (recover with <code>//</code>, propagate with <code>?</code>).</p>
-<p>The number of <code>{}</code> placeholders must equal the number of arguments — otherwise <code>format</code> returns an <strong>error value</strong> rather than silently dropping or emitting literal braces. This deliberately catches the printf habit (<code>%s</code> has no <code>{}</code>):</p>
+<p>A spec that doesn't fit the value is a catchable error: <code>{:d}</code> on a string, or an unknown type, returns an <code>Err</code> (recover with <code>//</code>, propagate with <code>?</code>).</p>
+<p>The number of <code>{}</code> placeholders must equal the number of arguments. Otherwise <code>format</code> returns an <strong>error value</strong> rather than silently dropping or emitting literal braces. This deliberately catches the printf habit (<code>%s</code> has no <code>{}</code>):</p>
 <pre><code class="language-drang">say(format("{} and {}", 1))
 say(format("%s", 5))</code></pre>
 <pre><code>error: format: template has 2 placeholder(s) but got 1 argument(s)
 error: format: template has 0 placeholder(s) but got 1 argument(s)</code></pre>
-<p>The result is a regular error value (the program does not crash); it propagates through <code>?</code> like any other drang error — see the error-handling section.</p>
+<p>The result is a regular error value (the program does not crash); it propagates through <code>?</code> like any other drang error, see the error-handling section.</p>
 <hr>
 <h2 id="control-flow">Control flow</h2>
 <p>Control flow in drang is built from <em>statements</em>, not expressions. <code>if</code>, <code>while</code>, and <code>for</code> produce no value <em>as an expression</em>, so you cannot bind one to a variable or use it inline:</p>
@@ -365,7 +365,7 @@ error: format: template has 0 placeholder(s) but got 1 argument(s)</code></pre>
 <pre><code># parse errors in &lt;-e&gt;
 line 1: unexpected IF "if"
 line 1: expected end of statement, got INT "1"</code></pre>
-<p>Use a plain assignment inside the branches instead. (A function still returns the value of its last <em>statement</em>, so an <code>if</code>/<code>else</code> in <strong>tail position</strong> does hand its taken branch out — see <a href="#implicit-and-explicit-return">Implicit and explicit return</a>. The restriction is only on using <code>if</code> <em>inline</em>, mid-expression.)</p>
+<p>Use a plain assignment inside the branches instead. (A function still returns the value of its last <em>statement</em>, so an <code>if</code>/<code>else</code> in <strong>tail position</strong> does hand its taken branch out, see <a href="#implicit-and-explicit-return">Implicit and explicit return</a>. The restriction is only on using <code>if</code> <em>inline</em>, mid-expression.)</p>
 <h3 id="if-else">if / else</h3>
 <p><code>if cond { ... }</code> runs its block when the condition is truthy. An optional <code>else</code> block, or an <code>else if</code> chain, handles the rest. The condition is bare (no parentheses) and the braces are mandatory.</p>
 <pre><code class="language-drang">$g := 75
@@ -373,7 +373,7 @@ if $g &gt;= 90 { say("A") } else if $g &gt;= 70 { say("B") } else { say("C") }</
 <pre><code>B</code></pre>
 <p>The <code>else</code> may sit on the same line as the closing <code>}</code> or on the next line.</p>
 <h3 id="unless">unless</h3>
-<p><code>unless</code> exists only as a <em>postfix modifier</em> (see below) — there is no block <code>unless</code> form. Writing <code>unless cond { ... }</code> is a parse error; use <code>if !cond { ... }</code> for a negated block.</p>
+<p><code>unless</code> exists only as a <em>postfix modifier</em> (see below). There is no block <code>unless</code> form. Writing <code>unless cond { ... }</code> is a parse error; use <code>if !cond { ... }</code> for a negated block.</p>
 <h3 id="while-and-until">while and until</h3>
 <p><code>while cond { ... }</code> loops while the condition stays truthy:</p>
 <pre><code class="language-drang">$i := 0
@@ -381,29 +381,29 @@ while $i &lt; 3 { say($i); $i += 1 }</code></pre>
 <pre><code>0
 1
 2</code></pre>
-<p>Like <code>unless</code>, <code>until</code> has no block form — it is postfix-only. For a negated block loop use <code>while !cond { ... }</code>.</p>
+<p>Like <code>unless</code>, <code>until</code> has no block form. It is postfix-only. For a negated block loop use <code>while !cond { ... }</code>.</p>
 <h3 id="for-in">for-in</h3>
 <p><code>for $x in iter { ... }</code> iterates a collection. With one loop variable you get each element; with two (<code>for $a, $b in iter</code>) the first is an index/key and the second the value. The iterable is snapshotted before the loop, so mutating it in the body does not disturb the iteration.</p>
-<p><strong>Over an array</strong> — one variable is the element, two are index + element:</p>
+<p><strong>Over an array</strong>: one variable is the element, two are index + element:</p>
 <pre><code class="language-drang">for $i, $x in ["a", "b"] { say($i ~ ":" ~ $x) }</code></pre>
 <pre><code>0:a
 1:b</code></pre>
 <p>(<code>~</code> is the string-concat operator; <code>+</code> does not concatenate.)</p>
-<p><strong>Over a map</strong> — one variable iterates <em>values</em>, two iterate <em>key then value</em>:</p>
+<p><strong>Over a map</strong>: one variable iterates <em>values</em>, two iterate <em>key then value</em>:</p>
 <pre><code class="language-drang">for $v in {"a": 1, "b": 2} { say($v) }</code></pre>
 <pre><code>1
 2</code></pre>
 <pre><code class="language-drang">for $k, $v in {"a": 1, "b": 2} { say($k ~ "=" ~ $v) }</code></pre>
 <pre><code>a=1
 b=2</code></pre>
-<p><strong>Over an integer range</strong> <code>lo..hi</code> — inclusive of both ends; two variables give index + value:</p>
+<p><strong>Over an integer range</strong> <code>lo..hi</code>, inclusive of both ends; two variables give index + value:</p>
 <pre><code class="language-drang">for $n in 1..4 { say($n) }</code></pre>
 <pre><code>1
 2
 3
 4</code></pre>
 <p>A descending range such as <code>5..1</code> yields no iterations.</p>
-<p><strong>Over a string</strong> — character by character (by rune, so multibyte characters stay intact):</p>
+<p><strong>Over a string</strong>: character by character (by rune, so multibyte characters stay intact):</p>
 <pre><code class="language-drang">for $c in "héy" { say($c) }</code></pre>
 <pre><code>h
 é
@@ -422,7 +422,7 @@ y</code></pre>
 <pre><code class="language-drang">break</code></pre>
 <pre><code># parse errors in &lt;-e&gt;
 line 1: 'break' outside a loop</code></pre>
-<p>Crucially, the loop nesting count resets at every function and lambda boundary. So <code>break</code>/<code>next</code> inside a lambda or <code>fn</code> — even one that is itself nested inside a loop — cannot escape to the outer loop, and is likewise a parse error:</p>
+<p>Crucially, the loop nesting count resets at every function and lambda boundary. So <code>break</code>/<code>next</code> inside a lambda or <code>fn</code> (even one that is itself nested inside a loop) cannot escape to the outer loop, and is likewise a parse error:</p>
 <pre><code class="language-drang">for $n in 1..3 {
   each([10, 20], |$x| { break })
 }</code></pre>
@@ -453,8 +453,8 @@ say($i)</code></pre>
 <h2 id="functions-lambdas-closures-and-pipelines">Functions, Lambdas, Closures, and Pipelines</h2>
 <h3 id="three-name-kinds-three-sigils">Three name kinds, three sigils</h3>
 <p>drang carries a name's kind in a sigil at <em>every</em> use, so you always know what a name refers to:</p>
-<ul><li><strong><code>$name</code></strong> — data: variables and constants alike (<code>$count</code>, <code>$pi</code>).</li><li><strong><code>.name</code></strong> — a <strong>user-defined function</strong>: declared <code>fn .name()</code>, called <code>.name()</code>, and passed as a value as <code>.name</code>.</li><li><strong>a bare <code>name</code></strong> — a <strong>builtin or standard-library function</strong>, the language's own verbs (<code>say</code>, <code>map</code>, <code>split</code>, …).</li></ul>
-<p>The leading <code>.</code> is the user-namespace sigil — read <code>.foo</code> as "<code>foo</code>, a member of the implicit user namespace." It is the <em>same</em> <code>.</code> as field access: <code>.foo</code> is a member of the implicit user namespace, just as <code>$m.foo</code> is a member of the map <code>$m</code>. Because your functions live in that <code>.</code> namespace, they can never collide with builtins or the stdlib — your <code>.split</code> and the builtin <code>split</code> coexist, so adding a new builtin can never break your code.</p>
+<ul><li><strong><code>$name</code></strong>: data, variables and constants alike (<code>$count</code>, <code>$pi</code>).</li><li><strong><code>.name</code></strong>: a <strong>user-defined function</strong>, declared <code>fn .name()</code>, called <code>.name()</code>, and passed as a value as <code>.name</code>.</li><li><strong>a bare <code>name</code></strong>: a <strong>builtin or standard-library function</strong>, the language's own verbs (<code>say</code>, <code>map</code>, <code>split</code>, …).</li></ul>
+<p>The leading <code>.</code> is the user-namespace sigil. Read <code>.foo</code> as "<code>foo</code>, a member of the implicit user namespace." It is the <em>same</em> <code>.</code> as field access: <code>.foo</code> is a member of the implicit user namespace, just as <code>$m.foo</code> is a member of the map <code>$m</code>. Because your functions live in that <code>.</code> namespace, they can never collide with builtins or the stdlib: your <code>.split</code> and the builtin <code>split</code> coexist, so adding a new builtin can never break your code.</p>
 <h3 id="named-functions-fn-name">Named functions: <code>fn .name</code></h3>
 <p>Define a named function with <code>fn</code>, a <strong>dotted</strong> name, a parameter list of sigil variables, and a brace body. Call it through the same dot:</p>
 <pre><code class="language-drang">fn .add($a, $b) { $a + $b }
@@ -467,7 +467,7 @@ say(.add(2, 3))
 say(.greet("sam"))</code></pre>
 <pre><code>5
 hi sam</code></pre>
-<p>(<code>~</code> is the string-concatenation operator; <code>say</code> prints a line.) A bare <code>fn name</code> (no dot) is an error — user functions must be <code>fn .name</code>.</p>
+<p>(<code>~</code> is the string-concatenation operator; <code>say</code> prints a line.) A bare <code>fn name</code> (no dot) is an error: user functions must be <code>fn .name</code>.</p>
 <h4 id="default-parameters">Default parameters</h4>
 <p>A parameter may have a default value, <code>$name = expr</code>, making it optional. Defaulted parameters must come after the required ones. A default is evaluated <strong>at call time</strong>, only when its argument is omitted (so there is no shared-mutable-default surprise), and it may reference an earlier parameter:</p>
 <pre><code class="language-drang">fn .serve($app, $port = 8080, $host = "localhost") {
@@ -478,9 +478,9 @@ say(.serve("web", 9090))            # web://localhost:9090
 
 fn .range_end($start, $end = $start + 10) { $end }
 say(.range_end(5))                  # 15</code></pre>
-<p>Calling with too few or too many arguments is a catchable error that names the accepted range (e.g. <code>.serve expects 1 to 3 arguments, got 4</code>). The same <code>$name = expr</code> syntax works in lambda parameters. (Arguments are positional — there are no named/keyword arguments, and no variadic <code>$a...</code> parameter; pass an array for a variable number of values.)</p>
+<p>Calling with too few or too many arguments is a catchable error that names the accepted range (e.g. <code>.serve expects 1 to 3 arguments, got 4</code>). The same <code>$name = expr</code> syntax works in lambda parameters. (Arguments are positional. There are no named/keyword arguments, and no variadic <code>$a...</code> parameter; pass an array for a variable number of values.)</p>
 <h3 id="implicit-and-explicit-return">Implicit and explicit return</h3>
-<p>A function returns the value of its <strong>last statement</strong> — no <code>return</code> needed. When that last statement is an <code>if</code>/<code>else</code> (or any block), the value of the taken branch falls straight out:</p>
+<p>A function returns the value of its <strong>last statement</strong>, no <code>return</code> needed. When that last statement is an <code>if</code>/<code>else</code> (or any block), the value of the taken branch falls straight out:</p>
 <pre><code class="language-drang">fn .classify($n) {
   if $n &lt; 0 { "negative" }
   else { "non-negative" }
@@ -501,7 +501,7 @@ say(.abs(9))</code></pre>
 <pre><code>4
 9</code></pre>
 <h3 id="lambdas-a-b">Lambdas: <code>|$a, $b| …</code></h3>
-<p>An anonymous function is written with pipe-delimited parameters followed by <strong>either</strong> a single expression <strong>or</strong> a <code>{ … }</code> block (the block also returns its last expression). Zero parameters is <code>||</code>. A lambda has no name of its own; bind it to a <code>$</code> variable and it is plain data, called through that <code>$</code> name (<code>$sq(5)</code>) — the <code>.</code> sigil is only for functions declared with <code>fn .name</code>:</p>
+<p>An anonymous function is written with pipe-delimited parameters followed by <strong>either</strong> a single expression <strong>or</strong> a <code>{ … }</code> block (the block also returns its last expression). Zero parameters is <code>||</code>. A lambda has no name of its own; bind it to a <code>$</code> variable and it is plain data, called through that <code>$</code> name (<code>$sq(5)</code>). The <code>.</code> sigil is only for functions declared with <code>fn .name</code>:</p>
 <pre><code class="language-drang">$sq := |$x| $x * $x
 say($sq(5))
 
@@ -513,7 +513,7 @@ say($hi())</code></pre>
 <pre><code>25
 14
 hello</code></pre>
-<p>The body parses at the lowest precedence, so a lambda absorbs operators and <code>|&gt;</code> but stops at <code>,</code>, <code>)</code>, <code>]</code>, or a newline. Since a lambda is always the <em>last</em> argument to a higher-order function, its body runs cleanly to the closing <code>)</code>. (<code>||</code> is the zero-param lambda; there is no <code>||</code> boolean operator — use the <code>or</code> keyword.)</p>
+<p>The body parses at the lowest precedence, so a lambda absorbs operators and <code>|&gt;</code> but stops at <code>,</code>, <code>)</code>, <code>]</code>, or a newline. Since a lambda is always the <em>last</em> argument to a higher-order function, its body runs cleanly to the closing <code>)</code>. (<code>||</code> is the zero-param lambda; there is no <code>||</code> boolean operator, use the <code>or</code> keyword.)</p>
 <h3 id="closures">Closures</h3>
 <p>Both named functions and lambdas are closures: they capture the variables of the scope where they are defined.</p>
 <pre><code class="language-drang">fn .make_adder($n) {
@@ -526,7 +526,7 @@ say($add10(5))
 say($add100(5))</code></pre>
 <pre><code>15
 105</code></pre>
-<p>Crucially, <strong>each iteration of a <code>for</code> loop captures its own binding</strong> of the loop variable — closures made in different iterations do not share one mutable slot:</p>
+<p>Crucially, <strong>each iteration of a <code>for</code> loop captures its own binding</strong> of the loop variable: closures made in different iterations do not share one mutable slot:</p>
 <pre><code class="language-drang">$fns := []
 for $i in [1, 2, 3] {
   push($fns, || $i)
@@ -539,7 +539,7 @@ for $f in $fns {
 3</code></pre>
 <p>(If iterations shared a single <code>$i</code>, this would print <code>3</code> three times.)</p>
 <h3 id="the-pipeline-operator">The pipeline operator <code>|&gt;</code></h3>
-<p><code>x |&gt; f(args)</code> desugars to <code>f(x, args)</code> — the left side is threaded in as the <strong>first</strong> argument. Chains read left-to-right, which is the natural reading order for glue code:</p>
+<p><code>x |&gt; f(args)</code> desugars to <code>f(x, args)</code>: the left side is threaded in as the <strong>first</strong> argument. Chains read left-to-right, which is the natural reading order for glue code:</p>
 <pre><code class="language-drang">fn .double($x) { $x * 2 }
 fn .add($a, $b) { $a + $b }
 
@@ -570,7 +570,7 @@ say($xs |&gt; reduce(0, |$acc, $x| $acc + $x))</code></pre>
 15</code></pre>
 <p>Callbacks are arity-flexible: a one-parameter lambda receives the element; a two-parameter lambda also receives the index (and <code>reduce</code>'s lambda is <code>(acc, el)</code> or <code>(acc, el, index)</code>).</p>
 <h3 id="functions-and-builtins-are-first-class-values">Functions and builtins are first-class values</h3>
-<p>Both a named user function and a builtin can be passed point-free — a bare name in value position is a function value:</p>
+<p>Both a named user function and a builtin can be passed point-free: a bare name in value position is a function value:</p>
 <pre><code class="language-drang">fn .shout($s) { upper($s) }
 say(["a", "b"] |&gt; map(.shout))                       # [A, B]
 
@@ -581,7 +581,7 @@ say([3, 1, 2] |&gt; reduce(0, max))                     # 3
 $f := upper
 say($f("hi"))                                        # HI
 say(type(len))                                       # function</code></pre>
-<p>A user binding of the same name still shadows the builtin (<code>$len := 99</code> makes <code>$len</code> the number <code>99</code>, exactly as it shadows the builtin in a call). You only need a lambda when you want to reshape the call — reorder arguments, supply extra ones, or pass the index: <code>map($xs, |$x, $i| format("{}:{}", $i, $x))</code>.</p>
+<p>A user binding of the same name still shadows the builtin (<code>$len := 99</code> makes <code>$len</code> the number <code>99</code>, exactly as it shadows the builtin in a call). You only need a lambda when you want to reshape the call: reorder arguments, supply extra ones, or pass the index: <code>map($xs, |$x, $i| format("{}:{}", $i, $x))</code>.</p>
 <hr>
 <h2 id="arrays-maps-and-the-collection-toolkit">Arrays, Maps, and the Collection Toolkit</h2>
 <p>drang has two built-in container types: ordered <strong>arrays</strong> (<code>[..]</code>) and insertion-ordered <strong>maps</strong> (<code>{k: v}</code>). Both work directly with the same higher-order toolkit (<code>map</code>, <code>filter</code>, <code>sort</code>, ...), which is the workhorse for text and glue scripts.</p>
@@ -598,7 +598,7 @@ say([10, 20, 30][-2])    # 20</code></pre>
 <p><strong>Out-of-bounds</strong> access is a catchable error value, not a crash, and the same applies to a negative index that reaches before the start:</p>
 <pre><code class="language-drang">say([1, 2][5])           # error: index 5 out of range (len 2)
 say([10, 20, 30][-4])    # error: index -4 out of range (len 3)</code></pre>
-<p><strong>Slicing</strong> uses a range index, <code>arr[lo..hi]</code>, and returns a new array. The range is <strong>inclusive</strong> (like every drang range), so <code>arr[1..3]</code> includes index 3. Negative bounds count from the end, out-of-range bounds clamp, and an empty or reversed range yields <code>[]</code> — so a slice never errors:</p>
+<p><strong>Slicing</strong> uses a range index, <code>arr[lo..hi]</code>, and returns a new array. The range is <strong>inclusive</strong> (like every drang range), so <code>arr[1..3]</code> includes index 3. Negative bounds count from the end, out-of-range bounds clamp, and an empty or reversed range yields <code>[]</code>, so a slice never errors:</p>
 <pre><code class="language-drang">say([10, 20, 30, 40, 50][1..3])    # [20, 30, 40]   (inclusive)
 say([10, 20, 30, 40, 50][-2..-1])  # [40, 50]
 say([10, 20, 30][1..99])           # [20, 30]        (clamped)
@@ -658,21 +658,21 @@ $m := {a: 1}
 say($m[[1, 2]])          # error: unhashable map key: array</code></pre>
 <h3 id="the-higher-order-toolkit">The higher-order toolkit</h3>
 <p>These functions operate on arrays and take a callback written as a closure <code>|$x| ...</code> (or <code>|$x, $i|</code> to also receive the element's index). They compose cleanly with the pipe operator <code>|&gt;</code>, where <code>xs |&gt; f(args)</code> calls <code>f(xs, args)</code>.</p>
-<p><strong><code>map</code></strong> — transform each element into a new array:</p>
+<p><strong><code>map</code></strong>: transform each element into a new array:</p>
 <pre><code class="language-drang">say([1, 2, 3] |&gt; map(|$x| $x * $x))      # [1, 4, 9]</code></pre>
-<p><strong><code>filter</code></strong> / <strong><code>reject</code></strong> — keep / drop elements matching a predicate:</p>
+<p><strong><code>filter</code></strong> / <strong><code>reject</code></strong>: keep / drop elements matching a predicate:</p>
 <pre><code class="language-drang">say([1, 2, 3, 4, 5, 6] |&gt; filter(|$x| $x % 2 == 0))   # [2, 4, 6]
 say([1, 2, 3, 4, 5, 6] |&gt; reject(|$x| $x % 2 == 0))   # [1, 3, 5]</code></pre>
-<p><strong><code>find</code></strong> — the first matching element, or <code>nil</code> if none match:</p>
+<p><strong><code>find</code></strong>: the first matching element, or <code>nil</code> if none match:</p>
 <pre><code class="language-drang">say([3, 8, 5, 12, 2] |&gt; find(|$x| $x &gt; 10))   # 12
 say([1, 2] |&gt; find(|$x| $x &gt; 10))             # nil</code></pre>
-<p><strong><code>any</code></strong> / <strong><code>all</code></strong> / <strong><code>count</code></strong> — predicate aggregates:</p>
+<p><strong><code>any</code></strong> / <strong><code>all</code></strong> / <strong><code>count</code></strong>: predicate aggregates:</p>
 <pre><code class="language-drang">say([1, 2, 3] |&gt; any(|$x| $x &gt; 2))            # true
 say([2, 4, 6] |&gt; all(|$x| $x % 2 == 0))       # true
 say([1, 2, 3, 4, 5] |&gt; count(|$x| $x % 2 == 1))  # 3</code></pre>
-<p><strong><code>flat_map</code></strong> — map then concatenate the resulting arrays one level deep:</p>
+<p><strong><code>flat_map</code></strong>: map then concatenate the resulting arrays one level deep:</p>
 <pre><code class="language-drang">say([1, 2, 3] |&gt; flat_map(|$x| [$x, $x * 10]))   # [1, 10, 2, 20, 3, 30]</code></pre>
-<p><strong><code>reduce(arr, init, fn)</code></strong> — fold left with an explicit initial accumulator (note the 3-argument call form, not a pipe target's natural shape):</p>
+<p><strong><code>reduce(arr, init, fn)</code></strong>: fold left with an explicit initial accumulator (note the 3-argument call form, not a pipe target's natural shape):</p>
 <pre><code class="language-drang">say(reduce([1, 2, 3, 4], 0, |$acc, $x| $acc + $x))   # 10</code></pre>
 <h3 id="the-ordering-family">The ordering family</h3>
 <p><code>sort</code> returns a new array in natural ascending order (numbers numerically, strings lexicographically):</p>
@@ -689,12 +689,12 @@ say(min_by([], |$x| $x))                         # nil</code></pre>
 <p>Because every collection function returns a value (a new array, or <code>nil</code>), they chain end to end:</p>
 <pre><code class="language-drang">say([5, 3, 8, 1, 9, 2] |&gt; filter(|$x| $x &gt; 2) |&gt; sort() |&gt; take(3))   # [3, 5, 8]</code></pre>
 <h3 id="prelude-collection-helpers-written-in-drang">Prelude: collection helpers written in drang</h3>
-<p>A handful of everyday helpers are part of the standard library but written in drang itself — an embedded <em>prelude</em> — rather than in Go. They are pure compositions of the builtins above, available unqualified like any builtin:</p>
+<p>A handful of everyday helpers are part of the standard library but written in drang itself (an embedded <em>prelude</em>) rather than in Go. They are pure compositions of the builtins above, available unqualified like any builtin:</p>
 <table><thead><tr><th>Helper</th><th>Meaning</th></tr></thead><tbody><tr><td><code>flatten(xss)</code></td><td>concatenate one level of nesting: <code>[[1, 2], [3]]</code> → <code>[1, 2, 3]</code></td></tr><tr><td><code>sum_by(xs, f)</code></td><td>sum of <code>f</code> over each element</td></tr><tr><td><code>tally(xs)</code></td><td>count occurrences → a map <code>{value: count}</code></td></tr><tr><td><code>count_by(xs, f)</code></td><td>like <code>tally</code>, but keyed by <code>f(x)</code></td></tr><tr><td><code>chunk(xs, n)</code></td><td>split into <code>n</code>-sized pieces (<code>n &lt; 1</code> is an error)</td></tr><tr><td><code>zip(a, b)</code></td><td>pair two arrays element-wise, truncating to the shorter</td></tr><tr><td><code>group_by(xs, f)</code></td><td>bucket elements by <code>f(x)</code> → <code>{key: [elems]}</code></td></tr><tr><td><code>partition(xs, pred)</code></td><td>split into <code>[matching, non-matching]</code></td></tr><tr><td><code>uniq_by(xs, f)</code></td><td>keep the first element per distinct <code>f(x)</code> (order preserved)</td></tr><tr><td><code>enumerate(xs)</code></td><td>pair each element with its index: <code>["a", "b"]</code> → <code>[[0, "a"], [1, "b"]]</code></td></tr><tr><td><code>mean(xs)</code></td><td>arithmetic mean (float); empty list → catchable <code>Err</code></td></tr><tr><td><code>median(xs)</code></td><td>middle of the sorted list (mean of the two middle if even); empty → <code>Err</code></td></tr><tr><td><code>intersect(a, b)</code></td><td>elements in both, deduped (hashable elements; <code>a</code>'s order)</td></tr><tr><td><code>union(a, b)</code></td><td>all distinct elements from both (<code>a</code>'s order first)</td></tr><tr><td><code>difference(a, b)</code></td><td>elements in <code>a</code> not in <code>b</code>, deduped</td></tr><tr><td><code>pad(s, width)</code></td><td>left-justify by padding the right with spaces (use <code>format</code>'s <code>{:&gt;n}</code> for right-justify)</td></tr><tr><td><code>capitalize(s)</code></td><td>first character upper, the rest lower</td></tr><tr><td><code>reverse(s)</code></td><td>reverse a string by characters (rune-correct)</td></tr><tr><td><code>dedent(s)</code></td><td>strip the common leading indentation from every line</td></tr><tr><td><code>clamp(x, lo, hi)</code></td><td>constrain <code>x</code> to the range <code>[lo, hi]</code></td></tr><tr><td><code>sign(x)</code></td><td><code>-1</code>, <code>0</code>, or <code>1</code></td></tr><tr><td><code>get_in(data, path)</code></td><td>follow a path of keys/indices into nested maps/arrays; nil if any step is missing</td></tr><tr><td><code>deep_merge(a, b)</code></td><td>recursively merge two maps into a new map (<code>b</code> wins; nested maps merged)</td></tr><tr><td><code>retry(n, delay_ms, f)</code></td><td>call <code>f()</code> up to <code>n</code> times, returning the first non-error result (waiting <code>delay_ms</code> between)</td></tr></tbody></table>
 <p>Writing part of the stdlib in drang keeps the Go core small and pressure-tests the language; the rule for what goes in Go vs drang is recorded in DESIGN.</p>
 <hr>
 <h2 id="errors-as-values">Errors as Values</h2>
-<p>In drang an error is not an exception — it is an ordinary value with a tag, like an int or a string. A fallible operation returns either its normal result or an <strong>Err</strong> value carrying a message and an integer code. Nothing unwinds on its own; you decide what to do with the Err: inspect it, recover from it, or propagate it.</p>
+<p>In drang an error is not an exception. It is an ordinary value with a tag, like an int or a string. A fallible operation returns either its normal result or an <strong>Err</strong> value carrying a message and an integer code. Nothing unwinds on its own; you decide what to do with the Err: inspect it, recover from it, or propagate it.</p>
 <p>Three pieces make up the model: the <code>?</code> postfix operator (propagate), the <code>//</code> operator (recover with a fallback), and the inspectors <code>is_err</code> / <code>err_code</code> / <code>err_msg</code>. You create errors with <code>fail</code>.</p>
 <h3 id="inspecting-errors">Inspecting errors</h3>
 <p><code>is_err(x)</code> reports whether <code>x</code> is an Err value. <code>err_code(x)</code> and <code>err_msg(x)</code> pull out its code and message. On a <em>non</em>-error they return the neutral values <code>0</code> and <code>""</code>, so <code>err_code(run(cmd))</code> reads naturally as "the exit code, 0 on success."</p>
@@ -711,12 +711,12 @@ say(err_code(42), err_msg(42) == "")</code></pre>
 <pre><code class="language-drang">$r := fail()
 say(is_err($r), err_msg($r), err_code($r))</code></pre>
 <pre><code>true failed 1</code></pre>
-<p>Note: <code>fail</code> only honors a message — it does not take a second code argument, and the Err code is always <code>1</code>. Custom, non-1 codes come from operations that carry one naturally — most importantly subprocess builtins, which fold the child's exit status into the Err code (see below).</p>
+<p>Note: <code>fail</code> only honors a message: it does not take a second code argument, and the Err code is always <code>1</code>. Custom, non-1 codes come from operations that carry one naturally, most importantly subprocess builtins, which fold the child's exit status into the Err code (see below).</p>
 <h3 id="recovering-with">Recovering with //</h3>
 <p><code>risky() // fallback</code> evaluates <code>risky()</code>; if the result is an Err value <strong>or</strong> <code>nil</code>, it evaluates and returns <code>fallback</code> instead. Otherwise the original value passes through. This is the workhorse for "try, but have a default."</p>
 <pre><code class="language-drang">say(int("100") // 0, int("oops") // 0)</code></pre>
 <pre><code>100 0</code></pre>
-<p><code>//</code> triggers <em>only</em> on Err or nil — other falsy values (<code>0</code>, <code>""</code>, <code>false</code>) are real results and pass straight through:</p>
+<p><code>//</code> triggers <em>only</em> on Err or nil; other falsy values (<code>0</code>, <code>""</code>, <code>false</code>) are real results and pass straight through:</p>
 <pre><code class="language-drang">say(0 // 99, "" // "x", false // "y")</code></pre>
 <pre><code>0  false</code></pre>
 <h3 id="propagating-with">Propagating with ?</h3>
@@ -727,7 +727,7 @@ say(is_err($r), err_msg($r), err_code($r))</code></pre>
 }
 say(.parse("21"))</code></pre>
 <pre><code>42</code></pre>
-<p>The key rule: <code>?</code> propagates only to the nearest call boundary. When the propagated error reaches the point where the function was called, it turns back into an ordinary Err <strong>value</strong> — it does not keep unwinding. So a caller can simply recover it:</p>
+<p>The key rule: <code>?</code> propagates only to the nearest call boundary. When the propagated error reaches the point where the function was called, it turns back into an ordinary Err <strong>value</strong>. It does not keep unwinding. So a caller can simply recover it:</p>
 <pre><code class="language-drang">fn .parse($s) {
   $n := int($s)?
   return $n * 2
@@ -745,7 +745,7 @@ say("unreached")</code></pre>
 <p>This top-level behavior is what makes <code>?</code> useful for scripts: propagate failures up to <code>main</code>, and the program exits with a meaningful status automatically.</p>
 <h3 id="the-builtin-convention-arg-count-aborts-bad-values-are-catchable">The builtin convention: arg-count aborts, bad values are catchable</h3>
 <p>Builtins distinguish two kinds of wrongness:</p>
-<ul><li>A wrong <strong>argument count</strong> is a programmer error — a hard abort that <code>?</code>/<code>//</code> cannot intercept. It stops the program with a source location.</li><li>A wrong <strong>type</strong> or <strong>bad value</strong> is a runtime condition — a catchable Err value you can recover.</li></ul>
+<ul><li>A wrong <strong>argument count</strong> is a programmer error: a hard abort that <code>?</code>/<code>//</code> cannot intercept. It stops the program with a source location.</li><li>A wrong <strong>type</strong> or <strong>bad value</strong> is a runtime condition: a catchable Err value you can recover.</li></ul>
 <pre><code class="language-drang">say(is_err(int([1, 2])))   # wrong type -&gt; catchable Err</code></pre>
 <pre><code>true</code></pre>
 <pre><code class="language-drang">say(int(1, 2) // 99)       # wrong arg count -&gt; hard abort, // can't save it</code></pre>
@@ -764,7 +764,7 @@ say(is_err($r), err_code($r))</code></pre>
 say(capture("cmd", "/c", "exit 1") // "default")</code></pre>
 <pre><code>could not run
 default</code></pre>
-<p>Because the Err carries the real exit code, you can branch on it — e.g. treating <code>grep</code>'s exit 1 ("no match") differently from a genuine error:</p>
+<p>Because the Err carries the real exit code, you can branch on it, e.g. treating <code>grep</code>'s exit 1 ("no match") differently from a genuine error:</p>
 <pre><code class="language-drang">$r := capture("cmd", "/c", "exit 1")
 if is_err($r) {
   if err_code($r) == 1 { say("no match") } else { say("error:", err_msg($r)) }
@@ -789,13 +789,13 @@ n/a</code></pre>
 <p>The shape to internalize: <code>fail</code> and failing builtins <em>make</em> Err values; <code>?</code> <em>moves</em> them up to the call boundary (aborting at the top level with the right exit code); <code>//</code> <em>absorbs</em> them with a default; and <code>is_err</code>/<code>err_code</code>/<code>err_msg</code> <em>read</em> them when you need to branch.</p>
 <hr>
 <h2 id="regular-expressions">Regular expressions</h2>
-<p>drang's regex engine is Go's <a href="https://github.com/google/re2/wiki/Syntax">RE2</a>: matching is <strong>linear-time</strong> with no catastrophic backtracking, but in exchange the pattern syntax has <strong>no backreferences</strong> (<code>\1</code> inside a pattern) and no lookaround. Patterns come in two forms — a <code>qr//</code> literal that the lexer turns into a compiled, first-class <code>regex</code> value, or a plain string that the regex builtins compile on demand. Compiled regexes are immutable, cached, and safe to share across <code>pmap</code> workers.</p>
+<p>drang's regex engine is Go's <a href="https://github.com/google/re2/wiki/Syntax">RE2</a>: matching is <strong>linear-time</strong> with no catastrophic backtracking, but in exchange the pattern syntax has <strong>no backreferences</strong> (<code>\1</code> inside a pattern) and no lookaround. Patterns come in two forms: a <code>qr//</code> literal that the lexer turns into a compiled, first-class <code>regex</code> value, or a plain string that the regex builtins compile on demand. Compiled regexes are immutable, cached, and safe to share across <code>pmap</code> workers.</p>
 <h3 id="qr-literals"><code>qr//</code> literals</h3>
 <p>A <code>qr</code> literal compiles a pattern at lex time into a reusable <code>regex</code> value:</p>
 <pre><code class="language-drang">say(qr/\d+/)</code></pre>
 <pre><code>qr/\d+/</code></pre>
-<p>The body is taken <strong>literally</strong> — backslashes are passed straight through to RE2, so you do not double them the way you would in a <code>"..."</code> string.</p>
-<p><strong>Flags</strong> follow the closing delimiter: <code>i</code> (case-insensitive), <code>m</code> (multi-line <code>^</code>/<code>$</code>), <code>s</code> (dotall — <code>.</code> matches newline), <code>U</code> (ungreedy — swaps greedy/lazy). They are baked into the pattern as Go inline flags, which is visible when you print the value:</p>
+<p>The body is taken <strong>literally</strong>: backslashes are passed straight through to RE2, so you do not double them the way you would in a <code>"..."</code> string.</p>
+<p><strong>Flags</strong> follow the closing delimiter: <code>i</code> (case-insensitive), <code>m</code> (multi-line <code>^</code>/<code>$</code>), <code>s</code> (dotall, <code>.</code> matches newline), <code>U</code> (ungreedy, swaps greedy/lazy). They are baked into the pattern as Go inline flags, which is visible when you print the value:</p>
 <pre><code class="language-drang">say(qr/foo/i)
 say(qr/foo/ims)</code></pre>
 <pre><code>qr/(?i)foo/
@@ -818,7 +818,7 @@ say(find_all("aaa", qr{a{1}}))      # { } nest around the quantifier</code></pre
 <pre><code>true
 [ab, a, b]
 [a, a, a]</code></pre>
-<h3 id="repattern-compile-a-dynamic-pattern"><code>re(pattern)</code> — compile a dynamic pattern</h3>
+<h3 id="repattern-compile-a-dynamic-pattern"><code>re(pattern)</code>: compile a dynamic pattern</h3>
 <p><code>qr//</code> is a literal; when the pattern is built at runtime (e.g. interpolated), use <code>re()</code> to compile a string into a reusable <code>regex</code> value. An already-compiled regex passes straight through:</p>
 <pre><code class="language-drang">$p := "\d+"
 $rx := re($p)
@@ -829,8 +829,8 @@ say(re(qr/x/i))   # regex in → same regex out</code></pre>
 qr/\d+/
 qr/(?i)x/</code></pre>
 <h3 id="the-matching-builtins">The matching builtins</h3>
-<p>Every regex builtin takes the pattern as <strong>either a string or a compiled <code>regex</code> value</strong> — they are interchangeable. Using a <code>qr//</code> value (or one from <code>re()</code>) reuses the compiled object instead of recompiling.</p>
-<table><thead><tr><th>Builtin</th><th>Returns</th></tr></thead><tbody><tr><td><code>matches(s, p)</code></td><td>bool — does <code>p</code> match anywhere in <code>s</code></td></tr><tr><td><code>match(s, p)</code></td><td><code>[full, group1, group2, ...]</code>, or <code>nil</code> if no match</td></tr><tr><td><code>find_all(s, p)</code></td><td>array of every (full) match, in order</td></tr><tr><td><code>gsub(s, p, repl)</code></td><td><code>s</code> with every match replaced by <code>repl</code></td></tr></tbody></table>
+<p>Every regex builtin takes the pattern as <strong>either a string or a compiled <code>regex</code> value</strong>. They are interchangeable. Using a <code>qr//</code> value (or one from <code>re()</code>) reuses the compiled object instead of recompiling.</p>
+<table><thead><tr><th>Builtin</th><th>Returns</th></tr></thead><tbody><tr><td><code>matches(s, p)</code></td><td>bool: does <code>p</code> match anywhere in <code>s</code></td></tr><tr><td><code>match(s, p)</code></td><td><code>[full, group1, group2, ...]</code>, or <code>nil</code> if no match</td></tr><tr><td><code>find_all(s, p)</code></td><td>array of every (full) match, in order</td></tr><tr><td><code>gsub(s, p, repl)</code></td><td><code>s</code> with every match replaced by <code>repl</code></td></tr></tbody></table>
 <pre><code class="language-drang">say(matches("Hello World", qr/world/i))
 say(match("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/))
 say(match("nope", qr/\d+/))
@@ -839,20 +839,20 @@ say(find_all("a1 b22 c333", qr/\d+/))</code></pre>
 [2026-06-26, 2026, 06, 26]
 nil
 [1, 22, 333]</code></pre>
-<p>String and <code>qr//</code> pattern arguments are equivalent — note the string form needs the backslash that the literal form does not:</p>
+<p>String and <code>qr//</code> pattern arguments are equivalent, but note the string form needs the backslash that the literal form does not:</p>
 <pre><code class="language-drang">say(find_all("a1b2", "\d"))
 say(find_all("a1b2", qr/\d/))</code></pre>
 <pre><code>[1, 2]
 [1, 2]</code></pre>
 <h3 id="gsub-and-backreferences-in-the-replacement"><code>gsub</code> and backreferences in the replacement</h3>
-<p>In <code>gsub</code>, the <strong>replacement</strong> string uses Go's <code>$1</code> / <code>${name}</code> substitution (this is replacement-side substitution, not a pattern backreference — RE2 has none of those):</p>
+<p>In <code>gsub</code>, the <strong>replacement</strong> string uses Go's <code>$1</code> / <code>${name}</code> substitution (this is replacement-side substitution, not a pattern backreference, RE2 has none of those):</p>
 <pre><code class="language-drang">say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))</code></pre>
 <pre><code>26/06/2026</code></pre>
 <p>For <code>${name}</code> references, name the groups with RE2's <code>(?P&lt;name&gt;...)</code> syntax. Beware: a <code>"..."</code> double-quoted replacement is interpolated by drang first, so use a non-interpolating literal (<code>q{...}</code>) to keep the <code>${...}</code> intact for <code>gsub</code>:</p>
 <pre><code class="language-drang">say(gsub("john smith", qr/(?P&lt;first&gt;\w+) (?P&lt;last&gt;\w+)/, q{${last}, ${first}}))</code></pre>
 <pre><code>smith, john</code></pre>
 <h3 id="bad-patterns-are-catchable-errors">Bad patterns are catchable errors</h3>
-<p>A malformed <strong>string</strong> pattern is not a crash — it surfaces as a first-class <code>Err</code> value the program can inspect with <code>is_err</code>:</p>
+<p>A malformed <strong>string</strong> pattern is not a crash: it surfaces as a first-class <code>Err</code> value the program can inspect with <code>is_err</code>:</p>
 <pre><code class="language-drang">$e := matches("x", "(")
 say(is_err($e))</code></pre>
 <pre><code>true</code></pre>
@@ -864,9 +864,9 @@ say(is_err($e))</code></pre>
 <pre><code>error: bad regex "(a)\\1": error parsing regexp: invalid escape sequence: `\1`</code></pre>
 <hr>
 <h2 id="external-commands-concurrency">External Commands &amp; Concurrency</h2>
-<p>drang is a glue language, so running other programs and doing work in parallel are first-class. External commands go through <code>os/exec</code> directly — <strong>no shell is involved</strong> and arguments are passed verbatim (no word-splitting, no glob expansion). Failures are values: a failed command returns a catchable <code>Err</code> carrying the child's exit code, which you propagate with <code>?</code>, recover with <code>//</code>, or inspect with <code>is_err</code>/<code>err_code</code>/<code>err_msg</code>.</p>
-<blockquote>All examples below were run on Windows, so they shell out to <code>cmd /c</code>, <code>findstr</code>, <code>ping</code>, etc. The drang surface is identical on any platform — only the command names differ. Examples deliberately use short, non-destructive commands.</blockquote>
-<h3 id="run-execute-and-stream-stdio"><code>run</code> — execute and stream stdio</h3>
+<p>drang is a glue language, so running other programs and doing work in parallel are first-class. External commands go through <code>os/exec</code> directly, with <strong>no shell involved</strong> and arguments are passed verbatim (no word-splitting, no glob expansion). Failures are values: a failed command returns a catchable <code>Err</code> carrying the child's exit code, which you propagate with <code>?</code>, recover with <code>//</code>, or inspect with <code>is_err</code>/<code>err_code</code>/<code>err_msg</code>.</p>
+<blockquote>All examples below were run on Windows, so they shell out to <code>cmd /c</code>, <code>findstr</code>, <code>ping</code>, etc. The drang surface is identical on any platform; only the command names differ. Examples deliberately use short, non-destructive commands.</blockquote>
+<h3 id="run-execute-and-stream-stdio"><code>run</code>: execute and stream stdio</h3>
 <p><code>run(cmd, args..., {opts}?)</code> runs a command with the child's stdin/stdout/stderr wired straight through to drang's. It returns <code>true</code> on success (so it composes with <code>if</code> and <code>//</code>) or an <code>Err</code> on failure.</p>
 <pre><code class="language-drang">$ok := run("cmd", "/c", "exit 0")
 say("success returns true: $ok")
@@ -875,7 +875,7 @@ say("failure is_err: ${is_err($bad)}  code: ${err_code($bad)}")</code></pre>
 <pre><code>success returns true: true
 failure is_err: true  code: 5</code></pre>
 <p>Array arguments are <strong>flattened one level</strong>, so you can build an argv list and splat it: <code>run("git", ["log", "--oneline"])</code>.</p>
-<h3 id="capture-collect-stdout"><code>capture</code> — collect stdout</h3>
+<h3 id="capture-collect-stdout"><code>capture</code>: collect stdout</h3>
 <p><code>capture(...)</code> buffers the child's stdout and returns it as a <strong>trimmed string</strong> on success, or an <code>Err</code> (with the child's stderr folded into the message) on failure.</p>
 <pre><code class="language-drang">$ver := capture("cmd", "/c", "ver")
 say($ver)
@@ -883,13 +883,13 @@ $where := capture("where", "cmd")
 say("where cmd -&gt; $where")</code></pre>
 <pre><code>Microsoft Windows [Version 10.0.26200.6899]
 where cmd -&gt; C:\Windows\System32\cmd.exe</code></pre>
-<h3 id="pipe-a-pipeline-no-shell"><code>pipe</code> — a pipeline, no shell</h3>
-<p><code>pipe([cmd, args...], [cmd, args...], ..., {opts}?)</code> wires each stage's stdout to the next stage's stdin through real OS pipes (streamed, not buffered between stages). Each stage is an array. It returns the <strong>last stage's trimmed stdout</strong>. This is native <code>os/exec</code> wiring — there is still no shell.</p>
+<h3 id="pipe-a-pipeline-no-shell"><code>pipe</code>: a pipeline, no shell</h3>
+<p><code>pipe([cmd, args...], [cmd, args...], ..., {opts}?)</code> wires each stage's stdout to the next stage's stdin through real OS pipes (streamed, not buffered between stages). Each stage is an array. It returns the <strong>last stage's trimmed stdout</strong>. This is native <code>os/exec</code> wiring. There is still no shell.</p>
 <pre><code class="language-drang">$out := pipe(["cmd", "/c", "echo apple&amp; echo banana&amp; echo cherry"],
              ["findstr", "an"])
 say("pipe -&gt; $out")</code></pre>
 <pre><code>pipe -&gt; banana</code></pre>
-<p>(For genuine shell features — globbing, <code>&amp;&amp;</code>, redirection — invoke <code>cmd /c "..."</code> yourself as a single stage.)</p>
+<p>(For genuine shell features: globbing, <code>&amp;&amp;</code>, redirection, invoke <code>cmd /c "..."</code> yourself as a single stage.)</p>
 <h3 id="options-cwd-env-stdin-timeout">Options: <code>{cwd, env, stdin, timeout}</code></h3>
 <p>A trailing map sets per-command options on <code>run</code>, <code>capture</code>, <code>pipe</code>, and <code>each_line</code>. <code>env</code> is <strong>overlaid</strong> onto the inherited environment (matched case-insensitively, per Windows); <code>timeout</code> is in <strong>milliseconds</strong> and <code>0</code> means no limit.</p>
 <pre><code class="language-drang">$dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
@@ -912,7 +912,7 @@ say("is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
 say("code: ${err_code($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>code: 127  msg: no_such_program_xyz: exec: "no_such_program_xyz": executable file not found in %PATH%</code></pre>
 <p><code>pipe</code> follows bash's pipeline semantics: <code>127</code> if a stage can't start, <code>124</code> on timeout, otherwise the <strong>last</strong> stage's exit code.</p>
-<h3 id="each_line-stream-output-line-by-line"><code>each_line</code> — stream output line by line</h3>
+<h3 id="each_line-stream-output-line-by-line"><code>each_line</code>: stream output line by line</h3>
 <p><code>each_line(cmd, args..., {opts}?, |$line| { ... })</code> invokes the callback for each line of stdout <strong>as it arrives</strong> (not buffered), ideal for build logs or tails. It returns <code>true</code> on success or an <code>Err</code> (exit code / <code>124</code> timeout) once the command finishes.</p>
 <pre><code class="language-drang">$n := 0
 each_line("cmd", "/c", "echo one&amp; echo two&amp; echo three", |$line| {
@@ -924,7 +924,7 @@ say("total lines: $n")</code></pre>
 [2] two
 [3] three
 total lines: 3</code></pre>
-<h3 id="start-a-detached-process-handle"><code>start</code> — a detached process handle</h3>
+<h3 id="start-a-detached-process-handle"><code>start</code>: a detached process handle</h3>
 <p><code>start(cmd, args...)</code> launches a child <strong>without waiting</strong> (the equivalent of <code>cmd &amp;</code>), with stdio detached, and returns a process handle. Three builtins act on it: <code>pid(p)</code> reads the PID, <code>await(p)</code> blocks for its exit status (<code>true</code>, or an <code>Err</code> with the code), and <code>kill(p)</code> terminates the whole tree.</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "exit 3")
 say("pid &gt; 0: ${pid($p) &gt; 0}")
@@ -939,9 +939,9 @@ say("after kill, is_err: ${is_err(await($p))}")</code></pre>
 <pre><code>after kill, is_err: true</code></pre>
 <hr>
 <h2 id="in-language-concurrency">In-language concurrency</h2>
-<p>drang has <strong>real multi-core parallelism with no GIL</strong> — goroutine-backed, made safe by <em>subtraction</em>: top-level bindings are frozen constants, scoping is lexical-only, strings are immutable, and there is no shared mutable global state. With almost nothing shared, parallel execution needs no locks.</p>
-<h3 id="spawn-await-tasks"><code>spawn</code> / <code>await</code> — tasks</h3>
-<p><code>spawn(fn, args...)</code> runs a drang function on its own goroutine (args are deep-copied in — copy-on-send) and returns a <code>Task</code>. <code>await(task)</code> blocks for the result. (<code>await</code> accepts a <code>Task</code> <em>or</em> a process handle from <code>start</code> — one "await any async handle".)</p>
+<p>drang has <strong>real multi-core parallelism with no GIL</strong>: goroutine-backed, made safe by <em>subtraction</em>: top-level bindings are frozen constants, scoping is lexical-only, strings are immutable, and there is no shared mutable global state. With almost nothing shared, parallel execution needs no locks.</p>
+<h3 id="spawn-await-tasks"><code>spawn</code> / <code>await</code>: tasks</h3>
+<p><code>spawn(fn, args...)</code> runs a drang function on its own goroutine (args are deep-copied in, copy-on-send) and returns a <code>Task</code>. <code>await(task)</code> blocks for the result. (<code>await</code> accepts a <code>Task</code> <em>or</em> a process handle from <code>start</code>: one "await any async handle".)</p>
 <pre><code class="language-drang">fn .work($n) { $n * 2 }
 $tasks := [1, 2, 3, 4] |&gt; map(|$n| spawn(.work, $n))
 $results := $tasks |&gt; map(|$t| await($t))
@@ -953,7 +953,7 @@ $res := await(spawn(.boom))
 say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")</code></pre>
 <pre><code>is_err: true  msg: worker failed</code></pre>
 <h3 id="channels-chan-send-recv-recv_ok-close-drain">Channels: <code>chan</code> / <code>send</code> / <code>recv</code> / <code>recv_ok</code> / <code>close</code> / <code>drain</code></h3>
-<p><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> a buffered one. A channel is the one intentionally <em>shared</em> value type. <code>send</code> blocks until received (and copies the value — copy-on-send); <code>recv</code> blocks for the next value (and yields <code>undef</code> once the channel is closed and drained); <code>recv_ok</code> returns <code>[value, ok]</code>; <code>close</code> is idempotent; <code>drain</code> collects every remaining value into an array, blocking until the channel is closed.</p>
+<p><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> a buffered one. A channel is the one intentionally <em>shared</em> value type. <code>send</code> blocks until received (and copies the value, copy-on-send); <code>recv</code> blocks for the next value (and yields <code>undef</code> once the channel is closed and drained); <code>recv_ok</code> returns <code>[value, ok]</code>; <code>close</code> is idempotent; <code>drain</code> collects every remaining value into an array, blocking until the channel is closed.</p>
 <pre><code class="language-drang">$c := chan(3)
 fn .produce($ch) {
   for $i in 1..3 { send($ch, $i * 10) }
@@ -980,7 +980,7 @@ await($t)</code></pre>
 recv_ok: [second, true]
 after close, undef: true</code></pre>
 <p><code>send</code> on a closed channel is a catchable <code>Err</code>, never a crash.</p>
-<h3 id="pmap-parallel-map-across-cpu-cores"><code>pmap</code> — parallel map across CPU cores</h3>
+<h3 id="pmap-parallel-map-across-cpu-cores"><code>pmap</code>: parallel map across CPU cores</h3>
 <p><code>pmap(arr, fn)</code> is the high-level workhorse: the same contract as <code>map</code> (array-first so <code>$xs |&gt; pmap(f)</code> composes; element + optional index callback; results in <strong>input order</strong>; fail-loud on the first <code>Err</code>), but fanned across a bounded <code>NumCPU</code> worker pool for <strong>true parallelism</strong>.</p>
 <pre><code class="language-drang">$squares := [1, 2, 3, 4, 5] |&gt; pmap(|$x| $x * $x)
 say("pmap squares: $squares")</code></pre>
@@ -998,19 +998,19 @@ say("callback saw lengths: $out")
 say("original rows unchanged: $rows")</code></pre>
 <pre><code>callback saw lengths: [2, 2, 2]
 original rows unchanged: [[1], [2], [3]]</code></pre>
-<p>The language deliberately offers no shared accumulator to reduce into, so the canonical racy form is largely unwriteable. Mutating a <em>captured mutable lexical container</em> from a parallel callback is documented-undefined — keep callbacks pure.</p>
+<p>The language deliberately offers no shared accumulator to reduce into, so the canonical racy form is largely unwriteable. Mutating a <em>captured mutable lexical container</em> from a parallel callback is documented-undefined. Keep callbacks pure.</p>
 <p>Like <code>map</code>, <code>pmap</code> is <strong>fail-loud</strong>: the first <code>Err</code> a callback produces becomes the whole result and stops further work.</p>
 <pre><code class="language-drang">$r := pmap([1, 2, 3], |$x| {
   if $x == 2 { fail("boom on 2") } else { $x }
 })
 say("is_err: ${is_err($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>is_err: true  msg: boom on 2</code></pre>
-<p>Parallel subprocesses are just <code>pmap</code> over commands — each call gets its own <code>{timeout}</code>/<code>cwd</code>/<code>env</code> and runs lock-free:</p>
+<p>Parallel subprocesses are just <code>pmap</code> over commands: each call gets its own <code>{timeout}</code>/<code>cwd</code>/<code>env</code> and runs lock-free:</p>
 <pre><code class="language-drang">$versions := ["git", "go", "node"] |&gt; pmap(|$tool| capture($tool, "--version") // "(missing)")</code></pre>
 <hr>
 <h2 id="files-and-paths">Files and Paths</h2>
 <p>drang treats paths as plain strings and leans on Go's <code>os</code>/<code>filepath</code> underneath. The builtins fall into four groups: <strong>file I/O</strong> (<code>read_file</code>, <code>write_file</code>, <code>lines</code>), <strong>filesystem ops</strong> (<code>exists</code>, <code>is_dir</code>, <code>mkdir</code>, <code>glob</code>, <code>rename</code>, <code>rm</code>, <code>copy</code>, <code>size</code>), <strong>pure path transforms</strong> (<code>dirname</code>, <code>basename</code>, <code>ext</code>, <code>stem</code>, <code>abs</code>, <code>slash</code>), and <strong>freshness gates</strong> for build scripts (<code>mtime</code>, <code>newer</code>, <code>stale</code>).</p>
-<p>A guided tour — everything below was run end to end. It builds a scratch directory under the system temp, writes a file, reads it back, globs it, and cleans up:</p>
+<p>A guided tour: everything below was run end to end. It builds a scratch directory under the system temp, writes a file, reads it back, globs it, and cleans up:</p>
 <pre><code class="language-drang"># A scratch dir under the system temp, cleaned up at the end.
 $dir := join($ENV["TEMP"], "drang_fs_tour")
 rm($dir)              # idempotent: no error if absent
@@ -1036,8 +1036,8 @@ glob   : notes.txt
 gone   : true</code></pre>
 <p>Two conventions show up throughout: <code>join(...)</code> assembles path segments OS-correctly, and <code>~</code> concatenates strings. Use <code>:=</code> to declare a variable.</p>
 <h3 id="error-model">Error model</h3>
-<p>Fallible filesystem builtins do <strong>not</strong> throw on failure — they return a catchable <code>Err</code> value (exit code 1). You handle it three ways:</p>
-<ul><li><code>expr?</code> — propagate: if <code>expr</code> is an <code>Err</code>, abort the program with that message.</li><li><code>expr // fallback</code> — recover: substitute <code>fallback</code> when <code>expr</code> is an <code>Err</code>.</li><li>let the <code>Err</code> flow as an ordinary value.</li></ul>
+<p>Fallible filesystem builtins do <strong>not</strong> throw on failure. They return a catchable <code>Err</code> value (exit code 1). You handle it three ways:</p>
+<ul><li><code>expr?</code>, propagate: if <code>expr</code> is an <code>Err</code>, abort the program with that message.</li><li><code>expr // fallback</code>, recover: substitute <code>fallback</code> when <code>expr</code> is an <code>Err</code>.</li><li>let the <code>Err</code> flow as an ordinary value.</li></ul>
 <pre><code class="language-drang">$txt := read_file("does_not_exist_xyz.txt") // "DEFAULT"
 say("recovered: " ~ $txt)            # recovered: DEFAULT</code></pre>
 <p>The <code>?</code> form aborts with the underlying OS error and a non-zero exit:</p>
@@ -1051,12 +1051,12 @@ say("unreached")</code></pre>
 <ul><li><code>tempfile(prefix?)</code> / <code>tempdir(prefix?)</code> → create a uniquely-named empty file / directory</li></ul>
 <p>in the system temp dir and return its path; remove it with <code>rm</code> when done.</p>
 <ul><li><code>lines(text)</code> → splits a <strong>string</strong> into an array of lines. It is <em>not</em> a file</li></ul>
-<p>reader — pair it with <code>read_file</code>: <code>lines(read_file(path))</code>.</p>
+<p>reader. Pair it with <code>read_file</code>: <code>lines(read_file(path))</code>.</p>
 <p><code>lines</code> normalizes CRLF to LF and drops a single trailing newline, so <code>"a\nb\n"</code> yields two elements and <code>""</code> yields an empty array:</p>
 <pre><code class="language-drang">say(len(lines("")))        # 0
 say(len(lines("a\nb\n")))  # 2   (trailing newline dropped)
 say(len(lines("a\nb")))    # 2</code></pre>
-<p><code>write_file</code> accepts non-strings, rendering them the way <code>say</code> would — <code>write_file(f, 42)</code> stores the text <code>42</code>.</p>
+<p><code>write_file</code> accepts non-strings, rendering them the way <code>say</code> would: <code>write_file(f, 42)</code> stores the text <code>42</code>.</p>
 <h3 id="filesystem-ops">Filesystem ops</h3>
 <ul><li><code>exists(p)</code> → bool, true if the path exists.</li><li><code>is_dir(p)</code> → bool, true only if <code>p</code> exists <em>and</em> is a directory.</li><li><code>mkdir(p)</code> → creates <code>p</code> and any missing parents (<code>mkdir -p</code>); returns <code>p</code>.</li><li><code>glob(pattern)</code> → sorted array of matching paths; **no match is an empty</li></ul>
 <p>array, not an error<strong>. Supports <code>*</code>, <code>?</code>, <code>[...]</code>, and a recursive `</strong>` segment that spans directories.</p>
@@ -1085,7 +1085,7 @@ for $m in $all { say(slash($m)) }</code></pre>
 <pre><code>C:/Users/anafa/AppData/Local/Temp/drang_fs_demo4/sub/deep.go
 C:/Users/anafa/AppData/Local/Temp/drang_fs_demo4/top.go</code></pre>
 <h3 id="pure-path-helpers">Pure path helpers</h3>
-<p>These are string transforms — they never touch the disk and never return an <code>Err</code> (a non-string argument is a hard error). On Windows they use the native separator unless noted.</p>
+<p>These are string transforms. They never touch the disk and never return an <code>Err</code> (a non-string argument is a hard error). On Windows they use the native separator unless noted.</p>
 <table><thead><tr><th>Builtin</th><th>Input</th><th>Result</th></tr></thead><tbody><tr><td><code>dirname(p)</code></td><td><code>.../notes.txt</code></td><td><code>...</code> (the directory)</td></tr><tr><td><code>basename(p)</code></td><td><code>.../notes.txt</code></td><td><code>notes.txt</code></td></tr><tr><td><code>ext(p)</code></td><td><code>.../notes.txt</code></td><td><code>.txt</code> (leading dot)</td></tr><tr><td><code>stem(p)</code></td><td><code>.../notes.txt</code></td><td><code>notes</code> (basename minus ext)</td></tr><tr><td><code>abspath(p)</code></td><td><code>foo/bar.txt</code></td><td>absolute path against the CWD (numeric absolute value is <code>abs</code>)</td></tr><tr><td><code>slash(p)</code></td><td><code>C:\a\b</code></td><td><code>C:/a/b</code> (forward slashes)</td></tr></tbody></table>
 <pre><code class="language-drang">$f := "C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt"
 say(dirname($f))   # C:\Users\anafa\AppData\Local\Temp\drang_fs_demo
@@ -1116,7 +1116,7 @@ if stale($obj, $srcs) {
   say("rebuilding " ~ basename($obj))
   # ... run the compiler ...
 }</code></pre>
-<p><strong>Timestamp granularity caveat:</strong> <code>mtime</code> resolves to whole seconds, so two files written in the same instant compare equal — <code>newer</code> returns <code>false</code> in both directions for them. Freshness checks are reliable across a real time gap (an actual edit between builds), not for files created back-to-back in one script run.</p>
+<p><strong>Timestamp granularity caveat:</strong> <code>mtime</code> resolves to whole seconds, so two files written in the same instant compare equal. <code>newer</code> returns <code>false</code> in both directions for them. Freshness checks are reliable across a real time gap (an actual edit between builds), not for files created back-to-back in one script run.</p>
 <hr>
 <h2 id="json">JSON</h2>
 <p><code>from_json</code> parses a JSON document into drang values; <code>to_json</code> renders them back. Objects become drang's insertion-ordered maps (so key order round-trips), arrays become arrays, and numbers become <code>int</code> when integral or <code>float</code> otherwise.</p>
@@ -1125,7 +1125,7 @@ say($cfg.name)
 say($cfg.tags |&gt; len)</code></pre>
 <pre><code>zmal
 2</code></pre>
-<p>Build a value and serialize it. A second argument to <code>to_json</code> switches on indentation — an int is that many spaces; without it the output is compact:</p>
+<p>Build a value and serialize it. A second argument to <code>to_json</code> switches on indentation: an int is that many spaces; without it the output is compact:</p>
 <pre><code class="language-drang">$out := {}
 $out["ok"] = true
 $out["items"] = [1, 2]
@@ -1139,31 +1139,31 @@ say(to_json($out, 2))</code></pre>
     2
   ]
 }</code></pre>
-<p>Malformed input is a catchable error value, not an abort — recover it with <code>//</code> or inspect it with <code>is_err</code>:</p>
+<p>Malformed input is a catchable error value, not an abort; recover it with <code>//</code> or inspect it with <code>is_err</code>:</p>
 <pre><code class="language-drang">say(is_err(from_json("{ broken")))
 say(from_json("nope") // "fallback")</code></pre>
 <pre><code>true
 fallback</code></pre>
 <hr>
 <h2 id="csv">CSV</h2>
-<p><code>from_csv</code> parses RFC 4180 CSV into rows; <code>to_csv</code> renders rows back. Both are built on a battle-tested parser, so the awkward parts are handled: fields containing commas, quotes, or newlines, and the doubled-quote escape (<code>""</code>). <strong>Cells are always strings</strong> — convert explicitly (<code>int($row.age)</code>); there is no type inference.</p>
+<p><code>from_csv</code> parses RFC 4180 CSV into rows; <code>to_csv</code> renders rows back. Both are built on a battle-tested parser, so the awkward parts are handled: fields containing commas, quotes, or newlines, and the doubled-quote escape (<code>""</code>). PLACEHOLDER (<code>int($row.age)</code>); there is no type inference.</p>
 <p>By default rows are arrays of strings. With <code>{header: true}</code> the first row names the columns and every later row becomes a record keyed by those names:</p>
 <pre><code class="language-drang">from_csv("a,b\n1,2")                       # [["a", "b"], ["1", "2"]]
 $rows := from_csv("name,age\nalice,30\nbob,25", {header: true})
 say($rows[0].name)                         # alice
 say(to_csv($rows))                         # name,age / alice,30 / bob,25 (header auto-written)</code></pre>
 <p><code>to_csv</code> accepts either shape: an array of arrays writes plain rows; an array of records writes a header (from the first record's keys) plus one row per record, with values pulled <em>by key</em> (so a record's key order need not match). Scalars stringify (<code>nil</code> is an empty cell); a non-scalar cell is an error.</p>
-<p>Both are <strong>strict by default</strong>, to catch malformed data loudly — ragged rows (a differing field count), duplicate header names, and records whose keys differ from the header are errors. Pass <code>{lenient: true}</code> to relax all three (pad/truncate, keep the last duplicate column, drop unknown keys).</p>
+<p>Both are <strong>strict by default</strong>, to catch malformed data loudly: ragged rows (a differing field count), duplicate header names, and records whose keys differ from the header are errors. Pass <code>{lenient: true}</code> to relax all three (pad/truncate, keep the last duplicate column, drop unknown keys).</p>
 <p>Options (an optional trailing map):</p>
 <table><thead><tr><th>Option</th><th>Where</th><th>Meaning</th></tr></thead><tbody><tr><td><code>sep</code></td><td>both</td><td>field delimiter, one character (default <code>,</code>; e.g. <code>"\t"</code> for TSV)</td></tr><tr><td><code>header</code></td><td>both</td><td>read: first row is column names → records; write: include a header row (default true)</td></tr><tr><td><code>lenient</code></td><td>both</td><td>relax strictness (ragged rows, duplicate / divergent keys)</td></tr><tr><td><code>comment</code></td><td>read</td><td>skip lines whose first character is this</td></tr><tr><td><code>trim</code></td><td>read</td><td>drop leading whitespace in each field</td></tr><tr><td><code>lazy_quotes</code></td><td>read</td><td>tolerate stray quotes in malformed input</td></tr><tr><td><code>crlf</code></td><td>write</td><td>end lines with <code>\r\n</code> (strict RFC) instead of the default <code>\n</code></td></tr></tbody></table>
 <p>As with JSON, option misuse (a bad type, a multi-character or invalid <code>sep</code>, an unknown option key) aborts; malformed CSV and unencodable rows are catchable <code>Err</code> values:</p>
 <pre><code class="language-drang">say(is_err(from_csv("a,b\n1,2,3")))                          # true — ragged row (strict)
 $rows := from_csv(read_file("data.csv"), {header: true}) // []   # [] on a read error</code></pre>
-<p>A leading UTF-8 BOM (which Excel writes) is stripped automatically. Two inherited quirks worth knowing: a <code>\r\n</code> <em>inside</em> a quoted field reads back as <code>\n</code>, and blank lines are skipped — so a row that is a single empty field won't survive a round trip. And because one-liner <code>-n</code>/<code>-p</code> is line-based, it can't safely stream a CSV with quoted newlines — run <code>from_csv</code> on the whole text instead.</p>
+<p>A leading UTF-8 BOM (which Excel writes) is stripped automatically. Two inherited quirks worth knowing: a <code>\r\n</code> <em>inside</em> a quoted field reads back as <code>\n</code>, and blank lines are skipped, so a row that is a single empty field won't survive a round trip. And because one-liner <code>-n</code>/<code>-p</code> is line-based, it can't safely stream a CSV with quoted newlines, so run <code>from_csv</code> on the whole text instead.</p>
 <hr>
 <h2 id="date-and-time">Date and time</h2>
-<p>A point in time is just a <strong>number</strong> — seconds since the Unix epoch, with sub-second precision (the Perl model). So time arithmetic and comparison use ordinary number operators: <code>$t + 3600</code> is an hour later, <code>$a &lt; $b</code> is "before".</p>
-<ul><li><code>now()</code> — the current time, as epoch seconds (a float).</li><li><code>sleep($secs)</code> — pause for <code>$secs</code> seconds (a float; fractional is fine).</li><li><code>strftime($epoch, $fmt, {utc: true}?)</code> — format an epoch as a string, using <code>%</code>-codes; local time by default, or UTC with <code>{utc: true}</code>.</li><li><code>parse_time($str, $fmt, {utc: true}?)</code> — parse a string (same <code>%</code>-codes) back to an epoch, or an <code>Err</code>; interprets the string as local time, or UTC with <code>{utc: true}</code>.</li><li><code>date_parts($epoch, {utc: true}?)</code> — a map of components: <code>year month day hour minute second weekday yearday</code> (<code>weekday</code> is 0–6, Sunday = 0); local or, with <code>{utc: true}</code>, UTC.</li></ul>
+<p>A point in time is just a <strong>number</strong>: seconds since the Unix epoch, with sub-second precision (the Perl model). So time arithmetic and comparison use ordinary number operators: <code>$t + 3600</code> is an hour later, <code>$a &lt; $b</code> is "before".</p>
+<ul><li><code>now()</code>: the current time, as epoch seconds (a float).</li><li><code>sleep($secs)</code>: pause for <code>$secs</code> seconds (a float; fractional is fine).</li><li><code>strftime($epoch, $fmt, {utc: true}?)</code>: format an epoch as a string, using <code>%</code>-codes; local time by default, or UTC with <code>{utc: true}</code>.</li><li><code>parse_time($str, $fmt, {utc: true}?)</code>: parse a string (same <code>%</code>-codes) back to an epoch, or an <code>Err</code>; interprets the string as local time, or UTC with <code>{utc: true}</code>.</li><li><code>date_parts($epoch, {utc: true}?)</code>: a map of components: <code>year month day hour minute second weekday yearday</code> (<code>weekday</code> is 0–6, Sunday = 0); local or, with <code>{utc: true}</code>, UTC.</li></ul>
 <pre><code class="language-drang">$t := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S")
 say(strftime($t, "%A, %b %e %Y at %H:%M"))   # Saturday, Jun 27 2026 at 13:45
 say(strftime($t + 86400, "%Y-%m-%d"))         # 2026-06-28  (one day later)
@@ -1172,32 +1172,32 @@ say(date_parts($t).weekday)                   # 6</code></pre>
 <hr>
 <h2 id="hashing-encoding-and-randomness">Hashing, encoding, and randomness</h2>
 <p>Thin bindings over Go's standard library.</p>
-<p><strong>Hashing</strong> — <code>sha256</code>, <code>sha1</code>, <code>md5</code> take a string and return its lowercase hex digest:</p>
+<p><strong>Hashing</strong>: <code>sha256</code>, <code>sha1</code>, <code>md5</code> take a string and return its lowercase hex digest:</p>
 <pre><code class="language-drang">say(sha256("abc"))   # ba7816bf...f20015ad
 say(md5("abc"))      # 900150983cd24fb0d6963f7d28e17f72</code></pre>
-<p><strong>Encoding</strong> — <code>to_base64</code>/<code>from_base64</code>, <code>to_hex</code>/<code>from_hex</code>, and <code>url_encode</code>/<code>url_decode</code> convert to and from a string; the <code>from_*</code> / <code>*_decode</code> side returns a catchable <code>Err</code> on malformed input:</p>
+<p><strong>Encoding</strong>: <code>to_base64</code>/<code>from_base64</code>, <code>to_hex</code>/<code>from_hex</code>, and <code>url_encode</code>/<code>url_decode</code> convert to and from a string; the <code>from_*</code> / <code>*_decode</code> side returns a catchable <code>Err</code> on malformed input:</p>
 <pre><code class="language-drang">say(to_base64("hi"))                    # aGk=
 say(from_base64("aGk="))                # hi
 say(to_hex("AB"))                       # 4142
 say(url_encode("a b&amp;c=d"))              # a+b%26c%3Dd
 say(from_base64("!!!") // "bad input")  # bad input</code></pre>
-<p><strong>Randomness</strong> — <code>rand()</code> is a float in <code>[0, 1)</code>; <code>rand_int(n)</code> is an int in <code>[0, n)</code> and <code>rand_int(lo, hi)</code> in <code>[lo, hi)</code>; <code>shuffle(arr)</code> returns a new shuffled array (the input is untouched); <code>sample(arr)</code> returns a random element; <code>uuid()</code> returns a random v4 UUID:</p>
+<p><strong>Randomness</strong>: <code>rand()</code> is a float in <code>[0, 1)</code>; <code>rand_int(n)</code> is an int in <code>[0, n)</code> and <code>rand_int(lo, hi)</code> in <code>[lo, hi)</code>; <code>shuffle(arr)</code> returns a new shuffled array (the input is untouched); <code>sample(arr)</code> returns a random element; <code>uuid()</code> returns a random v4 UUID:</p>
 <pre><code class="language-drang">say(rand_int(6) + 1)            # a die roll, 1–6
 say(shuffle([1, 2, 3, 4]))     # e.g. [3, 1, 4, 2]
 say(sample(["a", "b", "c"]))   # e.g. b
 say(uuid())                    # e.g. 5b1f9d2c-...-4e7a-...</code></pre>
-<p><code>rand</code>/<code>rand_int</code>/<code>shuffle</code>/<code>sample</code> use a fast auto-seeded generator (fine for jitter, sampling, and test data — not for secrets); <code>uuid</code> draws from the cryptographic generator.</p>
+<p><code>rand</code>/<code>rand_int</code>/<code>shuffle</code>/<code>sample</code> use a fast auto-seeded generator (fine for jitter, sampling, and test data, not for secrets); <code>uuid</code> draws from the cryptographic generator.</p>
 <hr>
 <h2 id="http-client">HTTP client</h2>
-<p>A small, robust HTTP client over Go's <code>net/http</code>. The whole surface is <code>http</code> plus <code>get</code> and <code>post</code> sugar; PUT/PATCH/DELETE go through <code>http(method, url, ...)</code>. Higher-level patterns — retry, cookies, auth, pagination — are written in drang, not configured in the builtin.</p>
+<p>A small, robust HTTP client over Go's <code>net/http</code>. The whole surface is <code>http</code> plus <code>get</code> and <code>post</code> sugar; PUT/PATCH/DELETE go through <code>http(method, url, ...)</code>. Higher-level patterns (retry, cookies, auth, pagination) are written in drang, not configured in the builtin.</p>
 <pre><code class="language-drang">$r := http_get("https://example.com")
 say($r.status, $r.ok, len($r.body))                       # 200 true &lt;n&gt;  (n = body bytes)
 
 $r := http("POST", "https://api.example.com/items", {json: {name: "ada"}})?
 $r := http_post("https://example.com/form", "a=1&amp;b=2")    # a string body</code></pre>
-<p>A response is a map: <code>{status, ok (200–299), body, headers (lowercased keys), url (final, after redirects)}</code>. <code>opts</code> (a trailing map, like <code>run</code>'s) accepts: <code>headers</code> (a <code>{name: value}</code> map), <code>body</code> (string), <code>json</code> (any value — serialized and sent as <code>application/json</code>; <code>body</code> and <code>json</code> together is an error), <code>timeout</code> (ms; <code>0</code> = unlimited), <code>redirects</code> (cap; <code>0</code> = don't follow, returning the 3xx), <code>max_body</code> (bytes; <code>0</code> = unlimited), and <code>insecure</code> (skip TLS verification).</p>
+<p>A response is a map: <code>{status, ok (200–299), body, headers (lowercased keys), url (final, after redirects)}</code>. <code>opts</code> (a trailing map, like <code>run</code>'s) accepts: <code>headers</code> (a <code>{name: value}</code> map), <code>body</code> (string), <code>json</code> (any value, serialized and sent as <code>application/json</code>; <code>body</code> and <code>json</code> together is an error), <code>timeout</code> (ms; <code>0</code> = unlimited), <code>redirects</code> (cap; <code>0</code> = don't follow, returning the 3xx), <code>max_body</code> (bytes; <code>0</code> = unlimited), and <code>insecure</code> (skip TLS verification).</p>
 <p><strong>Robust by default</strong> (the defaults Go's bare client lacks): a 30-second timeout, follow up to 10 redirects (dropping <code>Authorization</code> on a cross-host hop), TLS verification <strong>on</strong>, a 32 MiB response-body cap (exceeding it is an error, never a silent truncation), transparent gzip, and one shared connection-pooled transport (safe to fan out under <code>pmap</code>).</p>
-<p><strong>The error model mirrors <code>capture</code>/<code>capture_all</code>: a completed exchange is data, a failure to complete is an <code>Err</code>.</strong> A 4xx/5xx is a normal answer — you get <code>{status: 404, ok: false, …}</code>, never an error. Only a transport failure — DNS, connection refused, <strong>timeout</strong> (carries <code>err_code</code> <code>124</code>, like a subprocess), TLS failure, a bad URL, or a body over <code>max_body</code> — is a catchable <code>Err</code>. So <code>?</code> means "I couldn't reach the server" (which should bubble), and <code>//</code> masks only that:</p>
+<p><strong>The error model mirrors <code>capture</code>/<code>capture_all</code>: a completed exchange is data, a failure to complete is an <code>Err</code>.</strong> A 4xx/5xx is a normal answer: you get <code>{status: 404, ok: false, …}</code>, never an error. Only a transport failure (DNS, connection refused, <strong>timeout</strong> (carries <code>err_code</code> <code>124</code>, like a subprocess), TLS failure, a bad URL, or a body over <code>max_body</code>) is a catchable <code>Err</code>. So <code>?</code> means "I couldn't reach the server" (which should bubble), and <code>//</code> masks only that:</p>
 <pre><code class="language-drang">$r := http_get($url)
 if is_err($r) {
   if err_code($r) == 124 { say("timed out") } else { say("unreachable") }
@@ -1208,7 +1208,7 @@ $health := http_get($url) // {status: 0, ok: false}       # // masks ONLY a tran
 $statuses := $urls |&gt; pmap(|$u| http_get($u, {timeout: 2000}) // {status: 0}) |&gt; map(|$r| $r.status)</code></pre>
 <hr>
 <h2 id="task-dispatch">Task dispatch</h2>
-<p><code>dispatch(tasks)</code> turns a script into a subcommand-style CLI — a tiny <code>make</code>/<code>just</code> in your program. It takes a map of <code>{name: function}</code>, looks up the task named by <code>$ARGV[0]</code>, runs it, and <strong>exits the process</strong> with a resolved code (it does not return).</p>
+<p><code>dispatch(tasks)</code> turns a script into a subcommand-style CLI, a tiny <code>make</code>/<code>just</code> in your program. It takes a map of <code>{name: function}</code>, looks up the task named by <code>$ARGV[0]</code>, runs it, and <strong>exits the process</strong> with a resolved code (it does not return).</p>
 <pre><code class="language-drang">fn .build($args) { say("building " ~ to_json($args)) }
 fn .clean()      { say("cleaning") }
 
@@ -1227,29 +1227,29 @@ tasks:
 <p>A task function takes either <strong>0 parameters</strong> (it ignores the arguments) or <strong>1 parameter</strong> (it receives the post-name argv as a string array); more is an error. The exit code follows the task: success → <code>0</code>; a returned/propagated <strong>Err</strong> → its code (clamped to <code>1..255</code>); an <code>exit(n)</code>/<code>die</code> → that code; an unknown task → <code>2</code>.</p>
 <hr>
 <h2 id="one-liner-mode">One-liner mode</h2>
-<p><code>-n</code> and <code>-p</code> turn drang into a stream processor in the awk/perl/sed tradition: the program runs once per input line. <code>-n</code> just loops; <code>-p</code> also prints the topic variable after each line (the filter/sed mode). Short flags combine — <code>-ne</code>, <code>-pe</code>, <code>-ane</code> — and a trailing <code>e</code> takes the program source as its argument, like a plain <code>-e</code>.</p>
+<p><code>-n</code> and <code>-p</code> turn drang into a stream processor in the awk/perl/sed tradition: the program runs once per input line. <code>-n</code> just loops; <code>-p</code> also prints the topic variable after each line (the filter/sed mode). Short flags combine: <code>-ne</code>, <code>-pe</code>, <code>-ane</code>, and a trailing <code>e</code> takes the program source as its argument, like a plain <code>-e</code>.</p>
 <pre><code>drang -pe '$_ = upper($_)' &lt; notes.txt               # filter: uppercase each line
 drang -ne 'if matches($_, "ERROR") { say($_) }' log  # grep-like (matches(s, pat))
 drang -ape '$_ = $f[0]' data.tsv                      # print the first column</code></pre>
 <p>Per-line variables (all in the <code>$</code> data namespace):</p>
 <table><thead><tr><th>Variable</th><th>Meaning</th></tr></thead><tbody><tr><td><code>$_</code></td><td>the current line, with its trailing newline (and <code>\r</code>) stripped</td></tr><tr><td><code>$nr</code></td><td>the 1-based line number, counting across every input file</td></tr><tr><td><code>$file</code></td><td>the current input filename (<code>"&lt;stdin&gt;"</code> when reading stdin)</td></tr><tr><td><code>$f</code></td><td>with <code>-a</code>, the line split on whitespace into a 0-indexed array</td></tr></tbody></table>
 <p>Input comes from the files named after the program, or from stdin when none are given; <code>-</code> in the file list also means stdin. The filenames are exposed as <code>$ARGV</code>.</p>
-<p><code>BEGIN { ... }</code> and <code>END { ... }</code> blocks run once, before and after the loop — for setup, headers, accumulators, and totals. The per-line body runs in a persistent scope, so a variable declared in <code>BEGIN</code> survives every line:</p>
+<p><code>BEGIN { ... }</code> and <code>END { ... }</code> blocks run once, before and after the loop, for setup, headers, accumulators, and totals. The per-line body runs in a persistent scope, so a variable declared in <code>BEGIN</code> survives every line:</p>
 <pre><code>drang -ane 'BEGIN{ $sum := 0 } $sum = $sum + int($f[0]); END{ say($sum) }' nums.txt</code></pre>
-<p>(<code>BEGIN</code>/<code>END</code> are contextual keywords — recognized only as a statement-leading <code>BEGIN {</code> / <code>END {</code> — so they stay ordinary identifiers everywhere else.)</p>
+<p>(<code>BEGIN</code>/<code>END</code> are contextual keywords, recognized only as a statement-leading <code>BEGIN {</code> / <code>END {</code>, so they stay ordinary identifiers everywhere else.)</p>
 <p>Notes and limits (v1):</p>
 <ul><li>Separate statements on one line with <code>;</code>. A block's closing <code>}</code> also ends a</li></ul>
 <p>statement, so <code>BEGIN{ ... } stmt</code> needs no <code>;</code>, but <code>stmt; END{ ... }</code> does.</p>
-<ul><li>Use <code>:=</code> / <code>=</code> in the per-line body, not <code>::=</code> — re-declaring a constant on every</li></ul>
+<ul><li>Use <code>:=</code> / <code>=</code> in the per-line body, not <code>::=</code>; re-declaring a constant on every</li></ul>
 <p>line is an error.</p>
 <ul><li><code>-p</code> ends each line with <code>\n</code> (CRLF input is normalized to LF, and a missing final</li></ul>
 <p>newline is added).</p>
 <ul><li>Runtime errors in stream mode report the message but not a source position.</li><li>In-place file editing (<code>-i</code>) is not yet supported.</li></ul>
 <hr>
 <h2 id="modules-use">Modules: <code>use</code></h2>
-<p>A program can be split across files. Any <code>.dr</code> file is a <strong>module</strong>; its top-level named functions (<code>fn .foo</code>) and constants (<code>$CONST ::= …</code>) are its <strong>exports</strong>. Nothing else is exported — a mutable top-level variable in a module is an error at import time, so exports are always functions and constants.</p>
+<p>A program can be split across files. Any <code>.dr</code> file is a <strong>module</strong>; its top-level named functions (<code>fn .foo</code>) and constants (<code>$CONST ::= …</code>) are its <strong>exports</strong>. Nothing else is exported; a mutable top-level variable in a module is an error at import time, so exports are always functions and constants.</p>
 <p>There is one keyword, <code>use</code>, and <strong>whether you capture its result</strong> chooses the mode.</p>
-<h3 id="flat-merge-use-util">Flat merge — <code>use "./util"</code></h3>
+<h3 id="flat-merge-use-util">Flat merge: <code>use "./util"</code></h3>
 <p>Used as a statement, <code>use</code> merges the module's exports into the current scope, as if pasted: its <code>.foo</code> functions join your <code>.</code>-space, its <code>$CONST</code>s join your <code>$</code>-space.</p>
 <pre><code># util.dr
 fn .shout($s) { upper($s) ~ "!" }
@@ -1258,49 +1258,49 @@ $GREETING ::= "hi"</code></pre>
 use "./util"
 say(.shout("hey"))   # HEY!
 say($GREETING)       # hi</code></pre>
-<h3 id="isolated-u-useutil">Isolated — <code>$u := use("./util")</code></h3>
-<p>Used as a call whose result you bind, <code>use</code> returns the module's <strong>export record</strong> and merges nothing into your namespaces. Reach the exports through the binding. This is the aliased-import form — bind to any <code>$name</code>; there is no <code>as</code> keyword.</p>
+<h3 id="isolated-u-useutil">Isolated: <code>$u := use("./util")</code></h3>
+<p>Used as a call whose result you bind, <code>use</code> returns the module's <strong>export record</strong> and merges nothing into your namespaces. Reach the exports through the binding. This is the aliased-import form, bind to any <code>$name</code>; there is no <code>as</code> keyword.</p>
 <pre><code>$u := use("./util")
 say($u.shout("hey"))   # HEY!
 say($u.GREETING)       # hi</code></pre>
 <h3 id="paths">Paths</h3>
-<p>Paths are <strong>strings</strong> (so a path with a space just works), and the <code>.dr</code> extension is optional. A relative path resolves against <strong>the importing file's directory</strong>, so a module's own <code>use "./sibling"</code> is relative to that module, not to whoever imported it. For entry points with no source file — <code>-e</code>, stdin, the REPL, and a <code>drang build</code> standalone — relative paths resolve against the <strong>current working directory</strong>.</p>
+<p>Paths are <strong>strings</strong> (so a path with a space just works), and the <code>.dr</code> extension is optional. A relative path resolves against <strong>the importing file's directory</strong>, so a module's own <code>use "./sibling"</code> is relative to that module, not to whoever imported it. For entry points with no source file (<code>-e</code>, stdin, the REPL, and a <code>drang build</code> standalone) relative paths resolve against the <strong>current working directory</strong>.</p>
 <h3 id="loading-rules">Loading rules</h3>
 <ul><li><strong>Load once.</strong> A module is evaluated once per process and cached by canonical path,</li></ul>
 <p>so a diamond (<code>a</code> uses <code>b</code> and <code>c</code>, both use <code>d</code>) loads <code>d</code> exactly once.</p>
 <ul><li><strong>Cycles error.</strong> If imports form a cycle, the import fails with `import cycle</li></ul>
 <p>through …` rather than looping.</p>
 <ul><li><strong>Flat-merge is not transitive.</strong> If module <code>b</code> does <code>use "./d"</code>, importing <code>b</code> does</li></ul>
-<p><em>not</em> re-export <code>d</code>'s names — you get <code>b</code>'s own exports only.</p>
+<p><em>not</em> re-export <code>d</code>'s names: you get <code>b</code>'s own exports only.</p>
 <ul><li><strong>Collisions error.</strong> Merging a name already defined in the current scope (or</li></ul>
 <p>defining one a <code>use</code> already merged) is an error, not a silent overwrite.</p>
 <ul><li><strong><code>exit</code> / <code>die</code> propagate.</strong> If a module calls <code>exit()</code> or <code>die()</code> while loading, it</li></ul>
-<p>terminates the program — even through the captured <code>$u := use(...)</code> form (it is not downgraded to a catchable error).</p>
+<p>terminates the program, even through the captured <code>$u := use(...)</code> form (it is not downgraded to a catchable error).</p>
 <h3 id="errors">Errors</h3>
 <p>A failed import via the <strong>captured</strong> form is a catchable <a href="#errors-as-values">error value</a>, so you can fall back:</p>
 <pre><code>$cfg := use("./optional") // {}      # missing/broken module → use a default</code></pre>
 <p>A failed <strong>flat-merge</strong> statement aborts the program with the import error.</p>
 <h3 id="notes-and-limits">Notes and limits</h3>
 <ul><li>A bare <code>use("./util")</code> <strong>with parentheses, as a statement</strong> (result discarded) loads</li></ul>
-<p>the module but imports nothing — almost always a mistake. Write <code>use "./util"</code> to merge, or <code>$u := use("./util")</code> to capture.</p>
+<p>the module but imports nothing, almost always a mistake. Write <code>use "./util"</code> to merge, or <code>$u := use("./util")</code> to capture.</p>
 <ul><li>Exported values are <strong>deeply immutable.</strong> A module's exports (the record and every</li></ul>
-<p>array/map within) are frozen, so mutating one fails loudly rather than affecting other importers — exports are safe to share across the import cache.</p>
+<p>array/map within) are frozen, so mutating one fails loudly rather than affecting other importers; exports are safe to share across the import cache.</p>
 <ul><li>Every top-level <code>.foo</code> is exported; there is no module-private helper yet.</li></ul>
 <hr>
 <h2 id="testing-drang-test">Testing: <code>drang test</code></h2>
-<p>Tests are written as <strong><code>example</code></strong> statements — assertions that double as verified documentation. There are three forms:</p>
+<p>Tests are written as <strong><code>example</code></strong> statements: assertions that double as verified documentation. There are three forms:</p>
 <pre><code class="language-drang">example .add(2, 3) == 5       # equality
 example is_valid("ok")        # truthy
 example .parse("bad") fails   # expects an error (an Err value or a runtime abort)</code></pre>
 <p>Run them with the <code>test</code> subcommand:</p>
 <pre><code>drang test mathutil.dr</code></pre>
-<p><code>drang test</code> runs each file (so its functions and top-level setup execute), then evaluates every <code>example</code> as an assertion. It prints a block for each failure — the location, the example, and expected-vs-got — followed by a per-file <code>N passed, M failed</code> line, and exits non-zero if anything failed:</p>
+<p><code>drang test</code> runs each file (so its functions and top-level setup execute), then evaluates every <code>example</code> as an assertion. It prints a block for each failure: the location, the example, and expected-vs-got, followed by a per-file <code>N passed, M failed</code> line, and exits non-zero if anything failed:</p>
 <pre><code>  FAIL mathutil.dr:8  (example (call .add 2 3) == 6)
         expected 6, got 5
 mathutil.dr: 4 passed, 1 failed</code></pre>
-<p>An <code>example</code> examines all of a file's definitions regardless of order (the file runs first, then the assertions), so an example may appear above the function it tests — handy for example-first documentation. In a <strong>normal</strong> run (<code>drang file.dr</code> / <code>-e</code>), <code>example</code> statements are a <strong>no-op</strong>: they never execute, so they cost nothing and can't interfere with the program. (A richer <code>test "name" { … }</code> block form with an <code>assert</code> builtin is a possible future addition; v1 is <code>example</code>-only.)</p>
+<p>An <code>example</code> examines all of a file's definitions regardless of order (the file runs first, then the assertions), so an example may appear above the function it tests, handy for example-first documentation. In a <strong>normal</strong> run (<code>drang file.dr</code> / <code>-e</code>), <code>example</code> statements are a <strong>no-op</strong>: they never execute, so they cost nothing and can't interfere with the program. (A richer <code>test "name" { … }</code> block form with an <code>assert</code> builtin is a possible future addition; v1 is <code>example</code>-only.)</p>
 <h3 id="golden-output-tests">Golden-output tests</h3>
-<p>Where <code>example</code> checks a <strong>value</strong>, a golden test snapshots a script's whole <strong>stdout</strong> against a saved fixture — ideal for scripts that <em>produce text</em> (reports, CLI tools). Put a <code>.golden</code> file next to the script (<code>report.dr</code> → <code>report.golden</code>); <code>drang test</code> then runs the script, captures its stdout, and diffs it against the golden:</p>
+<p>Where <code>example</code> checks a <strong>value</strong>, a golden test snapshots a script's whole <strong>stdout</strong> against a saved fixture, ideal for scripts that <em>produce text</em> (reports, CLI tools). Put a <code>.golden</code> file next to the script (<code>report.dr</code> → <code>report.golden</code>); <code>drang test</code> then runs the script, captures its stdout, and diffs it against the golden:</p>
 <pre><code>$ drang test report.dr
 report.dr: 2 passed, 0 failed        # the golden + any example assertions</code></pre>
 <p>On a mismatch it prints a compact diff (common lines trimmed, <code>-expected</code> / <code>+actual</code>) and exits non-zero. To create or re-bless a golden from the current output, use <code>--update</code> (<code>-u</code>):</p>
@@ -1309,7 +1309,7 @@ report.dr: 2 passed, 0 failed        # the golden + any example assertions</code
 <p>A golden test assumes the script's output is <strong>deterministic and complete when the top level finishes</strong>: <code>await</code> any <code>spawn</code>ed tasks before the end (a detached task's output may not make it into the capture), and avoid output whose line order depends on <code>pmap</code> scheduling.</p>
 <hr>
 <h2 id="formatting-drang-fmt">Formatting: <code>drang fmt</code></h2>
-<p><code>drang fmt</code> reformats drang source into one canonical style. Like <code>gofmt</code>, it is opinionated and has no configuration knobs. It preserves comments and never changes what a program <em>does</em> — only how it reads.</p>
+<p><code>drang fmt</code> reformats drang source into one canonical style. Like <code>gofmt</code>, it is opinionated and has no configuration knobs. It preserves comments and never changes what a program <em>does</em>. Only how it reads.</p>
 <pre><code>$ drang fmt script.dr            # print formatted source to stdout
 $ drang fmt -w script.dr         # rewrite the file in place
 $ drang fmt -w src/              # rewrite every *.dr under a directory
@@ -1323,11 +1323,11 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <p>tight <code>..</code> ranges and prefix <code>-</code>/<code>!</code>; <code>, </code> between elements; <code>key: value</code> in maps.</p>
 <ul><li><strong>Blank lines</strong> are collapsed, with one kept around each top-level function.</li><li><strong>Parentheses</strong> are reduced to the minimum precedence requires: <code>(1 + 2) * 3</code> keeps its</li></ul>
 <p>parens, <code>1 + (2 * 3)</code> loses them.</p>
-<ul><li><strong>Long lines wrap</strong> at ~100 columns — a <code>|&gt;</code> pipeline breaks at every stage; a long</li></ul>
+<ul><li><strong>Long lines wrap</strong> at ~100 columns: a <code>|&gt;</code> pipeline breaks at every stage; a long</li></ul>
 <p>call, array, or map puts one element per line.</p>
 <ul><li><strong>Your surface is kept faithful.</strong> String quoting and the <code>qq</code>/<code>q</code>/heredoc forms,</li></ul>
 <p><code>qw{…}</code> word lists, regex literals, numeric spelling, <code>|&gt;</code> pipelines, and postfix modifiers (<code>say(x) if c</code>) are reprinted <em>as written</em>, not rewritten into an equivalent.</p>
-<p>Comments are preserved and re-attached by position (leading, same-line trailing, and floating). <code>drang fmt</code> verifies its own output before writing: if reformatting would drop a comment or produce source that no longer parses, it aborts that file untouched (and exits non-zero) rather than risk corrupting your code. Formatting is <strong>idempotent</strong> — running it on already-formatted source is a no-op.</p>
+<p>Comments are preserved and re-attached by position (leading, same-line trailing, and floating). <code>drang fmt</code> verifies its own output before writing: if reformatting would drop a comment or produce source that no longer parses, it aborts that file untouched (and exits non-zero) rather than risk corrupting your code. Formatting is <strong>idempotent</strong>: running it on already-formatted source is a no-op.</p>
 <h3 id="fix-migrations"><code>--fix</code>: migrations</h3>
 <p>drang has no version pragma. Instead, a language revision that renames or reshapes a construct ships a mechanical source rewrite, applied by <code>drang fmt --fix</code>. Today there are no such rewrites, so <code>--fix</code> behaves exactly like <code>fmt</code>; when a future revision needs one, <code>drang fmt --fix -w src/</code> will migrate a whole codebase in a single pass.</p>
 <hr>
@@ -1335,11 +1335,11 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <p>Every builtin in drang, grouped by area. Signatures use <code>?</code> for an optional argument and <code>...</code> for variadic. Builtins follow one error convention: a wrong argument <strong>count</strong> aborts the program (an uncatchable Go error), while a wrong argument <strong>type</strong> or a runtime failure becomes a first-class <strong>Err</strong> value you can recover with <code>//</code> or propagate with <code>?</code>. "→ Err" below means the failure mode is a catchable Err value.</p>
 <p>The list is derived from the <code>builtins</code> map in <code>internal/eval/eval.go</code> and the higher-order forms in <code>internal/eval/hof.go</code>. (<code>spawn</code>, <code>each_line</code>, and <code>dispatch</code> are evaluator special forms, not map builtins, and are documented elsewhere; <code>pmap</code>, <code>sort</code>, and the <code>*_by</code> forms are higher-order and appear under Collections.)</p>
 <h3 id="output-errors">Output &amp; errors</h3>
-<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>say</code></td><td><code>say(x...)</code></td><td>Print all arguments space-separated, then a newline; returns nil.</td></tr><tr><td><code>warn</code></td><td><code>warn(x...)</code></td><td>Like <code>say</code>, but to stderr — for diagnostics that shouldn't pollute stdout.</td></tr><tr><td><code>fail</code></td><td><code>fail(msg?)</code></td><td>Make an Err value with message <code>msg</code> (default <code>"failed"</code>) and code 1.</td></tr><tr><td><code>is_err</code></td><td><code>is_err(x)</code></td><td>True if <code>x</code> is an Err value.</td></tr><tr><td><code>err_code</code></td><td><code>err_code(x)</code></td><td>The Err's code; 0 for a non-Err (so it reads as an exit code).</td></tr><tr><td><code>err_msg</code></td><td><code>err_msg(x)</code></td><td>The Err's message; <code>""</code> for a non-Err.</td></tr><tr><td><code>exit</code></td><td><code>exit(code?)</code></td><td>End the program with <code>code</code> (default 0, clamped 0–255), unwinding past functions, loops, <code>?</code>, and <code>//</code>.</td></tr><tr><td><code>die</code></td><td><code>die(x...)</code></td><td>Print the message to stderr and exit with code 1 — the fatal-error convention for a tool.</td></tr></tbody></table>
+<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>say</code></td><td><code>say(x...)</code></td><td>Print all arguments space-separated, then a newline; returns nil.</td></tr><tr><td><code>warn</code></td><td><code>warn(x...)</code></td><td>Like <code>say</code>, but to stderr: for diagnostics that shouldn't pollute stdout.</td></tr><tr><td><code>fail</code></td><td><code>fail(msg?)</code></td><td>Make an Err value with message <code>msg</code> (default <code>"failed"</code>) and code 1.</td></tr><tr><td><code>is_err</code></td><td><code>is_err(x)</code></td><td>True if <code>x</code> is an Err value.</td></tr><tr><td><code>err_code</code></td><td><code>err_code(x)</code></td><td>The Err's code; 0 for a non-Err (so it reads as an exit code).</td></tr><tr><td><code>err_msg</code></td><td><code>err_msg(x)</code></td><td>The Err's message; <code>""</code> for a non-Err.</td></tr><tr><td><code>exit</code></td><td><code>exit(code?)</code></td><td>End the program with <code>code</code> (default 0, clamped 0–255), unwinding past functions, loops, <code>?</code>, and <code>//</code>.</td></tr><tr><td><code>die</code></td><td><code>die(x...)</code></td><td>Print the message to stderr and exit with code 1: the fatal-error convention for a tool.</td></tr></tbody></table>
 <h3 id="conversions">Conversions</h3>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>int</code></td><td><code>int(x)</code></td><td>Convert int/float/string to an int; unparseable → Err.</td></tr><tr><td><code>str</code></td><td><code>str(x)</code></td><td>Render any value as its display string (numbers, bools, nil, collections, errors).</td></tr><tr><td><code>float</code></td><td><code>float(x)</code></td><td>Convert int/float/string to a float; unparseable → Err.</td></tr><tr><td><code>bool</code></td><td><code>bool(x)</code></td><td>Coerce by truthiness (nil/false/0/0.0/""/empty container → false).</td></tr><tr><td><code>type</code></td><td><code>type(x)</code></td><td>Type name: <code>int</code> <code>float</code> <code>string</code> <code>bool</code> <code>nil</code> <code>array</code> <code>map</code> <code>range</code> <code>function</code> <code>error</code>.</td></tr></tbody></table>
 <h3 id="numeric">Numeric</h3>
-<p>Minimal daily-driver math (not a math/trig kitchen sink — no <code>sin</code>/<code>cos</code>, no bignum). <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code> preserve int vs float; <code>floor</code>/<code>ceil</code>/<code>round</code>/<code>div</code> return an int; <code>sqrt</code>/<code>log</code> return a float; <code>pow</code> returns an int when it can. A bad operand (non-number, <code>sqrt</code> of a negative, <code>log</code> of a non-positive, divide-by-zero, overflow) is a catchable Err.</p>
+<p>Minimal daily-driver math (not a math/trig kitchen sink: no <code>sin</code>/<code>cos</code>, no bignum). <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code> preserve int vs float; <code>floor</code>/<code>ceil</code>/<code>round</code>/<code>div</code> return an int; <code>sqrt</code>/<code>log</code> return a float; <code>pow</code> returns an int when it can. A bad operand (non-number, <code>sqrt</code> of a negative, <code>log</code> of a non-positive, divide-by-zero, overflow) is a catchable Err.</p>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>abs</code></td><td><code>abs(n)</code></td><td>Numeric absolute value (the path builtin is <code>abspath</code>).</td></tr><tr><td><code>sum</code></td><td><code>sum(arr)</code> / <code>sum(a, ...)</code></td><td>Add numbers (array or variadic); empty → 0; overflow → Err.</td></tr><tr><td><code>min</code></td><td><code>min(arr)</code> / <code>min(a, ...)</code></td><td>Smallest value; empty → Err.</td></tr><tr><td><code>max</code></td><td><code>max(arr)</code> / <code>max(a, ...)</code></td><td>Largest value; empty → Err.</td></tr><tr><td><code>floor</code></td><td><code>floor(n)</code></td><td>Round down to an int; NaN/Inf/out-of-range → Err.</td></tr><tr><td><code>ceil</code></td><td><code>ceil(n)</code></td><td>Round up to an int.</td></tr><tr><td><code>round</code></td><td><code>round(n)</code></td><td>Round to the nearest int (half away from zero).</td></tr><tr><td><code>sqrt</code></td><td><code>sqrt(n)</code></td><td>Square root (float); negative → Err.</td></tr><tr><td><code>pow</code></td><td><code>pow(base, exp)</code></td><td>base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float.</td></tr><tr><td><code>log</code></td><td><code>log(x, base?)</code></td><td>Natural log, or log base <code>base</code>; non-positive <code>x</code> or bad base → Err.</td></tr><tr><td><code>div</code></td><td><code>div(a, b)</code></td><td>Truncating integer division (toward zero, matching <code>%</code>); divide-by-zero → Err.</td></tr></tbody></table>
 <h3 id="strings">Strings</h3>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>split</code></td><td><code>split(s, sep?)</code></td><td>Split <code>s</code>; no <code>sep</code> splits on whitespace runs, <code>""</code> splits into runes.</td></tr><tr><td><code>replace</code></td><td><code>replace(s, old, new)</code></td><td>Replace every literal <code>old</code> with <code>new</code>.</td></tr><tr><td><code>trim</code></td><td><code>trim(s, cutset?)</code></td><td>Trim whitespace, or the given <code>cutset</code> characters, from both ends.</td></tr><tr><td><code>upper</code></td><td><code>upper(s)</code></td><td>Uppercase.</td></tr><tr><td><code>lower</code></td><td><code>lower(s)</code></td><td>Lowercase.</td></tr><tr><td><code>starts_with</code></td><td><code>starts_with(s, prefix)</code></td><td>True if <code>s</code> begins with <code>prefix</code>.</td></tr><tr><td><code>ends_with</code></td><td><code>ends_with(s, suffix)</code></td><td>True if <code>s</code> ends with <code>suffix</code>.</td></tr><tr><td><code>format</code></td><td><code>format(tmpl, x...)</code></td><td>Fill each <code>{}</code> in <code>tmpl</code> with the next arg (<code>{{</code>/<code>}}</code> are literal); arity-checked → Err.</td></tr><tr><td><code>lines</code></td><td><code>lines(s)</code></td><td>Split into lines (CRLF-normalized), dropping one trailing newline; <code>""</code> → <code>[]</code>.</td></tr><tr><td><code>repeat</code></td><td><code>repeat(s, n)</code></td><td>Concatenate <code>n</code> copies of <code>s</code>; negative or oversized <code>n</code> → Err.</td></tr><tr><td><code>chars</code></td><td><code>chars(s)</code></td><td>Array of single-rune strings.</td></tr><tr><td><code>index_of</code></td><td><code>index_of(s, needle)</code></td><td>Rune index of the first <code>needle</code> in <code>s</code>, or -1; empty needle → 0.</td></tr><tr><td><code>len</code></td><td><code>len(x)</code></td><td>Rune count of a string (also entry count of an array/map/range).</td></tr><tr><td><code>contains</code></td><td><code>contains(s, needle)</code></td><td>Substring test for a string (also membership for an array).</td></tr></tbody></table>
@@ -1373,35 +1373,35 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <p><code>rand</code>/<code>rand_int</code>/<code>shuffle</code>/<code>sample</code> use a fast auto-seeded generator (not for secrets); <code>uuid</code> uses the cryptographic generator.</p>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>rand</code></td><td><code>rand()</code></td><td>A float in <code>[0, 1)</code>.</td></tr><tr><td><code>rand_int</code></td><td><code>rand_int(n)</code> / <code>rand_int(lo, hi)</code></td><td>A random int in <code>[0, n)</code>, or in <code>[lo, hi)</code>.</td></tr><tr><td><code>shuffle</code></td><td><code>shuffle(arr)</code></td><td>A new array, randomly permuted.</td></tr><tr><td><code>sample</code></td><td><code>sample(arr)</code></td><td>A random element; empty array → Err.</td></tr><tr><td><code>uuid</code></td><td><code>uuid()</code></td><td>A random (v4) UUID string.</td></tr></tbody></table>
 <hr>
-<h2 id="not-yet-known-gaps-and-surprises">Not Yet — Known Gaps and Surprises</h2>
+<h2 id="not-yet-known-gaps-and-surprises">Not Yet: Known Gaps and Surprises</h2>
 <p>drang is a personal daily-driver under active construction, not a finished language. This section is the honest inventory of what is missing or behaves unexpectedly, so you don't waste time reaching for something that isn't there. Everything below was confirmed against the binary.</p>
 <h3 id="whole-capability-areas-with-no-builtins">Whole capability areas with no builtins</h3>
-<p>The math family is daily-driver-sized, not a scientific library: <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code>/<code>floor</code>/<code>ceil</code>/<code>round</code>/<code>sqrt</code>/<code>pow</code>/<code>log</code>/<code>div</code> are present, but trigonometry is not — calling one is an <code>unknown function</code> error:</p>
+<p>The math family is daily-driver-sized, not a scientific library: <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code>/<code>floor</code>/<code>ceil</code>/<code>round</code>/<code>sqrt</code>/<code>pow</code>/<code>log</code>/<code>div</code> are present, but trigonometry is not. Calling one is an <code>unknown function</code> error:</p>
 <pre><code>drang -e 'say(sin(0))'
 # drang: unknown function sin</code></pre>
-<p>Trig (<code>sin</code>, <code>cos</code>, <code>tan</code>, …) is planned as a thin binding over Go's <code>math</code>, not yet landed; for a one-off, orchestrate an external tool. Everything else you might reach for <em>is</em> here now: HTTP (<code>http_get</code>/<code>http_post</code>/<code>http</code> — see <a href="#http-client">HTTP client</a>), date/time, hashing, encodings, and randomness. (The bare name <code>fetch</code> is not a builtin — use <code>http_get</code>.)</p>
+<p>Trig (<code>sin</code>, <code>cos</code>, <code>tan</code>, …) is planned as a thin binding over Go's <code>math</code>, not yet landed; for a one-off, orchestrate an external tool. Everything else you might reach for <em>is</em> here now: HTTP (<code>http_get</code>/<code>http_post</code>/<code>http</code>, see <a href="#http-client">HTTP client</a>), date/time, hashing, encodings, and randomness. (The bare name <code>fetch</code> is not a builtin. Use <code>http_get</code>.)</p>
 <h3 id="missing-operators">Missing operators</h3>
 <ul><li><strong>No integer-division operator.</strong> <code>/</code> is always float division. Use the <code>div()</code> builtin (truncating, like <code>%</code>), or <code>int()</code>:</li></ul>
 <pre><code class="language-drang">  say(10 / 4)        # 2.5
   say(div(10, 4))    # 2
   say(int(10 / 4))   # 2</code></pre>
-<ul><li><strong>No `</strong><code> exponent operator** — </code>2 ** 8<code> is a parse error (</code>unexpected STAR`).</li><li><strong>No ternary</strong> — <code>1 &gt; 0 ? 1 : 2</code> does not parse. <code>if</code> is a statement, not an expression, so there is no inline conditional. Use <code>and</code>/<code>or</code> short-circuit value-returning logic (<code>$cond and $a or $b</code>) as the workaround.</li><li><strong>No bitwise operators</strong> — <code>&amp;</code>, <code>|</code> (as bitwise), <code>&lt;&lt;</code>, <code>&gt;&gt;</code> all fail to parse (<code>&amp;</code> lexes as <code>ILLEGAL</code>; <code>&lt;&lt;</code> is read as a heredoc start). <code>|</code> is the lambda delimiter, not bitwise-or.</li><li><strong>No <code>++</code> / <code>--</code></strong> — <code>$x++</code> is a parse error. Use compound assignment: <code>$x += 1</code>.</li></ul>
+<ul><li><strong>No `</strong><code> exponent operator**: </code>2 ** 8<code> is a parse error (</code>unexpected STAR`).</li><li><strong>No ternary</strong>: <code>1 &gt; 0 ? 1 : 2</code> does not parse. <code>if</code> is a statement, not an expression, so there is no inline conditional. Use <code>and</code>/<code>or</code> short-circuit value-returning logic (<code>$cond and $a or $b</code>) as the workaround.</li><li><strong>No bitwise operators</strong>: <code>&amp;</code>, <code>|</code> (as bitwise), <code>&lt;&lt;</code>, <code>&gt;&gt;</code> all fail to parse (<code>&amp;</code> lexes as <code>ILLEGAL</code>; <code>&lt;&lt;</code> is read as a heredoc start). <code>|</code> is the lambda delimiter, not bitwise-or.</li><li><strong>No <code>++</code> / <code>--</code></strong>: <code>$x++</code> is a parse error. Use compound assignment: <code>$x += 1</code>.</li></ul>
 <h3 id="designed-but-not-yet-built">Designed but not yet built</h3>
-<p>Several features are specified in DESIGN.md but do not work in the binary yet — don't reach for them:</p>
-<ul><li><strong>Structs.</strong> <code>struct Foo { ... }</code> is a parse error. Use maps as records in the meantime: <code>$s := {reqs: 0, by_ip: {}}</code>.</li><li><strong>Named arguments</strong> (<code>f(port: 9090)</code>) are not supported — arguments are positional (default parameters <em>are</em> supported; see <a href="#named-functions-fn-name">Named functions</a>). <strong>Variadic parameters</strong> (<code>$a...</code>) are deliberately out of scope — pass an array instead.- <strong>No automatic stringy coercion.</strong> <code>"5" + 3</code> is an error, not <code>8</code>. Convert explicitly with <code>int()</code>:</li></ul>
+<p>Several features are specified in DESIGN.md but do not work in the binary yet. Don't reach for them:</p>
+<ul><li><strong>Structs.</strong> <code>struct Foo { ... }</code> is a parse error. Use maps as records in the meantime: <code>$s := {reqs: 0, by_ip: {}}</code>.</li><li><strong>Named arguments</strong> (<code>f(port: 9090)</code>) are not supported. Arguments are positional (default parameters <em>are</em> supported; see <a href="#named-functions-fn-name">Named functions</a>). <strong>Variadic parameters</strong> (<code>$a...</code>) are deliberately out of scope: pass an array instead.- <strong>No automatic stringy coercion.</strong> <code>"5" + 3</code> is an error, not <code>8</code>. Convert explicitly with <code>int()</code>:</li></ul>
 <pre><code class="language-drang">  say("5" + 3)        # error: cannot use string and int with '+'
   say(int("5") + 3)   # 8</code></pre>
-<p>(Modules <em>are</em> shipped — see <a href="#modules-use">Modules: <code>use</code></a> — as is the one-liner <code>BEGIN</code>/<code>END</code> block; both were once listed here as missing.)</p>
+<p>(Modules <em>are</em> shipped, see <a href="#modules-use">Modules: <code>use</code></a>, as is the one-liner <code>BEGIN</code>/<code>END</code> block; both were once listed here as missing.)</p>
 <h3 id="behaviors-that-may-surprise-you">Behaviors that may surprise you</h3>
-<ul><li><strong><code>int</code> is 64-bit; <code>+</code>/<code>-</code>/<code>*</code> overflow is an error</strong>, not a silent wrap (and there is no auto-promotion to float) — it fails loudly, like division by zero:</li></ul>
+<ul><li><strong><code>int</code> is 64-bit; <code>+</code>/<code>-</code>/<code>*</code> overflow is an error</strong>, not a silent wrap (and there is no auto-promotion to float). It fails loudly, like division by zero:</li></ul>
 <pre><code class="language-drang">  say(9223372036854775807 + 1)
   # drang: integer overflow: 9223372036854775807 + 1</code></pre>
-<ul><li><strong><code>format()</code> uses <code>{}</code> / <code>{:spec}</code> placeholders, not <code>%</code>-style verbs.</strong> Width, precision, alignment, sign, and base live in the spec (<code>{:&gt;8}</code>, <code>{:.2f}</code>, <code>{:08x}</code> — see <a href="#format-specs-spec">Format specs</a>), not in <code>%d</code>/<code>%s</code> verbs. A <code>%</code>-style template has no placeholders, so it is a (catchable) arity error:</li></ul>
+<ul><li><strong><code>format()</code> uses <code>{}</code> / <code>{:spec}</code> placeholders, not <code>%</code>-style verbs.</strong> Width, precision, alignment, sign, and base live in the spec (<code>{:&gt;8}</code>, <code>{:.2f}</code>, <code>{:08x}</code>, see <a href="#format-specs-spec">Format specs</a>), not in <code>%d</code>/<code>%s</code> verbs. A <code>%</code>-style template has no placeholders, so it is a (catchable) arity error:</li></ul>
 <pre><code class="language-drang">  say(format("{:&gt;3}: {:.2f}", "pi", 3.14159))   # " pi: 3.14"
   say(format("%d", 5))                          # error: format: template has 0 placeholder(s) but got 1 argument(s)</code></pre>
 <p>There is no <code>sprintf</code> (<code>unknown function</code>); <code>format</code> is the only string-formatting builtin.</p>
 <h3 id="also-absent-from-designmd-not-yet-built">Also absent (from DESIGN.md, not yet built)</h3>
-<p><code>sh()</code> shell escape, char ranges (<code>'a'..'z'</code>), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values — <code>map($xs, basename)</code> — now <em>do</em> work; see "Functions and builtins are first-class values".)</p>
+<p><code>sh()</code> shell escape, char ranges (<code>'a'..'z'</code>), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, <code>map($xs, basename)</code>, now <em>do</em> work; see "Functions and builtins are first-class values".)</p>
 </div></main>
 <footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.4 · built by drang</div></footer>
 <script src="site.js"></script>
