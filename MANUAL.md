@@ -2758,6 +2758,11 @@ A file can carry both: its `example` assertions *and* a `.golden` snapshot are c
 together (the pass/fail counts combine). A script with no sibling `.golden` is just an
 `example` test, and its stdout passes through to the terminal as usual.
 
+A golden test assumes the script's output is **deterministic and complete when the top
+level finishes**: `await` any `spawn`ed tasks before the end (a detached task's output
+may not make it into the capture), and avoid output whose line order depends on `pmap`
+scheduling.
+
 ---
 
 ## Quick reference: builtins

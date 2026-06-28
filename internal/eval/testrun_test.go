@@ -21,6 +21,25 @@ func mustParse(t *testing.T, src string) *ast.Program {
 	return prog
 }
 
+func TestGoldenDetachedSpawnSafe(t *testing.T) {
+	// A detached (un-awaited) spawn that prints after the top level returns must not
+	// race the capture swap or crash. Run under `go test -race` to exercise the fix;
+	// the top-level output is captured (the detached line may or may not be — that's
+	// inherently nondeterministic, so we don't assert on it).
+	dir := t.TempDir()
+	golden := filepath.Join(dir, "d.golden")
+	src := `fn .bg() { say("bg") }
+$t := spawn(.bg)
+say("top")`
+	var buf bytes.Buffer
+	if _, _, err := RunExamples(mustParse(t, src), dir, "d.dr", golden, true, &buf); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got, _ := os.ReadFile(golden); !strings.Contains(string(got), "top") {
+		t.Errorf("top-level output should be captured: %q", string(got))
+	}
+}
+
 func TestGoldenOutput(t *testing.T) {
 	dir := t.TempDir()
 	golden := filepath.Join(dir, "t.golden")

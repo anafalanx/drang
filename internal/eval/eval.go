@@ -1603,6 +1603,19 @@ var stderr io.Writer = os.Stderr
 // can't be fully fenced — prefer capture() inside parallel callbacks.)
 var outMu sync.Mutex
 
+// swapStdout replaces the stdout writer and returns the previous one, holding outMu so
+// the change is synchronized with concurrent say writes — output capture (the test
+// runner) must not race builtinSay's read of stdout from a still-running spawned task.
+// Acquiring outMu also fences any in-flight say before the swap, so after a restore the
+// captured buffer has no further concurrent writer.
+func swapStdout(w io.Writer) io.Writer {
+	outMu.Lock()
+	defer outMu.Unlock()
+	old := stdout
+	stdout = w
+	return old
+}
+
 func builtinSay(args []value.Value) (value.Value, error) {
 	parts := make([]string, len(args))
 	for i, a := range args {
