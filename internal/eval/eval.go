@@ -1000,6 +1000,8 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		return evalBinary(n, env)
 	case *ast.Call:
 		return evalCall(n, env)
+	case *ast.Pipe:
+		return evalPipe(n, env)
 	case *ast.Propagate:
 		v, err := evalExpr(n.X, env)
 		if err != nil {
@@ -1268,6 +1270,37 @@ func evalCall(n *ast.Call, env *Env) (value.Value, error) {
 		return resolveAndCall(id.Name, args, env)
 	}
 	cv, err := evalExpr(n.Callee, env)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	if fn, ok := asFunction(cv); ok {
+		return callFunction(fn, args)
+	}
+	return value.MakeNil(), fmt.Errorf("cannot call a %s", cv.TypeName())
+}
+
+// evalPipe evaluates  lhs |> f(args...)  by evaluating lhs first, prepending it as the
+// first argument, then calling f through the same seam as evalCall — so the result is
+// identical to the old desugared call f(lhs, args...).
+func evalPipe(n *ast.Pipe, env *Env) (value.Value, error) {
+	lv, err := evalExpr(n.Lhs, env)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	c := n.Call
+	args := make([]value.Value, len(c.Args)+1)
+	args[0] = lv
+	for i, a := range c.Args {
+		v, err := evalExpr(a, env)
+		if err != nil {
+			return value.MakeNil(), err
+		}
+		args[i+1] = v
+	}
+	if id, ok := c.Callee.(*ast.Ident); ok {
+		return resolveAndCall(id.Name, args, env)
+	}
+	cv, err := evalExpr(c.Callee, env)
 	if err != nil {
 		return value.MakeNil(), err
 	}

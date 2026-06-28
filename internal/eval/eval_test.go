@@ -26,6 +26,31 @@ func run(t *testing.T, src string) string {
 	return buf.String()
 }
 
+// TestPipeFaithful covers the faithful Pipe node (|> is no longer desugared at parse
+// time). Behavior must stay identical to f(lhs, args...) across callee shapes, chains,
+// and evaluation order — on both backends (the VM compiles Pipe to the same bytecode).
+func TestPipeFaithful(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"bare-pipe-builtin", `say([1, 2, 3] |> len)`, "3\n"},
+		{"method-callee-args", `fn .add($a, $b) { $a + $b }
+say(3 |> .add(4))`, "7\n"},
+		{"var-callee", `$f := |$x| $x * 2
+say(3 |> $f())`, "6\n"},
+		{"chain", `say([1, 2, 3] |> map(|$x| $x * 2) |> reduce(0, |$a, $x| $a + $x))`, "12\n"},
+		{"lhs-evaluated-first-once", `$n := 0
+fn .bump() { $n = $n + 1; $n }
+fn .id($x) { $x }
+say(.bump() |> .id())`, "1\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := run(t, tc.src); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestOutput drives whole programs and compares their say output. It locks in
 // the collections slice: literals, indexing, autovivification, compound
 // assignment, for-in over every iterable, the builtins, and the error model.

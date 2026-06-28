@@ -110,6 +110,9 @@ func (a *funcAnalysis) scanExpr(e ast.Expr) {
 		for _, arg := range n.Args {
 			a.scanExpr(arg)
 		}
+	case *ast.Pipe:
+		a.scanExpr(n.Lhs)
+		a.scanExpr(n.Call)
 	case *ast.Index:
 		a.scanExpr(n.X)
 		a.scanExpr(n.Idx)
@@ -208,6 +211,9 @@ func boundInExpr(e ast.Expr, set map[string]bool) {
 		for _, a := range n.Args {
 			boundInExpr(a, set)
 		}
+	case *ast.Pipe:
+		boundInExpr(n.Lhs, set)
+		boundInExpr(n.Call, set)
 	case *ast.Index:
 		boundInExpr(n.X, set)
 		boundInExpr(n.Idx, set)
@@ -281,6 +287,9 @@ func collectVars(n ast.Node, set map[string]bool) {
 		for _, a := range e.Args {
 			collectVars(a, set)
 		}
+	case *ast.Pipe:
+		collectVars(e.Lhs, set)
+		collectVars(e.Call, set)
 	case *ast.Index:
 		collectVars(e.X, set)
 		collectVars(e.Idx, set)

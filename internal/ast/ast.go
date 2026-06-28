@@ -346,6 +346,19 @@ func (e *Call) String() string {
 }
 func (*Call) exprNode() {}
 
+// Pipe is a pipeline  lhs |> f(args...)  — kept faithful (not desugared to a Call) so
+// the formatter can reprint it. Call holds the RHS verbatim: the callee plus the
+// explicitly written args, NOT including lhs. eval prepends lhs as the first argument,
+// so the result is identical to the old desugared call f(lhs, args...).
+type Pipe struct {
+	Pos
+	Lhs  Expr
+	Call *Call
+}
+
+func (e *Pipe) String() string { return "(|> " + e.Lhs.String() + " " + e.Call.String() + ")" }
+func (*Pipe) exprNode()        {}
+
 // Index is an indexing expression x[i].
 type Index struct {
 	Pos
