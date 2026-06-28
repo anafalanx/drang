@@ -323,6 +323,7 @@ func (l *Lexer) skipTrivia() bool {
 // ends in "\n"); a body with no lines is "" (matching Perl/Ruby). The result is a
 // STRING (the parser interpolates it) or a RAWSTR.
 func (l *Lexer) readHeredoc(line, col int) token.Token {
+	start := l.pos // the leading '<<', for the verbatim Raw span (<<TAG..body..TAG)
 	bad := func(msg string) token.Token {
 		return token.Token{Kind: token.ILLEGAL, Lit: msg, Line: line, Col: col}
 	}
@@ -391,9 +392,9 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 	}
 	body := assembleHeredoc(lines, dedent)
 	if raw {
-		return token.Token{Kind: token.RAWSTR, Lit: body, Line: line, Col: col}
+		return token.Token{Kind: token.RAWSTR, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
 	}
-	return token.Token{Kind: token.STRING, Lit: body, Line: line, Col: col}
+	return token.Token{Kind: token.STRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
 }
 
 // readUntilByte reads up to (not including) end or a newline/EOF.
@@ -511,6 +512,7 @@ func quoteOpener(c byte) (close byte, ok bool) {
 // inside a qq body, so a closing brace inside an interpolation (qq{ ${ "}" } })
 // needs a non-brace delimiter (qq[ ${ "}" } ] works).
 func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
+	start := l.pos - len(id) // back up over the q/qq/qr/qw prefix for the verbatim Raw span
 	open := l.ch
 	closeCh, _ := quoteOpener(open) // caller verified it opens
 	paired := open != closeCh
@@ -535,9 +537,9 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 	content := b.String()
 	switch id {
 	case "qw":
-		return token.Token{Kind: token.QW, Lit: content, Line: line, Col: col}
+		return token.Token{Kind: token.QW, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
 	case "q":
-		return token.Token{Kind: token.RAWSTR, Lit: content, Line: line, Col: col}
+		return token.Token{Kind: token.RAWSTR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
 	case "qr":
 		flags, ok := l.readRegexFlags()
 		if !ok {
@@ -546,9 +548,9 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 		if flags != "" {
 			content = "(?" + flags + ")" + content // bake flags as Go inline flags
 		}
-		return token.Token{Kind: token.QR, Lit: content, Line: line, Col: col}
+		return token.Token{Kind: token.QR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
 	default: // qq
-		return token.Token{Kind: token.STRING, Lit: content, Line: line, Col: col}
+		return token.Token{Kind: token.STRING, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
 	}
 }
 
@@ -581,7 +583,8 @@ func (l *Lexer) readNumber(line, col int) token.Token {
 // interpolation are done together in the parser, which needs the raw form to tell
 // a literal "\$" from an interpolated "$x".
 func (l *Lexer) readString(line, col int) token.Token {
-	l.advance() // consume opening quote
+	start := l.pos // the opening quote, for the verbatim Raw span
+	l.advance()    // consume opening quote
 	var b strings.Builder
 	for l.ch != '"' && l.ch != 0 {
 		if l.ch == '\\' {
@@ -601,7 +604,7 @@ func (l *Lexer) readString(line, col int) token.Token {
 		return token.Token{Kind: token.ILLEGAL, Lit: "unterminated string", Line: line, Col: col}
 	}
 	l.advance() // consume closing quote
-	return token.Token{Kind: token.STRING, Lit: b.String(), Line: line, Col: col}
+	return token.Token{Kind: token.STRING, Lit: b.String(), Raw: l.src[start:l.pos], Line: line, Col: col}
 }
 
 func isLetter(ch byte) bool {
