@@ -51,6 +51,33 @@ say(.bump() |> .id())`, "1\n"},
 	}
 }
 
+// TestInterpFaithful covers the faithful Interp node (interpolation is no longer folded
+// into a ~-chain at parse time). Values must match the old behavior, and the capture
+// analysis must still see vars inside interpolations (the closure case is the regression
+// trap) — on both backends (the VM compiles Interp to the same ~-fold bytecode).
+func TestInterpFaithful(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"literal-var-expr", `$x := 5
+say("v=$x ${$x + 1}")`, "v=5 6\n"},
+		{"leading-interp-forces-string", `$x := 7
+say("$x!")`, "7!\n"},
+		{"escaped-dollar", `$x := 1
+say("\$x is $x")`, "$x is 1\n"},
+		{"qq-interp", `$n := "bob"
+say(qq{hi $n})`, "hi bob\n"},
+		{"closure-captures-interp-var", `fn .make($x) { || "got $x" }
+$f := .make(42)
+say($f())`, "got 42\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := run(t, tc.src); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestOutput drives whole programs and compares their say output. It locks in
 // the collections slice: literals, indexing, autovivification, compound
 // assignment, for-in over every iterable, the builtins, and the error model.

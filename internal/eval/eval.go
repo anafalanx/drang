@@ -979,6 +979,18 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		return value.MakeFloat(n.Value), nil
 	case *ast.StringLit:
 		return value.MakeStr(n.Value), nil
+	case *ast.Interp:
+		// Stringify each part via Display and concatenate — byte-identical to the old
+		// left-folded "" ~ p0 ~ p1 ~ ... chain (~ is l.Display()+r.Display()).
+		var b strings.Builder
+		for _, p := range n.Parts {
+			v, err := evalExpr(p, env)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			b.WriteString(v.Display())
+		}
+		return value.MakeStr(b.String()), nil
 	case *ast.BoolLit:
 		return value.MakeBool(n.Value), nil
 	case *ast.RegexLit:

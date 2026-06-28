@@ -113,6 +113,10 @@ func (a *funcAnalysis) scanExpr(e ast.Expr) {
 	case *ast.Pipe:
 		a.scanExpr(n.Lhs)
 		a.scanExpr(n.Call)
+	case *ast.Interp:
+		for _, p := range n.Parts {
+			a.scanExpr(p)
+		}
 	case *ast.Index:
 		a.scanExpr(n.X)
 		a.scanExpr(n.Idx)
@@ -214,6 +218,10 @@ func boundInExpr(e ast.Expr, set map[string]bool) {
 	case *ast.Pipe:
 		boundInExpr(n.Lhs, set)
 		boundInExpr(n.Call, set)
+	case *ast.Interp:
+		for _, p := range n.Parts {
+			boundInExpr(p, set)
+		}
 	case *ast.Index:
 		boundInExpr(n.X, set)
 		boundInExpr(n.Idx, set)
@@ -290,6 +298,10 @@ func collectVars(n ast.Node, set map[string]bool) {
 	case *ast.Pipe:
 		collectVars(e.Lhs, set)
 		collectVars(e.Call, set)
+	case *ast.Interp:
+		for _, p := range e.Parts {
+			collectVars(p, set)
+		}
 	case *ast.Index:
 		collectVars(e.X, set)
 		collectVars(e.Idx, set)

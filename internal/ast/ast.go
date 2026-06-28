@@ -270,6 +270,29 @@ type StringLit struct {
 func (e *StringLit) String() string { return strconv.Quote(e.Value) }
 func (*StringLit) exprNode()        {}
 
+// Interp is an interpolated string ("a $x ${e}", qq{...}, interpolating heredoc). Parts
+// are the alternating literal runs (StringLit) and interpolated expressions (Var for
+// $name, any Expr for ${...}); eval stringifies each via Display and concatenates. Raw
+// is the verbatim source incl. delimiters/form, for the formatter. Kept faithful (not
+// folded into a ~-chain) so the original interpolation can be reprinted.
+type Interp struct {
+	Pos
+	Raw   string
+	Parts []Expr
+}
+
+func (e *Interp) String() string {
+	var b strings.Builder
+	b.WriteString("(interp")
+	for _, p := range e.Parts {
+		b.WriteByte(' ')
+		b.WriteString(p.String())
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+func (*Interp) exprNode() {}
+
 // RegexLit is a compiled-regex literal: qr/pattern/flags. Pattern already has any
 // trailing flags baked in as Go inline flags (e.g. qr/foo/i -> "(?i)foo") — that is the
 // eval source of truth. Raw is the verbatim source incl. delimiters + flags ("qr/foo/i")

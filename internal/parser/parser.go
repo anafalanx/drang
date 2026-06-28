@@ -718,11 +718,16 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case token.STRING:
 		raw, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
-		e := p.interpolate(raw, pos)
-		if s, ok := e.(*ast.StringLit); ok { // no interpolation -> stamp the verbatim source
-			s.Raw = rawSrc
+		switch e := p.interpolate(raw, pos).(type) {
+		case *ast.StringLit: // no interpolation
+			e.Raw = rawSrc
+			return e
+		case *ast.Interp:
+			e.Raw = rawSrc
+			return e
+		default:
+			return e
 		}
-		return e
 	case token.RAWSTR:
 		s, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
@@ -986,15 +991,15 @@ func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 	if len(ops) == 0 {
 		return &ast.StringLit{Pos: pos, Value: ""}
 	}
-	expr := ops[0]
-	if _, isStr := expr.(*ast.StringLit); !isStr {
-		// first piece is an interpolation: force a string result with "" ~ ...
-		expr = &ast.Binary{Pos: pos, Op: token.TILDE, L: &ast.StringLit{Pos: pos}, R: expr}
+	if len(ops) == 1 {
+		if s, ok := ops[0].(*ast.StringLit); ok {
+			return s // no interpolation occurred -> a bare StringLit (caller stamps Raw)
+		}
 	}
-	for _, op := range ops[1:] {
-		expr = &ast.Binary{Pos: pos, Op: token.TILDE, L: expr, R: op}
-	}
-	return expr
+	// One or more interpolations: keep them faithful in an Interp node. eval stringifies
+	// each part via Display and concatenates, so the result is always a string (matching
+	// the old "" ~ ... fold). Raw is stamped by the caller (the STRING arm).
+	return &ast.Interp{Pos: pos, Parts: ops}
 }
 
 // matchBrace returns the index of the '}' closing a '{' (raw[start] is just past
