@@ -925,9 +925,10 @@ func makePipe(left, right ast.Expr) ast.Expr {
 
 // interpolate decodes a raw string body, processing escapes and $-interpolation
 // together (it has the raw form, so it can tell "\$" — a literal $ — from "$x").
-// "$name" splices a variable; "${expr}" splices any expression. The result is a
-// plain StringLit when there is no interpolation, otherwise a ~-concatenation;
-// a leading "" is prepended when needed so the value is always a string.
+// "$name" splices a variable; "${expr}" splices any expression. The result is a plain
+// StringLit when there is no interpolation, otherwise an ast.Interp holding the literal
+// and expression parts (eval stringifies each via Display and concatenates, so the value
+// is always a string).
 func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 	var ops []ast.Expr
 	var seg strings.Builder
