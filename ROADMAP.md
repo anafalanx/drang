@@ -1,9 +1,9 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory dated 2026-06-27, at git `08213ea`. Grounded in DESIGN.md, MANUAL.md, a
-code-level scan, and a vision-gap analysis against drang's niche (a small, parallel,
-Perl-inspired scripting language for text / glue / orchestration — "reads like Ruby,
-thinks like Perl, runs like Go").*
+*Inventory refreshed 2026-06-28, at git `45617b4` — **drang 0.4 released**. Grounded in
+DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche (a
+small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads
+like Ruby, thinks like Perl, runs like Go").*
 
 ## Release status
 
@@ -13,10 +13,12 @@ thinks like Perl, runs like Go").*
   rune-aware string indexing, and default parameters. The doc/reality drift (bucket 1)
   is closed and the binary is version-stamped. Several adversarial-review passes hardened
   each feature.
-- **0.4 — the target: first *complete* version.** The remaining items below (named-
-  capture→map + `replace_first`, `drang fmt`, one-liner `-i`, char ranges, the stringy-
-  coercion decision) plus a **proper, expanded standard library** (the curated
-  batteries — grow the prelude / builtins toward the daily-driver bar).
+- **0.4 (2026-06-28) — RELEASED: the first *complete* version.** Published as GitHub
+  release `v0.4` with four platform binaries (darwin amd64/arm64, linux amd64, windows
+  amd64). What landed on top of 0.3: a **proper, expanded standard library** (~120 builtins
+  + a 24-function drang prelude — the curated batteries), a robust minimal **HTTP client**,
+  **`drang fmt`** (the provenance-faithful formatter), and **first-class builtins**
+  (`map($xs, basename)` works — a bare builtin name is a function value).
   - **Pre-0.4 core hardening (2026-06-28):** a seven-front adversarial sweep of the
     foundation (parity, freeze-under-concurrency, value model, capture, parser/lexer,
     errors, concurrency) confirmed the architecture is sound and fixed **9 real bugs** —
@@ -24,18 +26,23 @@ thinks like Perl, runs like Go").*
     `Equal`/`Display` stack overflow; the VM swallowing a top-level `return`; `x |> f() == y`
     always erroring), and 4 MED/LOW. All have regression tests; the suite is `-race` clean.
     See DESIGN.md → *Pre-0.4 core hardening*.
+- **Next (post-0.4).** The genuinely-remaining items below: named-capture→map +
+  `replace_first`, one-liner in-place `-i`, character ranges (`'a'..'z'`), the stringy-
+  coercion decision, and `match`/`switch`.
 
 ## State of the language
 
-Roughly **80% of the way to a credible daily-driver**, and the *engine* is done:
+With 0.4 shipped, drang is **a credible daily-driver**, and the *engine* is done:
 register VM + tree-walker fallback, closures/lambdas/pipelines, a full HOF toolkit,
-errors-as-values (`?` / `//`), first-class RE2 regexes (`qr//`), real concurrency
-(`spawn` / channels / `pmap`), external-command orchestration, files/paths, JSON,
-CSV, one-liner `-n`/`-p` mode with `BEGIN`/`END`, modules (`use`), value-level
-immutability (frozen constants + module exports), a drang prelude, and standalone
-`build`. What remains clusters in three honest buckets: **(1) doc/reality drift**,
-**(2) `[LOCKED]`-in-DESIGN-but-unbuilt language features**, and **(3) whole stdlib
-domains** a glue language reaches for hourly.
+first-class functions *and builtins*, errors-as-values (`?` / `//`), first-class RE2
+regexes (`qr//`), real concurrency (`spawn` / channels / `pmap`), external-command
+orchestration, files/paths, JSON, CSV, an HTTP client, one-liner `-n`/`-p` mode with
+`BEGIN`/`END`, `dispatch` task-running, modules (`use`), value-level immutability (frozen
+constants + module exports), an expanded standard library (~120 builtins + a drang
+prelude), `drang fmt`, and standalone `build`. What remains is narrower than it was:
+**(1)** a few `[LOCKED]`-in-DESIGN-but-unbuilt language features (char ranges, `match`/
+`switch`), and **(2)** stdlib edges a glue language occasionally reaches for. The earlier
+doc/reality drift is closed.
 
 Status tags: **NOT-STARTED** · **PARTIAL** · **DEFERRED-BY-DESIGN** (a deliberate,
 recorded deferral — not a bug).
@@ -142,19 +149,19 @@ parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
 
 ## Recommended next 3–5
 
-1. **Ship the binary + close the doc/reality gap.** Rebuild from HEAD (done); make
-   the manual honest about the `[LOCKED]`-but-unbuilt features (done); add a
-   version stamp / release check. *A daily-driver whose own examples don't run fails
-   "complete" on trust before any feature.*
+1. ~~**Ship the binary + close the doc/reality gap.**~~ ✅ Done — **0.4 released** with four
+   platform binaries; the manual is version-stamped and honest about the `[LOCKED]`-but-
+   unbuilt features.
 2. ~~**printf-grade `format` verbs (b).**~~ ✅ Done — `{:spec}` mini-language over the existing `{}`.
 3. ~~**Date/time + `sleep` (b).**~~ ✅ Done — epoch-float model + `now`/`sleep`/`strftime`/`parse_time`/`date_parts`.
 4. ~~**Hashing + encodings + random (b).**~~ ✅ Done — `sha256`/`md5`, base64/hex/url, `rand`/`shuffle`/`uuid`.
 5. ~~**`drang test` (c).**~~ ✅ Done — `example` assertions + the `drang test` runner.
 
-**The recommended next-5 is complete, and `drang fmt` has since shipped** (a faithful,
-comment-preserving canonical formatter with width-100 wrapping and the `--fix` migration
-hook). A Perl/Python refugee can now do real text+glue work, and keep it tidy, without
-hitting a wall. The strongest remaining items (see the grouped lists above): one-liner
-**`-i`** in-place edit (c), then the remaining §(a) items — char ranges and the
-stringy-coercion decision — and the **named-capture→map** regex-ergonomics builtin.
-(Default params and slices are done; `=~`/`s///` is deliberately out of scope.)
+**The recommended next-5 is complete, and 0.4 has shipped** — `drang fmt`, the expanded
+stdlib, the HTTP client, and first-class builtins all landed, on top of a 9-bug core-
+hardening sweep. A Perl/Python refugee can now do real text+glue work, keep it tidy, and
+trust the foundation. The strongest *remaining* items (see the grouped lists above):
+one-liner **`-i`** in-place edit (c), then the §(a) items — character ranges and the
+stringy-coercion decision — the **named-capture→map** / `replace_first` regex ergonomics,
+and **`match`/`switch`**. (Default params, slices, modules, and immutability are done;
+`=~`/`s///` is deliberately out of scope.)
