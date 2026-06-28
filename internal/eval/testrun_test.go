@@ -2,11 +2,64 @@ package eval
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/anafalanx/drang/internal/ast"
 	"github.com/anafalanx/drang/internal/parser"
 )
+
+func mustParse(t *testing.T, src string) *ast.Program {
+	t.Helper()
+	p := parser.New(src)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parse %q: %v", src, errs)
+	}
+	return prog
+}
+
+func TestGoldenOutput(t *testing.T) {
+	dir := t.TempDir()
+	golden := filepath.Join(dir, "t.golden")
+	script := `say("hello")
+say("world")`
+
+	// --update writes the golden from captured stdout.
+	var buf bytes.Buffer
+	if _, _, err := RunExamples(mustParse(t, script), dir, "t.dr", golden, true, &buf); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got, _ := os.ReadFile(golden); string(got) != "hello\nworld\n" {
+		t.Fatalf("golden not written correctly: %q", string(got))
+	}
+
+	// Matching output passes.
+	buf.Reset()
+	pass, fail, err := RunExamples(mustParse(t, script), dir, "t.dr", golden, false, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pass != 1 || fail != 0 {
+		t.Errorf("matching golden should pass; got %d/%d\n%s", pass, fail, buf.String())
+	}
+
+	// Changed output fails (and the diff names the changed line).
+	buf.Reset()
+	pass, fail, err = RunExamples(mustParse(t, `say("hello")
+say("CHANGED")`), dir, "t.dr", golden, false, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fail != 1 {
+		t.Errorf("changed output should fail golden; got %d/%d", pass, fail)
+	}
+	if !strings.Contains(buf.String(), "CHANGED") {
+		t.Errorf("diff should show the changed line:\n%s", buf.String())
+	}
+}
 
 func TestRunExamplesPassFail(t *testing.T) {
 	src := `fn .add($a, $b) { $a + $b }
@@ -23,7 +76,7 @@ example 1 fails`
 		t.Fatalf("parse: %v", errs)
 	}
 	var buf bytes.Buffer
-	pass, fail, lerr := RunExamples(prog, "", "test.dr", &buf)
+	pass, fail, lerr := RunExamples(prog, "", "test.dr", "", false, &buf)
 	if lerr != nil {
 		t.Fatalf("load: %v", lerr)
 	}
@@ -47,7 +100,7 @@ func TestExampleTopLevelExitNotMasked(t *testing.T) {
 		t.Fatalf("parse: %v", errs)
 	}
 	var buf bytes.Buffer
-	pass, fail, lerr := RunExamples(prog, "", "x.dr", &buf)
+	pass, fail, lerr := RunExamples(prog, "", "x.dr", "", false, &buf)
 	if lerr != nil {
 		t.Fatalf("load: %v", lerr)
 	}
@@ -65,7 +118,7 @@ func TestExampleSubjectExitIsFailure(t *testing.T) {
 		t.Fatalf("parse: %v", errs)
 	}
 	var buf bytes.Buffer
-	pass, fail, lerr := RunExamples(prog, "", "x.dr", &buf)
+	pass, fail, lerr := RunExamples(prog, "", "x.dr", "", false, &buf)
 	if lerr != nil {
 		t.Fatalf("load: %v", lerr)
 	}
