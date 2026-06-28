@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -129,7 +130,14 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 
 	timeout := httpDefaultTimeout
 	if ms, ok := optInt(opts, "timeout"); ok {
-		timeout = time.Duration(ms) * time.Millisecond // 0 -> unlimited
+		switch {
+		case ms < 0:
+			return value.MakeErr("http: timeout must be >= 0 (ms; 0 = unlimited)", 1), nil
+		case ms > int64(time.Duration(math.MaxInt64)/time.Millisecond):
+			timeout = 0 // absurdly large -> unlimited (avoid int64-nanosecond overflow)
+		default:
+			timeout = time.Duration(ms) * time.Millisecond // 0 -> unlimited
+		}
 	}
 	maxBody := httpDefaultMaxBody
 	if mb, ok := optInt(opts, "max_body"); ok {
@@ -200,9 +208,19 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 	}
 	defer resp.Body.Close()
 
-	body, ok := readLimited(resp.Body, maxBody)
-	if !ok {
-		return value.MakeErr(fmt.Sprintf("http: response body exceeds max_body (%d bytes)", maxBody), 1), nil
+	body, rerr := readLimited(resp.Body, maxBody)
+	if rerr != nil {
+		if errors.Is(rerr, errBodyTooLarge) {
+			return value.MakeErr(fmt.Sprintf("http: response body exceeds max_body (%d bytes)", maxBody), 1), nil
+		}
+		// A deadline or an aborted/truncated stream during the body read is a failure to
+		// complete the exchange — an Err, never a partial body returned as success.
+		code := int64(1)
+		var ne net.Error
+		if errors.Is(rerr, context.DeadlineExceeded) || (errors.As(rerr, &ne) && ne.Timeout()) {
+			code = 124
+		}
+		return value.MakeErr("http: "+rerr.Error(), code), nil
 	}
 	return httpResponse(resp, body), nil
 }
@@ -244,24 +262,27 @@ func applyHeaders(req *http.Request, opts *value.OrderedMap) error {
 	return nil
 }
 
-// readLimited reads up to max bytes (max 0 = unlimited); ok is false if the body exceeds
-// max (never silently truncated).
-func readLimited(r io.Reader, max int64) (string, bool) {
+// errBodyTooLarge marks a body that exceeded max_body (distinct from a transport read
+// error). The body cap counts DECOMPRESSED bytes (the transport inflates gzip before we
+// read), so it is gzip-bomb safe.
+var errBodyTooLarge = errors.New("response body exceeds max_body")
+
+// readLimited reads up to max bytes (max <= 0 = unlimited). It returns errBodyTooLarge if
+// the body exceeds max, or the underlying read error (a deadline firing mid-body, or a
+// truncated/aborted stream) — it never returns a silently-truncated body as success.
+func readLimited(r io.Reader, max int64) (string, error) {
 	if max <= 0 {
 		data, err := io.ReadAll(r)
-		if err != nil {
-			return "", true // a read error still yields what we have; treat as complete-ish
-		}
-		return string(data), true
+		return string(data), err
 	}
 	data, err := io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
-		return string(data), true
+		return string(data), err
 	}
 	if int64(len(data)) > max {
-		return "", false
+		return "", errBodyTooLarge
 	}
-	return string(data), true
+	return string(data), nil
 }
 
 func httpResponse(resp *http.Response, body string) value.Value {

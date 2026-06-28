@@ -39,6 +39,14 @@ func httpTestServer() *httptest.Server {
 	mux.HandleFunc("/hdr", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, r.Header.Get("X-Custom"))
 	})
+	mux.HandleFunc("/dribble", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200) // headers arrive immediately...
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(500 * time.Millisecond) // ...then the body stalls past a short deadline
+		io.WriteString(w, "late body")
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -151,6 +159,29 @@ func TestHTTPTimeoutIsCode124(t *testing.T) {
 	}
 	if c := errCode(r); c != 124 {
 		t.Errorf("timeout err_code = %d, want 124", c)
+	}
+}
+
+func TestHTTPBodyReadTimeout(t *testing.T) {
+	// A deadline firing during the body read must be an Err (code 124), not a partial body
+	// returned as a successful 200 (the review's HIGH finding).
+	srv := httpTestServer()
+	defer srv.Close()
+	r := mustGet(t, srv.URL+"/dribble", mkMap(value.MakeStr("timeout"), value.MakeInt(100)))
+	if r.Tag() != value.Err {
+		t.Fatalf("body-read deadline must be an Err, got %s", r.Display())
+	}
+	if c := errCode(r); c != 124 {
+		t.Errorf("body-read timeout err_code = %d, want 124", c)
+	}
+}
+
+func TestHTTPNegativeTimeout(t *testing.T) {
+	srv := httpTestServer()
+	defer srv.Close()
+	r := mustGet(t, srv.URL+"/ok", mkMap(value.MakeStr("timeout"), value.MakeInt(-1)))
+	if r.Tag() != value.Err {
+		t.Errorf("a negative timeout must be a catchable Err, got %s", r.Display())
 	}
 }
 
