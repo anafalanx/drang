@@ -55,6 +55,11 @@ func main() {
 		runTests(os.Args[2:])
 		return
 	}
+	// `drang fmt [flags] [path...]` reformats drang source.
+	if len(os.Args) > 1 && os.Args[1] == "fmt" {
+		runFmt(os.Args[2:])
+		return
+	}
 
 	mode := "run"
 	args := expandOneLinerCluster(os.Args[1:])
@@ -189,6 +194,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       drang -n|-p [-a] (-e '<source>' | <file.dr>) [files...]   (one-liner mode)")
 	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>] [--runtime <drang-binary>]")
 	fmt.Fprintln(os.Stderr, "       drang test [--update] <file.dr> [file.dr ...]               (example + golden tests)")
+	fmt.Fprintln(os.Stderr, "       drang fmt [-w|--check|-l|-d] [path ...]                      (format source)")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -211,6 +217,9 @@ Commands:
   test           run each file's 'example' assertions and, when a sibling .golden
                  exists, diff its stdout against that file (--update rewrites goldens);
                  reports pass/fail and exits non-zero on any failure
+  fmt            reformat drang source canonically (comments preserved). Reads stdin
+                 (-> stdout) or paths; -w rewrites in place, --check is a CI gate,
+                 -l lists changed files, -d shows a diff. 'drang fmt -h' for details
 
 Options:
   -e <source>    run the given source string instead of a file
