@@ -64,6 +64,11 @@ var corpus = []string{
 	`[1] |> map(|$c| ({a: $c, b: 2}))`, // map-bodied lambda needs parens
 	`({a: 1})`,                         // map literal as a statement needs parens
 	`({a: 1}).x`,                       // brace-leading field access
+	// wide constructs (these wrap): a pipe chain, an array, a call, a map
+	`$out := [1, 2, 3, 4, 5, 6, 7, 8] |> map(|$e| $e * 2) |> filter(|$e| $e > 4) |> reduce(0, |$acc, $e| $acc + $e)`,
+	`$xs := ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo"]`,
+	`say("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "x")`,
+	`$m := {"alpha": 1, "bravo": 2, "charlie": 3, "delta": 4, "echo": 5, "foxtrot": 6, "golf": 7, "hotel": 8, "i": 9}`,
 }
 
 // TestReparseAndIdempotent is the core correctness invariant: formatted output must
@@ -80,6 +85,26 @@ func TestReparseAndIdempotent(t *testing.T) {
 		if twice := mustFormat(t, once); twice != once {
 			t.Errorf("not idempotent for %q:\n  once=%q\n twice=%q", src, once, twice)
 		}
+	}
+}
+
+// TestWrapping verifies wide constructs break across lines (pipe with trailing |>;
+// call/array/map one-per-line) and short ones stay on a single line.
+func TestWrapping(t *testing.T) {
+	cases := []struct{ name, in, wantSub string }{
+		{"pipe", `$o := [1, 2, 3, 4, 5, 6, 7, 8] |> map(|$e| $e * 2) |> filter(|$e| $e > 4) |> reduce(0, |$a, $e| $a + $e)`, "|>\n"},
+		{"array", `$xs := ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo"]`, "[\n"},
+		{"call", `say("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "x")`, "(\n"},
+		{"map", `$m := {"alpha": 1, "bravo": 2, "charlie": 3, "delta": 4, "echo": 5, "foxtrot": 6, "golf": 7, "hotel": 8, "i": 9}`, "{\n"},
+	}
+	for _, c := range cases {
+		got := mustFormat(t, c.in)
+		if !strings.Contains(got, c.wantSub) {
+			t.Errorf("%s: expected wrapping (%q) in:\n%s", c.name, c.wantSub, got)
+		}
+	}
+	if s := mustFormat(t, `say(1, 2, 3)`); strings.Contains(s, "\n\t") {
+		t.Errorf("short call should not wrap:\n%s", s)
 	}
 }
 

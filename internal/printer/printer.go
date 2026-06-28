@@ -80,15 +80,51 @@ func sameComments(in, out []lexer.Comment) error {
 	return nil
 }
 
+// maxWidth is the soft target line width; constructs wider than this wrap.
+const maxWidth = 100
+
 type printer struct {
 	b        strings.Builder
 	indent   int
+	col      int  // current output column, for line-width decisions (tabs count as 1)
+	oneLine  bool // when set, wrappable constructs render on a single line (no wrapping)
 	comments []lexer.Comment
 	ci       int // cursor: index of the next not-yet-emitted comment
 }
 
-func (p *printer) write(s string) { p.b.WriteString(s) }
-func (p *printer) pad()           { p.b.WriteString(strings.Repeat("\t", p.indent)) }
+func (p *printer) write(s string) {
+	p.b.WriteString(s)
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		p.col = len(s) - i - 1
+	} else {
+		p.col += len(s)
+	}
+}
+
+func (p *printer) pad() { p.write(strings.Repeat("\t", p.indent)) }
+
+// fitsOneLine reports whether render's single-line output fits from the current column.
+// A render that is inherently multi-line (it contains a block body, hence a newline) is
+// treated as fitting: the block already provides the break, so this level must not wrap.
+func (p *printer) fitsOneLine(render func(*printer)) bool {
+	if p.oneLine {
+		return true
+	}
+	sub := &printer{oneLine: true}
+	render(sub)
+	s := sub.b.String()
+	if strings.Contains(s, "\n") {
+		return true
+	}
+	return p.col+len(s) <= maxWidth
+}
+
+func (p *printer) inOneLine(f func()) {
+	saved := p.oneLine
+	p.oneLine = true
+	f()
+	p.oneLine = saved
+}
 
 // flushBefore emits, at the current indent, each pending comment that starts before
 // source line `line` (leading / floating comments), one per line.
@@ -383,13 +419,137 @@ func (p *printer) params(names []string, defaults []ast.Expr) {
 	}
 }
 
-func (p *printer) args(list []ast.Expr) {
-	for i, a := range list {
-		if i > 0 {
-			p.write(", ")
-		}
-		p.expr(a)
+func (p *printer) callArgs(args []ast.Expr) { p.list("(", ")", args) }
+
+// list emits a delimited expression list (call args or an array literal): single-line
+// when it fits, otherwise one element per line (no trailing comma — drang calls reject
+// it), with the closing delimiter dedented to this indent. Newlines inside ( and [ are
+// insignificant, so the wrapped form re-parses.
+func (p *printer) list(open, close string, items []ast.Expr) {
+	if len(items) == 0 {
+		p.write(open + close)
+		return
 	}
+	render := func(q *printer) {
+		q.write(open)
+		for i, it := range items {
+			if i > 0 {
+				q.write(", ")
+			}
+			q.expr(it)
+		}
+		q.write(close)
+	}
+	if p.fitsOneLine(render) {
+		p.inOneLine(func() { render(p) })
+		return
+	}
+	p.write(open + "\n")
+	p.indent++
+	for i, it := range items {
+		p.pad()
+		p.expr(it)
+		if i < len(items)-1 {
+			p.write(",")
+		}
+		p.write("\n")
+	}
+	p.indent--
+	p.pad()
+	p.write(close)
+}
+
+// mapLit emits a map literal, wrapping one entry per line when it doesn't fit.
+func (p *printer) mapLit(n *ast.MapLit) {
+	if len(n.Keys) == 0 {
+		p.write("{}")
+		return
+	}
+	render := func(q *printer) {
+		q.write("{")
+		for i := range n.Keys {
+			if i > 0 {
+				q.write(", ")
+			}
+			q.expr(n.Keys[i])
+			q.write(": ")
+			q.expr(n.Vals[i])
+		}
+		q.write("}")
+	}
+	if p.fitsOneLine(render) {
+		p.inOneLine(func() { render(p) })
+		return
+	}
+	p.write("{\n")
+	p.indent++
+	for i := range n.Keys {
+		p.pad()
+		p.expr(n.Keys[i])
+		p.write(": ")
+		p.expr(n.Vals[i])
+		if i < len(n.Keys)-1 {
+			p.write(",")
+		}
+		p.write("\n")
+	}
+	p.indent--
+	p.pad()
+	p.write("}")
+}
+
+// pipe emits a |> pipeline: one line when it fits, otherwise broken at every stage with
+// a trailing |> (leading |> would terminate the statement; a trailing operator continues
+// the line), each stage indented one level.
+func (p *printer) pipe(n *ast.Pipe) {
+	if p.fitsOneLine(func(q *printer) { q.pipeOneLine(n) }) {
+		p.inOneLine(func() { p.pipeOneLine(n) })
+		return
+	}
+	head, stages := flattenPipe(n)
+	p.operand(head, prec(head) < pPipeline)
+	p.write(" |>")
+	p.indent++
+	for i, c := range stages {
+		p.write("\n")
+		p.pad()
+		p.operand(c.Callee, prec(c.Callee) < pCall)
+		if len(c.Args) > 0 {
+			p.callArgs(c.Args)
+		}
+		if i < len(stages)-1 {
+			p.write(" |>")
+		}
+	}
+	p.indent--
+}
+
+func (p *printer) pipeOneLine(n *ast.Pipe) {
+	p.operand(n.Lhs, prec(n.Lhs) < pPipeline)
+	p.write(" |> ")
+	p.operand(n.Call.Callee, prec(n.Call.Callee) < pCall)
+	if len(n.Call.Args) > 0 {
+		p.callArgs(n.Call.Args)
+	}
+}
+
+// flattenPipe unwinds a left-nested pipe chain into its head expression and ordered call
+// stages.
+func flattenPipe(n *ast.Pipe) (ast.Expr, []*ast.Call) {
+	var calls []*ast.Call
+	cur := ast.Expr(n)
+	for {
+		pp, ok := cur.(*ast.Pipe)
+		if !ok {
+			break
+		}
+		calls = append(calls, pp.Call)
+		cur = pp.Lhs
+	}
+	for i, j := 0, len(calls)-1; i < j; i, j = i+1, j-1 {
+		calls[i], calls[j] = calls[j], calls[i]
+	}
+	return cur, calls
 }
 
 // operand writes e, wrapping it in parentheses when needParen.
@@ -457,19 +617,10 @@ func (p *printer) expr(e ast.Expr) {
 		p.write("..")
 		p.operand(n.Hi, prec(n.Hi) <= pRange)
 	case *ast.Pipe:
-		p.operand(n.Lhs, prec(n.Lhs) < pPipeline)
-		p.write(" |> ")
-		p.operand(n.Call.Callee, prec(n.Call.Callee) < pCall)
-		if len(n.Call.Args) > 0 {
-			p.write("(")
-			p.args(n.Call.Args)
-			p.write(")")
-		}
+		p.pipe(n)
 	case *ast.Call:
 		p.operand(n.Callee, prec(n.Callee) < pCall)
-		p.write("(")
-		p.args(n.Args)
-		p.write(")")
+		p.callArgs(n.Args)
 	case *ast.Index:
 		p.operand(n.X, prec(n.X) < pCall)
 		p.write("[")
@@ -485,21 +636,10 @@ func (p *printer) expr(e ast.Expr) {
 		if n.Qw && n.Raw != "" {
 			p.write(n.Raw)
 		} else {
-			p.write("[")
-			p.args(n.Elems)
-			p.write("]")
+			p.list("[", "]", n.Elems)
 		}
 	case *ast.MapLit:
-		p.write("{")
-		for i := range n.Keys {
-			if i > 0 {
-				p.write(", ")
-			}
-			p.expr(n.Keys[i])
-			p.write(": ")
-			p.expr(n.Vals[i])
-		}
-		p.write("}")
+		p.mapLit(n)
 	case *ast.Lambda:
 		p.write("|")
 		p.params(n.Params, n.Defaults)

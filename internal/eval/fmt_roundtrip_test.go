@@ -35,6 +35,8 @@ func TestFmtRunEquality(t *testing.T) {
 		`say(1..3)`,
 		`say(-5, !true, - -3)`,
 		"$s := 0\nsay($s + 1) for [1, 2, 3]",
+		// a wide pipe chain (wraps to multiple lines with trailing |>) must still compute 66
+		"$r := [1, 2, 3, 4, 5, 6, 7, 8] |> map(|$e| $e * 2) |> filter(|$e| $e > 4) |> reduce(0, |$a, $e| $a + $e)\nsay($r)",
 	)
 	for _, src := range progs {
 		want := run(t, src)
