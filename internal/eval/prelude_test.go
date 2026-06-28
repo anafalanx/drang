@@ -43,6 +43,26 @@ func TestPrelude(t *testing.T) {
 		{"chunk-empty", `say(to_json(chunk([], 2)))`, "[]\n"},
 		{"zip", `say(to_json(zip([1,2,3], ["a", "b"])))`, `[[1,"a"],[2,"b"]]` + "\n"},
 		{"zip-empty", `say(to_json(zip([], [1,2])))`, "[]\n"},
+		// collections
+		{"group_by", `say(to_json(group_by([1,2,3,4], |$x| $x % 2)))`, `{"1":[1,3],"0":[2,4]}` + "\n"},
+		{"partition", `say(to_json(partition([1,2,3,4], |$x| $x % 2 == 0)))`, `[[2,4],[1,3]]` + "\n"},
+		{"uniq_by", `say(to_json(uniq_by([1,2,2,3,1], |$x| $x)))`, `[1,2,3]` + "\n"},
+		{"enumerate", `say(to_json(enumerate(["a","b"])))`, `[[0,"a"],[1,"b"]]` + "\n"},
+		// stats
+		{"mean", `say(mean([2,4,6]))`, "4\n"},
+		{"mean-empty", `say(mean([]) // "empty")`, "empty\n"},
+		{"median-odd", `say(median([3,1,2]))`, "2\n"},
+		{"median-even", `say(median([1,2,3,4]))`, "2.5\n"},
+		// set ops
+		{"intersect", `say(to_json(intersect([1,2,2,3], [2,3,4])))`, `[2,3]` + "\n"},
+		{"union", `say(to_json(union([1,2], [2,3])))`, `[1,2,3]` + "\n"},
+		{"difference", `say(to_json(difference([1,2,3], [2])))`, `[1,3]` + "\n"},
+		// strings
+		{"pad", `say("[" ~ pad("ab", 5) ~ "]")`, "[ab   ]\n"},
+		{"pad-overflow", `say("[" ~ pad("abcdef", 3) ~ "]")`, "[abcdef]\n"},
+		{"capitalize", `say(capitalize("hELLO"))`, "Hello\n"},
+		{"reverse", `say(reverse("abc"))`, "cba\n"},
+		{"reverse-rune", `say(reverse("héllo"))`, "olléh\n"},
 		// a user .flatten coexists with the bare prelude flatten — no shadow, no clobber
 		{"user-dot-coexists-with-prelude", `fn .flatten($x) { "mine" }  say(.flatten([1]) ~ "/" ~ to_json(flatten([[1],[2]])))`, "mine/[1,2]\n"},
 	}
@@ -60,7 +80,11 @@ func TestRunPreludeDefinesGlobals(t *testing.T) {
 	if err := RunPrelude(env); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"flatten", "sum_by", "tally", "count_by", "chunk", "zip"} {
+	for _, name := range []string{
+		"flatten", "sum_by", "tally", "count_by", "chunk", "zip",
+		"group_by", "partition", "uniq_by", "enumerate", "mean", "median",
+		"intersect", "union", "difference", "pad", "capitalize", "reverse",
+	} {
 		if _, ok := env.get(name); !ok {
 			t.Errorf("prelude did not define %q", name)
 		}

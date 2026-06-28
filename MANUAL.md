@@ -1458,6 +1458,18 @@ builtins above, available unqualified like any builtin:
 | `count_by(xs, f)` | like `tally`, but keyed by `f(x)` |
 | `chunk(xs, n)` | split into `n`-sized pieces (`n < 1` is an error) |
 | `zip(a, b)` | pair two arrays element-wise, truncating to the shorter |
+| `group_by(xs, f)` | bucket elements by `f(x)` → `{key: [elems]}` |
+| `partition(xs, pred)` | split into `[matching, non-matching]` |
+| `uniq_by(xs, f)` | keep the first element per distinct `f(x)` (order preserved) |
+| `enumerate(xs)` | pair each element with its index: `["a", "b"]` → `[[0, "a"], [1, "b"]]` |
+| `mean(xs)` | arithmetic mean (float); empty list → catchable `Err` |
+| `median(xs)` | middle of the sorted list (mean of the two middle if even); empty → `Err` |
+| `intersect(a, b)` | elements in both, deduped (hashable elements; `a`'s order) |
+| `union(a, b)` | all distinct elements from both (`a`'s order first) |
+| `difference(a, b)` | elements in `a` not in `b`, deduped |
+| `pad(s, width)` | left-justify by padding the right with spaces (use `format`'s `{:>n}` for right-justify) |
+| `capitalize(s)` | first character upper, the rest lower |
+| `reverse(s)` | reverse a string by characters (rune-correct) |
 
 Writing part of the stdlib in drang keeps the Go core small and pressure-tests the
 language; the rule for what goes in Go vs drang is recorded in DESIGN.
