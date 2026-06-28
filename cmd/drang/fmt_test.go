@@ -36,6 +36,20 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicReadOnly(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ro.dr")
+	if err := os.WriteFile(p, []byte("old"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(p, 0o600) // let TempDir cleanup remove it
+	if err := writeFileAtomic(p, "new"); err != nil {
+		t.Fatalf("writeFileAtomic on a read-only file: %v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "new" {
+		t.Errorf("got %q, want %q", string(b), "new")
+	}
+}
+
 func TestExpandFmtPaths(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.dr"), []byte("1"), 0644)

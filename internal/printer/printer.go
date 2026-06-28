@@ -809,10 +809,12 @@ func interpFallback(n *ast.Interp) string {
 	return b.String()
 }
 
-// regexFallback emits a canonical qr/.../ for a synthesized RegexLit with no Raw,
-// choosing a delimiter the pattern does not contain.
+// regexFallback emits a canonical qr/.../ for a synthesized RegexLit with no Raw. Only /
+// and | are valid same-char qr delimiters (the lexer's quoteOpener), so it picks whichever
+// the pattern does not contain, else a brace-paired form. (Unreachable from parsed source,
+// which always carries Raw; a future fix-rule that synthesizes a regex would use this.)
 func regexFallback(pattern string) string {
-	for _, d := range []string{"/", "|", "#", "!", "~"} {
+	for _, d := range []string{"/", "|"} {
 		if !strings.Contains(pattern, d) {
 			return "qr" + d + pattern + d
 		}
