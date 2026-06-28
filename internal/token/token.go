@@ -159,6 +159,7 @@ type Token struct {
 	Lit  string // literal text: the string value for STRING, the name for VAR/IDENT
 	Line int
 	Col  int
+	Raw  string // verbatim source span for literals (incl. delimiters/prefix): "..", qq{..}, qr/../i, <<TAG..; "" otherwise. For the formatter only.
 }
 
 var keywords = map[string]Kind{

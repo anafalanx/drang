@@ -700,27 +700,33 @@ func (p *Parser) parsePrefix() ast.Expr {
 	pos := p.here()
 	switch p.tok.Kind {
 	case token.INT:
-		v, err := strconv.ParseInt(p.tok.Lit, 10, 64)
+		lit := p.tok.Lit
+		v, err := strconv.ParseInt(lit, 10, 64)
 		if err != nil {
-			p.errorf("invalid integer %q", p.tok.Lit)
+			p.errorf("invalid integer %q", lit)
 		}
 		p.next()
-		return &ast.IntLit{Pos: pos, Value: v}
+		return &ast.IntLit{Pos: pos, Value: v, Raw: lit}
 	case token.FLOAT:
-		v, err := strconv.ParseFloat(p.tok.Lit, 64)
+		lit := p.tok.Lit
+		v, err := strconv.ParseFloat(lit, 64)
 		if err != nil {
-			p.errorf("invalid float %q", p.tok.Lit)
+			p.errorf("invalid float %q", lit)
 		}
 		p.next()
-		return &ast.FloatLit{Pos: pos, Value: v}
+		return &ast.FloatLit{Pos: pos, Value: v, Raw: lit}
 	case token.STRING:
-		raw := p.tok.Lit
+		raw, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
-		return p.interpolate(raw, pos)
+		e := p.interpolate(raw, pos)
+		if s, ok := e.(*ast.StringLit); ok { // no interpolation -> stamp the verbatim source
+			s.Raw = rawSrc
+		}
+		return e
 	case token.RAWSTR:
-		s := p.tok.Lit
+		s, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
-		return &ast.StringLit{Pos: pos, Value: s} // q{...}: literal, no interpolation
+		return &ast.StringLit{Pos: pos, Value: s, Raw: rawSrc} // q{...}/<<'TAG': literal, no interpolation
 	case token.QW:
 		words := strings.Fields(p.tok.Lit)
 		p.next()
@@ -730,9 +736,9 @@ func (p *Parser) parsePrefix() ast.Expr {
 		}
 		return &ast.ArrayLit{Pos: pos, Elems: elems}
 	case token.QR:
-		pat := p.tok.Lit
+		pat, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
-		return &ast.RegexLit{Pos: pos, Pattern: pat}
+		return &ast.RegexLit{Pos: pos, Pattern: pat, Raw: rawSrc}
 	case token.TRUE:
 		p.next()
 		return &ast.BoolLit{Pos: pos, Value: true}

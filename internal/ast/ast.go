@@ -237,38 +237,47 @@ type NextStmt struct{ Pos }
 func (*NextStmt) String() string { return "(next)" }
 func (*NextStmt) stmtNode()      {}
 
-// IntLit is an integer literal.
+// IntLit is an integer literal. Raw is the original lexeme (e.g. "007"), for the
+// formatter; Value is the decoded number used by eval.
 type IntLit struct {
 	Pos
 	Value int64
+	Raw   string
 }
 
 func (e *IntLit) String() string { return strconv.FormatInt(e.Value, 10) }
 func (*IntLit) exprNode()        {}
 
-// FloatLit is a floating-point literal.
+// FloatLit is a floating-point literal. Raw is the original lexeme (e.g. "1.50").
 type FloatLit struct {
 	Pos
 	Value float64
+	Raw   string
 }
 
 func (e *FloatLit) String() string { return strconv.FormatFloat(e.Value, 'g', -1, 64) }
 func (*FloatLit) exprNode()        {}
 
-// StringLit is a string literal.
+// StringLit is a string literal. Raw is the verbatim source incl. delimiters/form
+// ("..", q{..}, qq{..}, <<TAG..) for the formatter; Value is the decoded value used by
+// eval. Raw is "" for synthesized/interpolated-segment nodes (printer falls back).
 type StringLit struct {
 	Pos
 	Value string
+	Raw   string
 }
 
 func (e *StringLit) String() string { return strconv.Quote(e.Value) }
 func (*StringLit) exprNode()        {}
 
 // RegexLit is a compiled-regex literal: qr/pattern/flags. Pattern already has any
-// trailing flags baked in as Go inline flags (e.g. qr/foo/i -> "(?i)foo").
+// trailing flags baked in as Go inline flags (e.g. qr/foo/i -> "(?i)foo") — that is the
+// eval source of truth. Raw is the verbatim source incl. delimiters + flags ("qr/foo/i")
+// for the formatter (printer falls back to a canonical qr form when Raw is "").
 type RegexLit struct {
 	Pos
 	Pattern string
+	Raw     string
 }
 
 func (e *RegexLit) String() string { return "(regex " + strconv.Quote(e.Pattern) + ")" }
