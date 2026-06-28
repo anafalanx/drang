@@ -51,6 +51,10 @@ while $i < 3 {
 say($g)`,
 	`say(len("hello"))`,
 	`say(len("hi") + len("there"))`,
+	// stdlib batch: conversions, math, index_of (must run identically on both backends)
+	`say(str(42), type([1, 2]), float("1.5"))`,
+	`say(sqrt(16), pow(2, 8), div(17, 5))`,
+	`say(index_of("abcdef", "cd"))`,
 	// block scoping: an inner declaration must not leak to the outer scope
 	`$x := 1
 if true {

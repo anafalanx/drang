@@ -2855,10 +2855,14 @@ evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 | Builtin | Signature | Description |
 |---|---|---|
 | `int` | `int(x)` | Convert int/float/string to an int; unparseable → Err. |
+| `str` | `str(x)` | Render any value as its display string (numbers, bools, nil, collections, errors). |
+| `float` | `float(x)` | Convert int/float/string to a float; unparseable → Err. |
+| `bool` | `bool(x)` | Coerce by truthiness (nil/false/0/0.0/""/empty container → false). |
+| `type` | `type(x)` | Type name: `int` `float` `string` `bool` `nil` `array` `map` `range` `function` `error`. |
 
 ### Numeric
 
-Minimal daily-driver math (not a math/trig kitchen sink). `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round` return an int. A non-number operand is a catchable Err.
+Minimal daily-driver math (not a math/trig kitchen sink — no `sin`/`cos`, no bignum). `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round`/`div` return an int; `sqrt`/`log` return a float; `pow` returns an int when it can. A bad operand (non-number, `sqrt` of a negative, `log` of a non-positive, divide-by-zero, overflow) is a catchable Err.
 
 | Builtin | Signature | Description |
 |---|---|---|
@@ -2869,6 +2873,10 @@ Minimal daily-driver math (not a math/trig kitchen sink). `abs`/`sum`/`min`/`max
 | `floor` | `floor(n)` | Round down to an int; NaN/Inf/out-of-range → Err. |
 | `ceil` | `ceil(n)` | Round up to an int. |
 | `round` | `round(n)` | Round to the nearest int (half away from zero). |
+| `sqrt` | `sqrt(n)` | Square root (float); negative → Err. |
+| `pow` | `pow(base, exp)` | base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float. |
+| `log` | `log(x, base?)` | Natural log, or log base `base`; non-positive `x` or bad base → Err. |
+| `div` | `div(a, b)` | Truncating integer division (toward zero, matching `%`); divide-by-zero → Err. |
 
 ### Strings
 
@@ -2885,6 +2893,7 @@ Minimal daily-driver math (not a math/trig kitchen sink). `abs`/`sum`/`min`/`max
 | `lines` | `lines(s)` | Split into lines (CRLF-normalized), dropping one trailing newline; `""` → `[]`. |
 | `repeat` | `repeat(s, n)` | Concatenate `n` copies of `s`; negative or oversized `n` → Err. |
 | `chars` | `chars(s)` | Array of single-rune strings. |
+| `index_of` | `index_of(s, needle)` | Rune index of the first `needle` in `s`, or -1; empty needle → 0. |
 | `len` | `len(x)` | Rune count of a string (also entry count of an array/map/range). |
 | `contains` | `contains(s, needle)` | Substring test for a string (also membership for an array). |
 

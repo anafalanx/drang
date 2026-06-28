@@ -1504,6 +1504,10 @@ var builtins = map[string]builtin{
 	"exit":        builtinExit,
 	"parse_args":  builtinParseArgs,
 	"int":         builtinInt,
+	"str":         builtinStr,
+	"float":       builtinFloat,
+	"bool":        builtinBool,
+	"type":        builtinType,
 	"is_err":      builtinIsErr,
 	"err_code":    builtinErrCode,
 	"err_msg":     builtinErrMsg,
@@ -1567,6 +1571,7 @@ var builtins = map[string]builtin{
 	"format":      builtinFormat,
 	"lines":       builtinLines,
 	"repeat":      builtinRepeat,
+	"index_of":    builtinIndexOf,
 
 	// JSON (thin binding over encoding/json)
 	"from_json": builtinFromJSON,
@@ -1584,6 +1589,10 @@ var builtins = map[string]builtin{
 	"floor": builtinFloor,
 	"ceil":  builtinCeil,
 	"round": builtinRound,
+	"sqrt":  builtinSqrt,
+	"pow":   builtinPow,
+	"log":   builtinLog,
+	"div":   builtinDiv,
 
 	// regex (RE2)
 	"re":       builtinRe,
