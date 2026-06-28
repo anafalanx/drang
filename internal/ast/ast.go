@@ -156,6 +156,9 @@ type IfStmt struct {
 	Cond Expr
 	Then *Block
 	Else Stmt
+	// Postfix records the modifier keyword (token.IF or token.UNLESS) when this came from
+	// a postfix form (stmt if c / stmt unless c); 0 means a normal block if. Formatter only.
+	Postfix token.Kind
 }
 
 func (s *IfStmt) String() string {
@@ -171,6 +174,9 @@ type WhileStmt struct {
 	Pos
 	Cond Expr
 	Body *Block
+	// Postfix records the modifier keyword (token.WHILE or token.UNTIL) when this came
+	// from a postfix form (stmt while c / stmt until c); 0 means a normal while. Formatter only.
+	Postfix token.Kind
 }
 
 func (s *WhileStmt) String() string { return fmt.Sprintf("(while %s %s)", s.Cond, s.Body) }
@@ -182,6 +188,9 @@ type ForStmt struct {
 	Vars []string // one name (element) or two (index/key, value)
 	Iter Expr
 	Body *Block
+	// Postfix is token.FOR when this came from a postfix form (stmt for xs), where Vars
+	// is the synthetic ["_"]; 0 means a normal for-in loop. Formatter only.
+	Postfix token.Kind
 }
 
 func (s *ForStmt) String() string {
@@ -444,6 +453,11 @@ func (*DefOr) exprNode()        {}
 type ArrayLit struct {
 	Pos
 	Elems []Expr
+	// Qw marks an array that came from a qw{...} word list; Raw is then the verbatim
+	// source (qw{a b c}) so the formatter reprints it as written instead of as [..].
+	// Formatter only — eval treats it as an ordinary array of string Elems.
+	Qw  bool
+	Raw string
 }
 
 func (e *ArrayLit) String() string {
