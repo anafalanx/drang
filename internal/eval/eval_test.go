@@ -78,6 +78,40 @@ say($f())`, "got 42\n"},
 	}
 }
 
+// TestStdlibWalls covers the first stdlib batch: the conversion family (str/float/bool/
+// type), the math additions (sqrt/pow/log/div), and index_of — values and catchable
+// error cases.
+func TestStdlibWalls(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		// conversions
+		{"str", `say(str(5), str(1.5), str(true), str([1, 2, 3]))`, "5 1.5 true [1, 2, 3]\n"},
+		{"float-parse", `say(float("  2.5  ") + 1)`, "3.5\n"},
+		{"float-widen", `say(float(3))`, "3\n"},
+		{"float-bad", `say(float("x") // "bad")`, "bad\n"},
+		{"bool", `say(bool(0), bool(""), bool([]), bool(5), bool("x"))`, "false false false true true\n"},
+		{"type", `say(type(5), type(1.5), type("a"), type(true), type([1]), type({"a": 1}), type(1..2))`, "int float string bool array map range\n"},
+		// math
+		{"sqrt", `say(sqrt(9), sqrt(2))`, "3 1.4142135623730951\n"},
+		{"sqrt-neg", `say(sqrt(-1) // "neg")`, "neg\n"},
+		{"pow-int", `say(pow(2, 10))`, "1024\n"},
+		{"pow-float", `say(pow(9, 0.5))`, "3\n"},
+		{"pow-overflow", `say(pow(2, 100) // "of")`, "of\n"},
+		{"log", `say(round(log(8, 2)), round(log(1000, 10)))`, "3 3\n"},
+		{"div", `say(div(17, 5), div(-17, 5), div(17, -5), div(-17, -5))`, "3 -3 -3 3\n"},
+		{"div-zero", `say(div(1, 0) // "dz")`, "dz\n"},
+		// index_of (rune-indexed)
+		{"index-of", `say(index_of("hello", "ll"), index_of("hello", "z"))`, "2 -1\n"},
+		{"index-of-rune", `say(index_of("héllo", "llo"))`, "2\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := run(t, tc.src); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestOutput drives whole programs and compares their say output. It locks in
 // the collections slice: literals, indexing, autovivification, compound
 // assignment, for-in over every iterable, the builtins, and the error model.

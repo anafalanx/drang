@@ -7,11 +7,13 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// Minimal numeric helpers — daily-driver math (byte sizes, counters, report math),
-// deliberately NOT a math/trig kitchen sink. abs/sum/min/max preserve int vs
-// float; floor/ceil/round return an int (the useful form for counts/indices),
-// erroring on NaN/Inf or values outside int64 range. Following the builtin
-// convention: wrong arity aborts; a non-number operand is a catchable Err.
+// Minimal numeric helpers — daily-driver math (byte sizes, counters, report math,
+// scaling, percentages), deliberately NOT a math/trig kitchen sink (no sin/cos, no
+// bignum). abs/sum/min/max preserve int vs float; floor/ceil/round and truncating-
+// integer div return an int; sqrt/log return a float; pow returns an int when both
+// operands are ints and the exponent is non-negative, else a float. Following the
+// builtin convention: wrong arity aborts; a bad operand (non-number, sqrt of a negative,
+// log of a non-positive, divide-by-zero, out-of-range/overflow) is a catchable Err.
 
 // builtinAbs is the numeric absolute value (the path-absolutize builtin is now
 // abspath). Preserves int/float.
@@ -132,4 +134,117 @@ func roundish(name string, args []value.Value, fn func(float64) float64) (value.
 	default:
 		return value.MakeErr(fmt.Sprintf("%s: expected a number, got %s", name, a.TypeName()), 1), nil
 	}
+}
+
+// builtinSqrt is the square root, always a float. A negative operand is a catchable Err
+// (rather than a silent NaN).
+func builtinSqrt(args []value.Value) (value.Value, error) {
+	if len(args) != 1 {
+		return value.MakeNil(), fmt.Errorf("sqrt expects 1 argument, got %d", len(args))
+	}
+	a := args[0]
+	if !a.IsNumber() {
+		return value.MakeErr("sqrt: expected a number, got "+a.TypeName(), 1), nil
+	}
+	if a.Num() < 0 {
+		return value.MakeErr("sqrt: of a negative number", 1), nil
+	}
+	return value.MakeFloat(math.Sqrt(a.Num())), nil
+}
+
+// builtinPow raises base to exp. Both int with a non-negative exp gives an exact int
+// (overflow is a catchable Err); otherwise a float.
+func builtinPow(args []value.Value) (value.Value, error) {
+	if len(args) != 2 {
+		return value.MakeNil(), fmt.Errorf("pow expects 2 arguments, got %d", len(args))
+	}
+	base, exp := args[0], args[1]
+	if !base.IsNumber() || !exp.IsNumber() {
+		return value.MakeErr("pow: expected numbers", 1), nil
+	}
+	if base.Tag() == value.Int && exp.Tag() == value.Int && exp.AsInt() >= 0 {
+		n, ok := intPow(base.AsInt(), exp.AsInt())
+		if !ok {
+			return value.MakeErr("pow: integer overflow", 1), nil
+		}
+		return value.MakeInt(n), nil
+	}
+	return value.MakeFloat(math.Pow(base.Num(), exp.Num())), nil
+}
+
+// intPow computes base**exp for exp >= 0 by squaring, with overflow detection.
+func intPow(base, exp int64) (int64, bool) {
+	result := int64(1)
+	for exp > 0 {
+		if exp&1 == 1 {
+			if mulOverflows(result, base) {
+				return 0, false
+			}
+			result *= base
+		}
+		exp >>= 1
+		if exp > 0 {
+			if mulOverflows(base, base) {
+				return 0, false
+			}
+			base *= base
+		}
+	}
+	return result, true
+}
+
+// builtinLog is the natural logarithm, or log base b with a second argument. The operand
+// must be positive (and the base positive and != 1); otherwise a catchable Err. Float.
+func builtinLog(args []value.Value) (value.Value, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return value.MakeNil(), fmt.Errorf("log expects 1 or 2 arguments, got %d", len(args))
+	}
+	x := args[0]
+	if !x.IsNumber() {
+		return value.MakeErr("log: expected a number, got "+x.TypeName(), 1), nil
+	}
+	if x.Num() <= 0 {
+		return value.MakeErr("log: of a non-positive number", 1), nil
+	}
+	if len(args) == 1 {
+		return value.MakeFloat(math.Log(x.Num())), nil
+	}
+	b := args[1]
+	if !b.IsNumber() {
+		return value.MakeErr("log: base must be a number, got "+b.TypeName(), 1), nil
+	}
+	if b.Num() <= 0 || b.Num() == 1 {
+		return value.MakeErr("log: base must be positive and not 1", 1), nil
+	}
+	return value.MakeFloat(math.Log(x.Num()) / math.Log(b.Num())), nil
+}
+
+// builtinDiv is truncating integer division (toward zero, matching the % remainder so
+// div(a,b)*b + a%b == a): div(17, 5) == 3, div(-17, 5) == -3. Division by zero is a
+// catchable Err. Two ints divide exactly; a float operand truncates the quotient.
+func builtinDiv(args []value.Value) (value.Value, error) {
+	if len(args) != 2 {
+		return value.MakeNil(), fmt.Errorf("div expects 2 arguments, got %d", len(args))
+	}
+	a, b := args[0], args[1]
+	if !a.IsNumber() || !b.IsNumber() {
+		return value.MakeErr("div: expected numbers", 1), nil
+	}
+	if a.Tag() == value.Int && b.Tag() == value.Int {
+		if b.AsInt() == 0 {
+			return value.MakeErr("div: division by zero", 1), nil
+		}
+		if a.AsInt() == math.MinInt64 && b.AsInt() == -1 {
+			return value.MakeErr("div: overflow", 1), nil
+		}
+		return value.MakeInt(a.AsInt() / b.AsInt()), nil
+	}
+	if b.Num() == 0 {
+		return value.MakeErr("div: division by zero", 1), nil
+	}
+	q := math.Trunc(a.Num() / b.Num())
+	if math.IsNaN(q) || math.IsInf(q, 0) || q >= math.MaxInt64 || q < math.MinInt64 {
+		return value.MakeErr("div: result is out of int range", 1), nil
+	}
+	return value.MakeInt(int64(q)), nil
 }

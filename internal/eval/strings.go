@@ -3,9 +3,25 @@ package eval
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/value"
 )
+
+// builtinIndexOf returns the rune index of the first occurrence of needle in s, or -1 if
+// absent. The index is in runes (to match chars()/slicing), not bytes; an empty needle
+// matches at 0. A non-string argument aborts (the string-builtin convention).
+func builtinIndexOf(args []value.Value) (value.Value, error) {
+	s, needle, err := twoStrings("index_of", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	b := strings.Index(s, needle)
+	if b < 0 {
+		return value.MakeInt(-1), nil
+	}
+	return value.MakeInt(int64(utf8.RuneCountInString(s[:b]))), nil
+}
 
 // builtinSplit splits a string. With one arg it splits on runs of whitespace;
 // with an empty separator it splits into runes; otherwise it splits on the sep.
