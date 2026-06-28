@@ -24,11 +24,20 @@ import (
 // verifies (the drop-guard) that the output carries exactly the same comments as the
 // input. It errors on a parse failure, on output that fails to re-parse, or if a comment
 // would be dropped or altered — so callers never write corrupted output.
-func Format(src string) (string, error) {
+func Format(src string) (string, error) { return format(src, false) }
+
+// FormatFix is Format plus the migration rewrites (Fix) applied before printing — the
+// `drang fmt --fix` path (drang's edition mechanism).
+func FormatFix(src string) (string, error) { return format(src, true) }
+
+func format(src string, fix bool) (string, error) {
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
 		return "", fmt.Errorf("parse error: %s", strings.Join(errs, "; "))
+	}
+	if fix {
+		Fix(prog)
 	}
 	in := p.Comments()
 	out := Program(prog, in)

@@ -17,7 +17,7 @@ import (
 // rather than write. Output is always re-verified (the printer's drop-guard), so a parse
 // error or a dropped comment leaves files untouched and exits non-zero.
 func runFmt(args []string) {
-	var write, check, list, diff bool
+	var write, check, list, diff, fix bool
 	var paths []string
 	for _, a := range args {
 		switch a {
@@ -29,6 +29,8 @@ func runFmt(args []string) {
 			list = true
 		case "-d", "--diff":
 			diff = true
+		case "--fix":
+			fix = true
 		case "-h", "--help":
 			fmtHelp()
 			os.Exit(0)
@@ -50,7 +52,7 @@ func runFmt(args []string) {
 	}
 
 	if len(paths) == 0 {
-		fmtStdin(check || list || diff, diff)
+		fmtStdin(check || list || diff, diff, fix)
 		return
 	}
 
@@ -62,7 +64,7 @@ func runFmt(args []string) {
 			anyErr = true
 			continue
 		}
-		out, ferr := printer.Format(string(src))
+		out, ferr := formatSource(string(src), fix)
 		if ferr != nil {
 			fmt.Fprintf(os.Stderr, "drang fmt: %s: %v\n", f, ferr)
 			anyErr = true
@@ -107,13 +109,21 @@ func runFmt(args []string) {
 // fmtStdin formats stdin. In report mode (check/list/diff) it writes a diff and/or exits
 // non-zero when the input is not already formatted; otherwise it writes the formatted
 // source to stdout.
-func fmtStdin(report, diff bool) {
+// formatSource formats src, applying migration rewrites first when fix is set.
+func formatSource(src string, fix bool) (string, error) {
+	if fix {
+		return printer.FormatFix(src)
+	}
+	return printer.Format(src)
+}
+
+func fmtStdin(report, diff, fix bool) {
 	src, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang fmt:", err)
 		os.Exit(2)
 	}
-	out, ferr := printer.Format(string(src))
+	out, ferr := formatSource(string(src), fix)
 	if ferr != nil {
 		fmt.Fprintln(os.Stderr, "drang fmt: <stdin>:", ferr)
 		os.Exit(1)
@@ -257,6 +267,7 @@ Flags:
   -c, --check    list unformatted files to stderr and exit non-zero (CI gate)
   -l, --list     list files that would change to stdout
   -d, --diff     print a diff of the changes
+      --fix      also apply migration rewrites (drang's edition mechanism)
   -h, --help     print this help
 
 Paths may be files or directories (directories are searched for *.dr files).
