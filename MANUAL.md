@@ -2,6 +2,8 @@
 
 *A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration — implemented in Go.*
 
+*Covers drang 0.4.*
+
 > Every code example in this manual was executed against the interpreter; the shown output is real.
 
 ## Contents
@@ -2592,7 +2594,7 @@ builtin.
 
 ```drang
 $r := http_get("https://example.com")
-say($r.status, $r.ok, len($r.body))                       # 200 true 1256
+say($r.status, $r.ok, len($r.body))                       # 200 true <n>  (n = body bytes)
 
 $r := http("POST", "https://api.example.com/items", {json: {name: "ada"}})?
 $r := http_post("https://example.com/form", "a=1&b=2")    # a string body
@@ -2631,6 +2633,40 @@ $statuses := $urls |> pmap(|$u| http_get($u, {timeout: 2000}) // {status: 0}) |>
 
 ---
 
+## Task dispatch
+
+`dispatch(tasks)` turns a script into a subcommand-style CLI — a tiny `make`/`just` in
+your program. It takes a map of `{name: function}`, looks up the task named by `$ARGV[0]`,
+runs it, and **exits the process** with a resolved code (it does not return).
+
+```drang
+fn .build($args) { say("building " ~ to_json($args)) }
+fn .clean()      { say("cleaning") }
+
+dispatch({build: .build, clean: .clean})
+```
+
+```
+$ drang tasks.dr                 # no task, or `list` / `-l` / `--list`: print the task names
+tasks:
+  build
+  clean
+$ drang tasks.dr build a b       # runs .build(["a", "b"]) — the remaining argv as a string array
+building ["a","b"]
+$ drang tasks.dr nope            # unknown task: list to stderr, exit 2
+drang: unknown task "nope"
+tasks:
+  build
+  clean
+```
+
+A task function takes either **0 parameters** (it ignores the arguments) or **1
+parameter** (it receives the post-name argv as a string array); more is an error. The exit
+code follows the task: success → `0`; a returned/propagated **Err** → its code (clamped to
+`1..255`); an `exit(n)`/`die` → that code; an unknown task → `2`.
+
+---
+
 ## One-liner mode
 
 `-n` and `-p` turn drang into a stream processor in the awk/perl/sed tradition:
@@ -2642,7 +2678,7 @@ a plain `-e`.
 ```
 drang -pe '$_ = upper($_)' < notes.txt               # filter: uppercase each line
 drang -ne 'if matches($_, "ERROR") { say($_) }' log  # grep-like (matches(s, pat))
-drang -ane '$_ = $f[0]' data.tsv                      # print the first column
+drang -ape '$_ = $f[0]' data.tsv                      # print the first column
 ```
 
 Per-line variables (all in the `$` data namespace):
@@ -2897,8 +2933,8 @@ can recover with `//` or propagate with `?`. "→ Err" below means the failure m
 is a catchable Err value.
 
 The list is derived from the `builtins` map in `internal/eval/eval.go` and the
-higher-order forms in `internal/eval/hof.go`. (`spawn` and `each_line` are
-evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
+higher-order forms in `internal/eval/hof.go`. (`spawn`, `each_line`, and `dispatch`
+are evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 `sort`, and the `*_by` forms are higher-order and appear under Collections.)
 
 ### Output & errors
@@ -3135,9 +3171,9 @@ A point in time is epoch seconds (a float); see the Date-and-time chapter. `strf
 | Builtin | Signature | Description |
 |---|---|---|
 | `rand` | `rand()` | A float in `[0, 1)`. |
-| `rand_int` | `rand_int(lo, hi)` | A random int in `[lo, hi)`. |
+| `rand_int` | `rand_int(n)` / `rand_int(lo, hi)` | A random int in `[0, n)`, or in `[lo, hi)`. |
 | `shuffle` | `shuffle(arr)` | A new array, randomly permuted. |
-| `sample` | `sample(arr, n?)` | A random element, or `n` distinct elements. |
+| `sample` | `sample(arr)` | A random element; empty array → Err. |
 | `uuid` | `uuid()` | A random (v4) UUID string. |
 
 ---
@@ -3148,24 +3184,22 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Whole capability areas with no builtins
 
-There is no HTTP support, and only minimal math (`abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round` — no `sqrt`/trig/etc.). The functions you might expect simply don't exist, and calling one is an `unknown function` error:
+The math family is daily-driver-sized, not a scientific library: `abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round`/`sqrt`/`pow`/`log`/`div` are present, but trigonometry is not — calling one is an `unknown function` error:
 
 ```
-drang -e 'say(sqrt(9))'
-# drang: unknown function sqrt
-
-drang -e 'say(fetch("http://x"))'
-# drang: unknown function fetch
+drang -e 'say(sin(0))'
+# drang: unknown function sin
 ```
 
-So `fetch`/`http` (orchestrate `run(["curl", …])` instead) and the math family (`sin`, `cos`, `sqrt`, `pow`, `log`) are still missing — planned as thin bindings over Go's stdlib, not yet landed. (Date/time, hashing, encodings, and randomness *are* available now — see [Date and time](#date-and-time) and [Hashing, encoding, and randomness](#hashing-encoding-and-randomness).)
+Trig (`sin`, `cos`, `tan`, …) is planned as a thin binding over Go's `math`, not yet landed; for a one-off, orchestrate an external tool. Everything else you might reach for *is* here now: HTTP (`http_get`/`http_post`/`http` — see [HTTP client](#http-client)), date/time, hashing, encodings, and randomness. (The bare name `fetch` is not a builtin — use `http_get`.)
 
 ### Missing operators
 
-- **No integer-division operator.** `/` is always float division. Use `int()` to truncate:
+- **No integer-division operator.** `/` is always float division. Use the `div()` builtin (truncating, like `%`), or `int()`:
 
   ```drang
   say(10 / 4)        # 2.5
+  say(div(10, 4))    # 2
   say(int(10 / 4))   # 2
   ```
 
