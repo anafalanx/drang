@@ -2734,6 +2734,30 @@ handy for example-first documentation. In a **normal** run (`drang file.dr` / `-
 can't interfere with the program. (A richer `test "name" { … }` block form with an
 `assert` builtin is a possible future addition; v1 is `example`-only.)
 
+### Golden-output tests
+
+Where `example` checks a **value**, a golden test snapshots a script's whole **stdout**
+against a saved fixture — ideal for scripts that *produce text* (reports, CLI tools).
+Put a `.golden` file next to the script (`report.dr` → `report.golden`); `drang test`
+then runs the script, captures its stdout, and diffs it against the golden:
+
+```
+$ drang test report.dr
+report.dr: 2 passed, 0 failed        # the golden + any example assertions
+```
+
+On a mismatch it prints a compact diff (common lines trimmed, `-expected` / `+actual`)
+and exits non-zero. To create or re-bless a golden from the current output, use
+`--update` (`-u`):
+
+```
+$ drang test --update report.dr      # writes report.golden from captured stdout
+```
+
+A file can carry both: its `example` assertions *and* a `.golden` snapshot are checked
+together (the pass/fail counts combine). A script with no sibling `.golden` is just an
+`example` test, and its stdout passes through to the terminal as usual.
+
 ---
 
 ## Quick reference: builtins

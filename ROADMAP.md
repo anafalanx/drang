@@ -74,7 +74,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
 | Rebuild + release/version discipline | the local `drang.exe` had silently fallen ~9h behind HEAD; add `z build` + version stamp + a release check | S | PARTIAL (binary now current) |
-| ~~`drang test`~~ | **DONE**: `example EXPR == EXPR` / `example EXPR` / `example EXPR fails` (a no-op in a normal run) + the `drang test` runner (per-file pass/fail, non-zero exit on failure) | M | ✅ DONE |
+| ~~`drang test`~~ | **DONE**: `example` assertions (`== `/ truthy / `fails`, a no-op in normal runs) + the runner (per-file pass/fail, non-zero exit) + **golden-output snapshots** (sibling `.golden`, captured-stdout diff, `--update` to re-bless) | M | ✅ DONE |
 | `drang fmt` (+ `--fix` = the edition/migration mechanism) | own-the-AST migrations as the taxonomy evolves; `--fix` rule design OPEN | M | NOT-STARTED |
 | `-i` in-place edit for one-liner mode | `perl -i -pe` is the canonical text-munge | S–M | DEFERRED |
 | REPL polish / editor support / LSP | real adoption infra, but one-user project — low priority | L | NOT-STARTED |

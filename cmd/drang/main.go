@@ -188,7 +188,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
 	fmt.Fprintln(os.Stderr, "       drang -n|-p [-a] (-e '<source>' | <file.dr>) [files...]   (one-liner mode)")
 	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>] [--runtime <drang-binary>]")
-	fmt.Fprintln(os.Stderr, "       drang test <file.dr> [file.dr ...]                          (run example assertions)")
+	fmt.Fprintln(os.Stderr, "       drang test [--update] <file.dr> [file.dr ...]               (example + golden tests)")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
 	os.Exit(2)
 }
@@ -201,15 +201,16 @@ Usage:
   drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
   drang build <file.dr> [-o <output>] [--runtime <drang-binary>]
-  drang test <file.dr> [file.dr ...]
+  drang test [--update] <file.dr> [file.dr ...]
 
 Commands:
   build          compile a script into a standalone executable (a drang binary with
                  the source appended); the result runs its embedded program.
                  --runtime <path> uses a target-OS/arch drang binary as the base,
                  for cross-platform builds (e.g. a Linux standalone from Windows)
-  test           run the 'example' assertions in each file and report pass/fail,
-                 exiting non-zero on any failure
+  test           run each file's 'example' assertions and, when a sibling .golden
+                 exists, diff its stdout against that file (--update rewrites goldens);
+                 reports pass/fail and exits non-zero on any failure
 
 Options:
   -e <source>    run the given source string instead of a file
@@ -434,16 +435,28 @@ func reportParseErrors(p *parser.Parser, origin string) bool {
 	return true
 }
 
-// runTests implements `drang test <file.dr> ...`: it parses and runs each file and
-// evaluates its `example` assertions, printing any failures and a per-file summary,
-// and exiting non-zero if any assertion fails or a file cannot be parsed or run.
-func runTests(paths []string) {
+// runTests implements `drang test [--update] <file.dr> ...`: it parses and runs each
+// file, evaluates its `example` assertions, and — when a sibling `.golden` file exists
+// (or --update is given) — compares the file's captured stdout to that golden (or
+// rewrites it). It prints failures and a per-file summary, exiting non-zero if any
+// test fails or a file cannot be parsed or run.
+func runTests(args []string) {
+	update := false
+	var paths []string
+	for _, a := range args {
+		switch a {
+		case "--update", "-u":
+			update = true
+		default:
+			paths = append(paths, a)
+		}
+	}
 	if len(paths) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: drang test <file.dr> [file.dr ...]")
+		fmt.Fprintln(os.Stderr, "usage: drang test [--update] <file.dr> [file.dr ...]")
 		os.Exit(2)
 	}
 	totalPass, totalFail := 0, 0
-	fileErr := false // a file that couldn't be read/parsed/run (vs an assertion failure)
+	fileErr := false // a file that couldn't be read/parsed/run (vs a test failure)
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -457,7 +470,13 @@ func runTests(paths []string) {
 			fileErr = true
 			continue
 		}
-		pass, fail, lerr := eval.RunExamples(prog, filepath.Dir(path), path, os.Stdout)
+		// A golden check runs when a sibling .golden exists, or when --update is set
+		// (which then (re)writes it).
+		golden := strings.TrimSuffix(path, ".dr") + ".golden"
+		if _, statErr := os.Stat(golden); statErr != nil && !update {
+			golden = ""
+		}
+		pass, fail, lerr := eval.RunExamples(prog, filepath.Dir(path), path, golden, update, os.Stdout)
 		if lerr != nil {
 			reportRuntimeError(string(src), path, lerr)
 			fileErr = true
