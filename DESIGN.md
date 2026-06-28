@@ -2264,3 +2264,53 @@ taking the element (it has no declared params). A user binding still shadows the
 name (env lookup wins first), consistent with call resolution. Special forms (map/filter/
 spawn/dispatch/the HOFs) are NOT in the `builtins` map, so they stay name-only (you would
 never pass `map` to `map`) — keeping the first-class set to ordinary builtins.
+
+## Pre-0.4 core hardening (2026-06-28)
+
+Before cutting 0.4 (the first version meant for daily-driver use), a seven-front
+adversarial pass swept the foundation — VM↔walker parity, the freeze model under
+concurrency, the value/memory model, capture analysis, the parser/lexer, the error
+model, and the concurrency primitives. The architecture held where it counts: parity is
+clean across ~25k randomized programs (VM opcodes delegate to the *same* arith/equal/
+compare primitives the walker uses), capture analysis is sound, the value-side freeze
+model rejects every frozen-mutation route, and channel/spawn mechanics are correct. The
+pass found nine real bugs, all now fixed with regression tests:
+
+- **pmap data race (CRITICAL).** A callback that *assigned* a captured outer variable
+  raced the single shared `fn.Env` (concurrent Go-map read/write → fatal, uncatchable
+  crash; ~20/30 runs). `spawn` already snapshots its env; `pmap` did not. Fix: each
+  pmap worker runs over its own `fn.Env.snapshot()` (`hof.go`). Snapshotting only reads
+  `fn.Env` while the main goroutine is parked, so it doesn't race.
+- **`drang fmt` miscompile (CRITICAL).** The bare-pipe optimization dropped the outer
+  `()` of a call-of-a-call stage (`x |> f()()` → `x |> f()`), silently changing the
+  parse and turning a working program into a crashing one. Fix: a no-arg stage is printed
+  bare only when its callee is a genuine bare-pipe target (Ident/Field/Var/Index/Lambda,
+  matching `makePipe`); otherwise the `()` is kept (`printer.go`).
+- **Cyclic `Equal`/`Display` (HIGH).** `push($a, $a); say($a)` overflowed Go's
+  unrecoverable stack. Fix (`value/recurse.go`): `Display` uses path-based cycle
+  detection — a node that is its own ancestor renders `[...]`/`{...}`, while a merely
+  *shared* (acyclic) sub-value still renders in full — plus a depth backstop; `Equal`
+  uses an identical-reference fast path plus a depth bound.
+- **VM swallowed a top-level `return` (HIGH).** The VM compiled a top-level `return` to a
+  plain `OpReturn`, ending the program (exit 0, rest skipped) where the walker correctly
+  errors. Fix: an `inFunction` compiler flag (false only at the top level) fails the
+  compile over to the walker for a top-level `return`, like `break`/`next` (`compiler.go`).
+- **`|>` + a tighter operator always errored (HIGH).** `x |> f() == y` parsed as
+  `x |> (f() == y)`; `makePipe` then wrapped the operator expression in an arg-less call —
+  always a runtime error. Fix: `makePipe` accepts only a callable RHS (a call or a bare
+  callable) and returns nil otherwise, so the parser reports a clear error pointing at the
+  parenthesization; as a bonus `x |> f()?` now correctly means `(x |> f())?` (`parser.go`).
+- **`spawn` arg aliasing (MED).** `spawn(fn, $a, $a)` deep-copied each argument with a
+  *fresh* visited map, so a value passed twice became two independent copies (a direct
+  call preserves the aliasing). Fix: one shared visited map across the args, like `send`.
+- **Embedded NUL truncated the program (MED).** The lexer's EOF sentinel is also `0`, so a
+  real `0x00` byte read as end-of-input. Fix: `pos < len(src)` distinguishes a real NUL
+  (emit ILLEGAL) from true EOF (`lexer.go`).
+- **`each_line` dropped `?`-propagated callback errors (MED).** The loop checked only the
+  Go-error return, not the returned Err *value*. Fix: also surface `v.IsErr()` and stop
+  the child, matching the HOFs (`exec.go`).
+- **Leading UTF-8 BOM (LOW).** Stripped in `lexer.New`.
+
+Deferred (noted, not blocking 0.4): an AST-equality drop-guard for `drang fmt` (re-parse
+the output and structurally compare to the input, refusing to write on any mismatch) would
+defend against the *whole class* of printer bugs, beyond the one paren case fixed here.

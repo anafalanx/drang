@@ -37,6 +37,12 @@ func TestFmtRunEquality(t *testing.T) {
 		"$s := 0\nsay($s + 1) for [1, 2, 3]",
 		// a wide pipe chain (wraps to multiple lines with trailing |>) must still compute 66
 		"$r := [1, 2, 3, 4, 5, 6, 7, 8] |> map(|$e| $e * 2) |> filter(|$e| $e > 4) |> reduce(0, |$a, $e| $a + $e)\nsay($r)",
+		// pre-0.4 hardening (Bug 4): a pipe stage that is a call-of-a-call must keep its
+		// outer () through a reformat, and x |> f()? must stay (x |> f())?. The run-before
+		// == run-after invariant catches the formatter silently changing the parse.
+		"fn .make() { |$x| $x * 100 }\nsay(7 |> .make()())",
+		"fn .dbl($x) { $x * 2 }\nsay(10 |> .dbl()?)",
+		"fn .id($x) { $x }\nsay((5 |> .id()) == 5)",
 	)
 	for _, src := range progs {
 		want := run(t, src)

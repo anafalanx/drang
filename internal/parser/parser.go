@@ -840,7 +840,12 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		if right == nil {
 			return nil
 		}
-		return makePipe(left, right)
+		pipe := makePipe(left, right)
+		if pipe == nil {
+			p.errorf("the right side of |> must be a function call; wrap it in parens if you meant to pipe first, e.g. (x |> f()) == y")
+			return nil
+		}
+		return pipe
 	case token.OR:
 		p.next()
 		right := p.parseExpr(boolOr)
@@ -927,15 +932,29 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	return &ast.Call{Pos: exprPos(callee), Callee: callee, Args: args, Rparen: rparen}
 }
 
-// makePipe builds a faithful  left |> right  Pipe node. When right is a call f(b),
-// Call holds it verbatim (args NOT including left); a bare  left |> f  wraps f in an
-// arg-less Call so the node shape is uniform. eval prepends left as the first arg, so
-// the runtime behavior matches the old desugaring to f(left, b).
+// makePipe builds a faithful  left |> right  Pipe node. A call f(b) is held verbatim
+// (args NOT including left); a bare callable (f, obj.m, $f, xs[i], a lambda) is wrapped
+// in an arg-less Call so the node shape is uniform — eval prepends left as the first
+// arg. A trailing ?  (x |> f()?)  applies to the pipe RESULT, i.e. (x |> f())?, since
+// the only sensible reading is "pipe, then propagate". Any other RHS (an operator
+// expression, a literal, a parenthesized pipe, ...) means the pipeline's loose
+// precedence captured too much of the line; makePipe returns nil so the caller reports
+// a clear parse error instead of building a nonsensical arg-less call that always fails
+// at runtime.
 func makePipe(left, right ast.Expr) ast.Expr {
-	if c, ok := right.(*ast.Call); ok {
-		return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: c}
+	switch r := right.(type) {
+	case *ast.Call:
+		return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: r}
+	case *ast.Propagate:
+		inner := makePipe(left, r.X)
+		if inner == nil {
+			return nil
+		}
+		return &ast.Propagate{Pos: r.Pos, X: inner}
+	case *ast.Ident, *ast.Field, *ast.Var, *ast.Index, *ast.Lambda:
+		return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: &ast.Call{Pos: exprPos(right), Callee: right}}
 	}
-	return &ast.Pipe{Pos: exprPos(right), Lhs: left, Call: &ast.Call{Pos: exprPos(right), Callee: right}}
+	return nil
 }
 
 // interpolate decodes a raw string body, processing escapes and $-interpolation

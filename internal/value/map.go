@@ -1,7 +1,5 @@
 package value
 
-import "strings"
-
 // mapKey is the normalized, comparable form of a scalar map key.
 type mapKey struct {
 	tag Tag
@@ -109,34 +107,16 @@ func (m *OrderedMap) Delete(k Value) bool {
 	return true
 }
 
-func (m *OrderedMap) Display() string {
-	var b strings.Builder
-	b.WriteByte('{')
-	for i := range m.keys {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(m.keys[i].Display())
-		b.WriteString(": ")
-		b.WriteString(m.vals[i].Display())
-	}
-	b.WriteByte('}')
-	return b.String()
-}
+// Display and Equal route through the depth-bounded, cycle-safe helpers in recurse.go
+// (see Array) so a self-referential or pathologically deep map cannot overflow the stack.
+func (m *OrderedMap) Display() string { return displayDepth(Value{tag: Map, ref: m}, nil, 0) }
 
 func (m *OrderedMap) Equal(o Obj) bool {
 	n, ok := o.(*OrderedMap)
-	if !ok || len(m.keys) != len(n.keys) {
+	if !ok {
 		return false
 	}
-	for i := range m.keys {
-		mk, _ := normalizeKey(m.keys[i])
-		j, present := n.idx[mk]
-		if !present || !Equal(m.vals[i], n.vals[j]) {
-			return false
-		}
-	}
-	return true
+	return equalDepth(Value{tag: Map, ref: m}, Value{tag: Map, ref: n}, 0)
 }
 
 func (m *OrderedMap) DeepCopy(visited map[Obj]Obj) Obj {

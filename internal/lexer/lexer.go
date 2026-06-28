@@ -46,6 +46,7 @@ func (l *Lexer) Comments() []Comment { return l.comments }
 
 // New returns a Lexer positioned at the first token of src.
 func New(src string) *Lexer {
+	src = strings.TrimPrefix(src, "\ufeff") // strip a leading UTF-8 BOM if present
 	l := &Lexer{src: src, line: 1, lastKind: token.ILLEGAL}
 	l.advance()
 	return l
@@ -118,6 +119,13 @@ func (l *Lexer) scan() token.Token {
 
 	switch {
 	case l.ch == 0:
+		if l.pos < len(l.src) {
+			// A real 0x00 byte embedded in the source, not end-of-input (the EOF
+			// sentinel is also 0). Emit ILLEGAL so the parser reports it, rather than
+			// silently truncating the rest of the program. Consume it to make progress.
+			l.advance()
+			return token.Token{Kind: token.ILLEGAL, Lit: "\x00", Line: line, Col: col}
+		}
 		return token.Token{Kind: token.EOF, Line: line, Col: col}
 	case isLetter(l.ch):
 		id := l.readIdent()

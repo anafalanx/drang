@@ -206,8 +206,9 @@ func evalSpawn(args []value.Value) (value.Value, error) {
 	// races the main goroutine's ongoing top-level defines/sets.
 	worker := &Function{Name: fn.Name, Params: fn.Params, Defaults: fn.Defaults, Body: fn.Body, Env: fn.Env.snapshot(), Proto: fn.Proto}
 	callArgs := make([]value.Value, len(args)-1)
+	shared := map[value.Obj]value.Obj{} // one visited map across args preserves aliasing (like send)
 	for i, a := range args[1:] {
-		callArgs[i] = value.DeepCopyValue(a, map[value.Obj]value.Obj{})
+		callArgs[i] = value.DeepCopyValue(a, shared)
 	}
 	t := &Task{done: make(chan struct{})}
 	go func() {

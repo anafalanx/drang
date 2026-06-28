@@ -43,6 +43,7 @@ type compiler struct {
 	loops       []*loopCtx         // enclosing loops, for break/next jump targets
 	scopeDepth  int                // active OpPushScope nesting (Env mode); 0 in register mode
 	ok          bool               // false once an unsupported node forces fallback
+	inFunction  bool               // true while compiling a function/lambda body (false at top level)
 }
 
 // loopCtx tracks one enclosing loop so break/next can target it. continueTarget
@@ -118,7 +119,7 @@ func compileFunctionBody(params []string, body *ast.Block, shadowed map[string]b
 // compileFunctionEnv compiles an Env-backed function body (params bound in a child
 // env by the caller; locals in the env).
 func compileFunctionEnv(body *ast.Block, shadowed map[string]bool) (*Proto, bool) {
-	c := &compiler{ckeys: map[string]int32{}, ok: true, shadowed: shadowed}
+	c := &compiler{ckeys: map[string]int32{}, ok: true, shadowed: shadowed, inFunction: true}
 	res := c.reserve() // holds the implicit-return value
 	c.compileBlock(body, res)
 	if !c.ok {
@@ -131,7 +132,7 @@ func compileFunctionEnv(body *ast.Block, shadowed map[string]bool) (*Proto, bool
 // compileFunctionReg compiles a register-eligible function: params occupy slots
 // 0..nparams-1, the result slot follows, locals and temporaries above.
 func compileFunctionReg(params []string, body *ast.Block, shadowed map[string]bool) (*Proto, bool) {
-	c := &compiler{ckeys: map[string]int32{}, ok: true, regMode: true, shadowed: shadowed}
+	c := &compiler{ckeys: map[string]int32{}, ok: true, regMode: true, shadowed: shadowed, inFunction: true}
 	c.localScopes = []map[string]int32{{}}
 	for _, p := range params {
 		c.declareLocal(p) // slots 0..nparams-1
@@ -364,6 +365,10 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 	case *ast.ForStmt:
 		c.compileFor(n, resultReg)
 	case *ast.ReturnStmt:
+		if !c.inFunction {
+			c.fail() // top-level return: fall back to the walker, which errors correctly
+			return
+		}
 		r := c.reserve()
 		if n.Value != nil {
 			c.compileExpr(n.Value, r)

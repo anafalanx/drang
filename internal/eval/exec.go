@@ -218,10 +218,16 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long lines
 	for scanner.Scan() {
-		if _, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())}); cerr != nil {
-			_ = killTree(cmd) // callback aborted — stop the child (and its tree)
+		v, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())})
+		if cerr != nil {
+			_ = killTree(cmd) // callback aborted (exit/die) — stop the child (and its tree)
 			_ = cmd.Wait()
 			return value.MakeNil(), cerr
+		}
+		if v.IsErr() {
+			_ = killTree(cmd) // callback returned/propagated an Err — stop the child, surface it
+			_ = cmd.Wait()
+			return v, nil
 		}
 	}
 	if serr := scanner.Err(); serr != nil {

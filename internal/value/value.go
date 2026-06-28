@@ -156,27 +156,7 @@ func (v Value) Truthy() bool {
 
 // Equal reports deep/structural equality between two values. Containers compare
 // element-/entry-wise; functions compare by identity.
-func Equal(l, r Value) bool {
-	if l.IsNumber() && r.IsNumber() {
-		return l.Num() == r.Num()
-	}
-	if l.tag != r.tag {
-		return false
-	}
-	switch l.tag {
-	case Nil:
-		return true
-	case Bool:
-		return l.n == r.n
-	case Str:
-		return l.s == r.s
-	case Err:
-		return l.s == r.s && l.n == r.n
-	case Arr, Map, Range, Func, Chan, Task, Proc, Regex:
-		return l.ref != nil && r.ref != nil && l.ref.Equal(r.ref)
-	}
-	return false
-}
+func Equal(l, r Value) bool { return equalDepth(l, r, 0) }
 
 // DeepCopyValue returns a deep, cycle-safe copy of v, used at goroutine
 // boundaries (copy-on-send): send, spawn args, await results, and pmap's per-row
