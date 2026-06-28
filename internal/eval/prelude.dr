@@ -60,3 +60,143 @@ fn zip($a, $b) {
   }
   $out
 }
+
+# --- collections ---
+
+# bucket elements by a key function:
+# group_by([1, 2, 3, 4], |$x| $x % 2) -> {1: [1, 3], 0: [2, 4]}
+fn group_by($xs, $f) {
+  reduce($xs, {}, |$acc, $x| {
+    $k := $f($x)
+    $acc[$k] = push($acc[$k] // [], $x)
+    $acc
+  })
+}
+
+# split into [matching, non-matching] by a predicate:
+# partition([1, 2, 3, 4], |$x| $x % 2 == 0) -> [[2, 4], [1, 3]]
+fn partition($xs, $pred) {
+  $yes := []
+  $no := []
+  for $x in $xs {
+    if $pred($x) { push($yes, $x) } else { push($no, $x) }
+  }
+  [$yes, $no]
+}
+
+# keep the first element for each distinct key (order preserved):
+# uniq_by([{id: 1}, {id: 1}, {id: 2}], |$r| $r.id) -> [{id: 1}, {id: 2}]
+fn uniq_by($xs, $f) {
+  $seen := {}
+  $out := []
+  for $x in $xs {
+    $k := $f($x)
+    if !has($seen, $k) {
+      $seen[$k] = true
+      push($out, $x)
+    }
+  }
+  $out
+}
+
+# pair each element with its index: enumerate(["a", "b"]) -> [[0, "a"], [1, "b"]]
+fn enumerate($xs) {
+  $out := []
+  for $i, $x in $xs { push($out, [$i, $x]) }
+  $out
+}
+
+# --- stats ---
+
+# arithmetic mean (a float); an empty list is a catchable error (not 0/0):
+# mean([1, 2, 4]) -> 2.3333...
+fn mean($xs) {
+  if len($xs) == 0 { return fail("mean: empty list") }
+  sum($xs) / len($xs)
+}
+
+# the middle value of the sorted list (the mean of the two middle for an even count);
+# an empty list is a catchable error: median([3, 1, 2]) -> 2
+fn median($xs) {
+  $n := len($xs)
+  if $n == 0 { return fail("median: empty list") }
+  $s := sort($xs)
+  $mid := div($n, 2)
+  if $n % 2 == 1 { $s[$mid] } else { ($s[$mid - 1] + $s[$mid]) / 2 }
+}
+
+# --- set operations over arrays (elements must be hashable: int/float/string/bool) ---
+
+# elements present in both, deduped, in the order they appear in $a:
+# intersect([1, 2, 2, 3], [2, 3, 4]) -> [2, 3]
+fn intersect($a, $b) {
+  $inb := {}
+  for $x in $b { $inb[$x] = true }
+  $seen := {}
+  $out := []
+  for $x in $a {
+    if has($inb, $x) and !has($seen, $x) {
+      $seen[$x] = true
+      push($out, $x)
+    }
+  }
+  $out
+}
+
+# all distinct elements from both, $a's order first: union([1, 2], [2, 3]) -> [1, 2, 3]
+fn union($a, $b) {
+  $seen := {}
+  $out := []
+  for $x in $a {
+    if !has($seen, $x) { $seen[$x] = true; push($out, $x) }
+  }
+  for $x in $b {
+    if !has($seen, $x) { $seen[$x] = true; push($out, $x) }
+  }
+  $out
+}
+
+# elements in $a not in $b, deduped: difference([1, 2, 3], [2]) -> [1, 3]
+fn difference($a, $b) {
+  $inb := {}
+  for $x in $b { $inb[$x] = true }
+  $seen := {}
+  $out := []
+  for $x in $a {
+    if !has($inb, $x) and !has($seen, $x) {
+      $seen[$x] = true
+      push($out, $x)
+    }
+  }
+  $out
+}
+
+# --- strings ---
+
+# left-justify to a width by padding the right with spaces (use format's {:>n} for the
+# right-justify / fancier cases): pad("ab", 5) -> "ab   "
+fn pad($s, $width) {
+  $t := str($s)
+  $gap := $width - len($t)
+  if $gap <= 0 { return $t }
+  $t ~ repeat(" ", $gap)
+}
+
+# first character upper, the rest lower: capitalize("hELLO") -> "Hello"
+fn capitalize($s) {
+  if len($s) == 0 { return $s }
+  $cs := chars($s)
+  upper($cs[0]) ~ lower(join(drop($cs, 1), ""))
+}
+
+# reverse a string by characters (rune-correct): reverse("abc") -> "cba"
+fn reverse($s) {
+  $cs := chars($s)
+  $out := []
+  $i := len($cs) - 1
+  while $i >= 0 {
+    push($out, $cs[$i])
+    $i = $i - 1
+  }
+  join($out, "")
+}
