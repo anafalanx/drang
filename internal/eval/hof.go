@@ -567,11 +567,16 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 	for w := 0; w < workers; w++ {
 		go func() {
 			defer wg.Done()
+			// Each worker runs over its own snapshot of the captured env (like spawn), so a
+			// callback that ASSIGNS a captured outer variable mutates a private copy rather
+			// than racing other workers on the shared fn.Env map. Snapshotting only reads
+			// fn.Env (the main goroutine is parked on wg.Wait), so the reads don't race.
+			wfn := &Function{Name: fn.Name, Params: fn.Params, Defaults: fn.Defaults, Body: fn.Body, Env: fn.Env.snapshot(), Proto: fn.Proto}
 			for i := range jobs {
 				if cancelled.Load() {
 					continue // a failure was recorded: drain the rest without running callbacks
 				}
-				v, err := applyPmap(fn, src[i], i)
+				v, err := applyPmap(wfn, src[i], i)
 				if err != nil {
 					recordGoErr(err)
 					continue

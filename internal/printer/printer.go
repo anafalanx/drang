@@ -583,6 +583,8 @@ func (p *printer) pipe(n *ast.Pipe) {
 		p.operand(c.Callee, prec(c.Callee) < pCall)
 		if len(c.Args) > 0 {
 			p.callArgs(c.Args, c.Rparen)
+		} else if !pipeStageBareSafe(c.Callee) {
+			p.write("()") // keep the () for a call-of-a-call etc.: dropping it changes the parse
 		}
 		if i < len(stages)-1 {
 			p.write(" |>")
@@ -600,7 +602,21 @@ func (p *printer) pipeOneLine(n *ast.Pipe) {
 	p.operand(n.Call.Callee, prec(n.Call.Callee) < pCall)
 	if len(n.Call.Args) > 0 {
 		p.callArgs(n.Call.Args, n.Call.Rparen)
+	} else if !pipeStageBareSafe(n.Call.Callee) {
+		p.write("()") // keep the () for a call-of-a-call etc.: dropping it changes the parse
 	}
+}
+
+// pipeStageBareSafe reports whether a no-arg pipe stage f() can be reprinted without
+// its () and still re-parse to the same node. Only callees that makePipe treats as a
+// bare pipe target qualify; a call-of-a-call (x |> f()()), a ?-propagation, or a nested
+// pipe must keep the () or the reprint silently changes meaning.
+func pipeStageBareSafe(callee ast.Expr) bool {
+	switch callee.(type) {
+	case *ast.Ident, *ast.Field, *ast.Var, *ast.Index, *ast.Lambda:
+		return true
+	}
+	return false
 }
 
 // exprLine is an expression's source start line (0 if unset).

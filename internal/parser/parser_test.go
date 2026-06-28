@@ -71,6 +71,53 @@ func soleExpr(t *testing.T, src string) ast.Expr {
 	return es.X
 }
 
+// TestPipeRHSMustBeCallable (pre-0.4 hardening, Bug 5): the loose pipeline precedence
+// lets  5 |> f() == 5  capture the operator into the RHS; that must be a clear PARSE
+// error, not a nonsensical arg-less call that only fails at runtime. Bare callables, a
+// trailing ?, and an explicitly parenthesized pipe still parse.
+func TestPipeRHSMustBeCallable(t *testing.T) {
+	bad := []string{
+		`5 |> f() == 5`,
+		`5 |> f() + 1`,
+		`5 |> 3`,
+		`5 |> "x"`,
+		`5 |> a ~ b`,
+	}
+	for _, src := range bad {
+		p := New(src)
+		p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Errorf("%q: expected a parse error for a non-callable |> RHS", src)
+		}
+	}
+	good := []string{
+		`5 |> f()`,
+		`5 |> f`,
+		`5 |> obj.m()`,
+		`5 |> $g`,
+		`5 |> fns[0]`,
+		`5 |> f()?`,
+		`(5 |> f()) == 5`,
+	}
+	for _, src := range good {
+		p := New(src)
+		p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			t.Errorf("%q: unexpected parse error: %v", src, errs)
+		}
+	}
+}
+
+// TestNulByteRejected (pre-0.4 hardening, Bug 7): an embedded 0x00 byte must be reported
+// (the EOF sentinel is also 0), not silently truncate the program.
+func TestNulByteRejected(t *testing.T) {
+	p := New("say(1)\x00say(2)")
+	p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Error("an embedded NUL byte must be a parse error, not silent truncation")
+	}
+}
+
 // TestLiteralProvenance verifies step-2b: leaf literals carry the verbatim source
 // (Raw) for the formatter, while the decoded eval fields (Value/Pattern) are unchanged.
 func TestLiteralProvenance(t *testing.T) {

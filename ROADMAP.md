@@ -17,6 +17,13 @@ thinks like Perl, runs like Go").*
   capture→map + `replace_first`, `drang fmt`, one-liner `-i`, char ranges, the stringy-
   coercion decision) plus a **proper, expanded standard library** (the curated
   batteries — grow the prelude / builtins toward the daily-driver bar).
+  - **Pre-0.4 core hardening (2026-06-28):** a seven-front adversarial sweep of the
+    foundation (parity, freeze-under-concurrency, value model, capture, parser/lexer,
+    errors, concurrency) confirmed the architecture is sound and fixed **9 real bugs** —
+    2 CRITICAL (a `pmap` shared-env data race; a `drang fmt` miscompile), 3 HIGH (cyclic
+    `Equal`/`Display` stack overflow; the VM swallowing a top-level `return`; `x |> f() == y`
+    always erroring), and 4 MED/LOW. All have regression tests; the suite is `-race` clean.
+    See DESIGN.md → *Pre-0.4 core hardening*.
 
 ## State of the language
 
