@@ -67,9 +67,9 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~Conversions `str`/`float`/`bool`/`type`~~ | only `int()` existed (asymmetric) — **DONE** | Go | ✅ DONE |
 | ~~Math `sqrt`/`pow`/`log`/`div`~~ | `/` is float-only — **DONE** (`%` already existed) | Go | ✅ DONE |
 | ~~`index_of`~~ | "where is X" — **DONE** (rune-indexed) | Go | ✅ DONE |
-| 🧱 `tempfile`/`tempdir`, file-append, `write_file` bytes | atomic-write / log-append / binary | Go | NEXT |
-| 🧱 `os()`/`arch()`/`home` | cross-platform branching | Go | NEXT |
-| 🧱 UTC time option on `now`/`strftime` | local-only is a cross-machine correctness trap | Go | NEXT |
+| ~~`tempfile`/`tempdir` + file-append~~ | atomic-write / log-append — **DONE** (`write_file {append}`; binary already works since strings carry bytes) | Go | ✅ DONE |
+| ~~`os()`/`arch()`/`home`~~ | cross-platform branching — **DONE** | Go | ✅ DONE |
+| ~~UTC time option on `strftime`/`parse_time`/`date_parts`~~ | local-only is a cross-machine trap — **DONE** (`{utc: true}` flag) | Go | ✅ DONE |
 | `group_by`, `mean`/`median`, `partition`/`uniq_by`/`enumerate`, set ops, `clamp`/`sign`, `get_in`/`dig`, `deep_merge`, `retry` | high-value ergonomic shaping | **drang prelude** | NICE |
 | `pad`/`dedent`/`indent`/`capitalize`/`title`/`reverse` | string conveniences, composable | **drang prelude** | NICE |
 | `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings | Go | NICE |

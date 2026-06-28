@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/debug"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -41,6 +42,36 @@ func builtinEnv(args []value.Value) (value.Value, error) {
 		return args[1], nil
 	}
 	return value.MakeNil(), nil
+}
+
+// builtinOS returns the operating system name ("windows", "darwin", "linux", ...) so a
+// cross-platform script can branch.
+func builtinOS(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("os expects 0 arguments, got %d", len(args))
+	}
+	return value.MakeStr(runtime.GOOS), nil
+}
+
+// builtinArch returns the CPU architecture ("amd64", "arm64", ...).
+func builtinArch(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("arch expects 0 arguments, got %d", len(args))
+	}
+	return value.MakeStr(runtime.GOARCH), nil
+}
+
+// builtinHome returns the current user's home directory; a lookup failure is a catchable
+// Err.
+func builtinHome(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("home expects 0 arguments, got %d", len(args))
+	}
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return value.MakeErr("home: "+err.Error(), 1), nil
+	}
+	return value.MakeStr(h), nil
 }
 
 // gcPresets map friendly mode words to a GC target percent (Go's GOGC knob):

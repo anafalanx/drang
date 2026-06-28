@@ -117,6 +117,37 @@ func TestStdlibWalls(t *testing.T) {
 	}
 }
 
+// TestStdlibWalls2 covers the second wall batch: UTC time (an opts flag), os/arch/home,
+// and tempfile/tempdir + write_file append.
+func TestStdlibWalls2(t *testing.T) {
+	// epoch 0 is 1970-01-01 00:00:00 UTC regardless of the machine's local zone
+	if got := run(t, `say(strftime(0, "%Y-%m-%d %H:%M:%S", {utc: true}))`); got != "1970-01-01 00:00:00\n" {
+		t.Errorf("strftime utc = %q", got)
+	}
+	if got := run(t, "$p := date_parts(0, {utc: true})\nsay($p.year, $p.month, $p.day, $p.hour)"); got != "1970 1 1 0\n" {
+		t.Errorf("date_parts utc = %q", got)
+	}
+	// parse_time + strftime round-trip in UTC (zone-independent)
+	rt := "$e := parse_time(\"2021-07-04 12:30:00\", \"%Y-%m-%d %H:%M:%S\", {utc: true})\nsay(strftime($e, \"%Y-%m-%d %H:%M:%S\", {utc: true}))"
+	if got := run(t, rt); got != "2021-07-04 12:30:00\n" {
+		t.Errorf("parse_time/strftime utc round-trip = %q", got)
+	}
+	// os/arch/home are non-empty
+	if got := run(t, `say(len(os()) > 0, len(arch()) > 0, len(home()) > 0)`); got != "true true true\n" {
+		t.Errorf("os/arch/home = %q", got)
+	}
+	// tempfile + write + append + read + cleanup
+	tf := "$f := tempfile()\nwrite_file($f, \"a\")\nwrite_file($f, \"b\", {append: true})\n$r := read_file($f) // \"ERR\"\nrm($f)\nsay($r)"
+	if got := run(t, tf); got != "ab\n" {
+		t.Errorf("tempfile + append = %q", got)
+	}
+	// tempdir creates a real directory
+	td := "$d := tempdir()\n$ok := is_dir($d)\nrm($d)\nsay($ok)"
+	if got := run(t, td); got != "true\n" {
+		t.Errorf("tempdir = %q", got)
+	}
+}
+
 // TestOutput drives whole programs and compares their say output. It locks in
 // the collections slice: literals, indexing, autovivification, compound
 // assignment, for-in over every iterable, the builtins, and the error model.
