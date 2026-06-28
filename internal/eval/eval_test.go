@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/anafalanx/drang/internal/parser"
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // run executes src and returns everything say printed.
@@ -169,6 +170,20 @@ func TestFirstClassBuiltins(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFirstClassBuiltinPanicRecovered locks in the review fix: a panicking builtin reached
+// via a first-class value must yield a catchable Err (not crash the process), the same
+// guarantee by-name dispatch gives — both route through safeBuiltin.
+func TestFirstClassBuiltinPanicRecovered(t *testing.T) {
+	builtins["zzpanic"] = func(args []value.Value) (value.Value, error) { panic("boom") }
+	defer delete(builtins, "zzpanic")
+	if got := run(t, "$f := zzpanic\nsay($f(1) // \"caught\")"); got != "caught\n" {
+		t.Errorf("direct value call: got %q, want \"caught\"", got)
+	}
+	if got := run(t, `say(map([1], zzpanic) // "caught")`); got != "caught\n" {
+		t.Errorf("via HOF: got %q, want \"caught\"", got)
 	}
 }
 
