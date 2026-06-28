@@ -1445,7 +1445,10 @@ func arityError(fn *Function, got int) error {
 
 func callFunction(fn *Function, args []value.Value) (value.Value, error) {
 	if fn.Builtin != nil {
-		return fn.Builtin(args) // a first-class builtin does its own arity/type checks
+		// route through safeBuiltin so a panicking builtin yields a catchable Err, exactly
+		// like by-name dispatch (this is the serial path; pmap has its own recover). The
+		// builtin still does its own arity/type checks.
+		return safeBuiltin(fn.Name, fn.Builtin, args)
 	}
 	args, err := bindArgs(fn, args)
 	if err != nil {
