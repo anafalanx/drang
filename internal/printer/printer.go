@@ -9,40 +9,133 @@
 package printer
 
 import (
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/anafalanx/drang/internal/ast"
+	"github.com/anafalanx/drang/internal/lexer"
+	"github.com/anafalanx/drang/internal/parser"
 	"github.com/anafalanx/drang/internal/token"
 )
 
-// Program renders a whole program to formatted drang source (ending in a single
-// newline, or "" for an empty program).
-func Program(prog *ast.Program) string {
-	p := &printer{}
-	p.stmts(prog.Stmts)
+// Format parses drang source, reprints it canonically with comments preserved, and
+// verifies (the drop-guard) that the output carries exactly the same comments as the
+// input. It errors on a parse failure, on output that fails to re-parse, or if a comment
+// would be dropped or altered — so callers never write corrupted output.
+func Format(src string) (string, error) {
+	p := parser.New(src)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		return "", fmt.Errorf("parse error: %s", strings.Join(errs, "; "))
+	}
+	in := p.Comments()
+	out := Program(prog, in)
+
+	check := parser.New(out)
+	check.ParseProgram()
+	if errs := check.Errors(); len(errs) > 0 {
+		return "", fmt.Errorf("formatter produced invalid drang: %s", strings.Join(errs, "; "))
+	}
+	if err := sameComments(in, check.Comments()); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// Program renders a program to formatted drang source (ending in a single newline, or ""
+// for an empty program), weaving the given comments back in by source position.
+func Program(prog *ast.Program, comments []lexer.Comment) string {
+	cs := append([]lexer.Comment(nil), comments...)
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].Line != cs[j].Line {
+			return cs[i].Line < cs[j].Line
+		}
+		return cs[i].Col < cs[j].Col
+	})
+	p := &printer{comments: cs}
+	p.stmts(prog.Stmts, 1<<30)
 	return p.b.String()
 }
 
+// sameComments reports whether two comment lists carry the same multiset of (trimmed)
+// texts — the formatter's drop-guard against losing or inventing comments.
+func sameComments(in, out []lexer.Comment) error {
+	count := map[string]int{}
+	for _, c := range in {
+		count[strings.TrimRight(c.Text, " \t")]++
+	}
+	for _, c := range out {
+		count[strings.TrimRight(c.Text, " \t")]--
+	}
+	for text, n := range count {
+		if n > 0 {
+			return fmt.Errorf("formatter dropped a comment: %q", text)
+		}
+		if n < 0 {
+			return fmt.Errorf("formatter invented a comment: %q", text)
+		}
+	}
+	return nil
+}
+
 type printer struct {
-	b      strings.Builder
-	indent int
+	b        strings.Builder
+	indent   int
+	comments []lexer.Comment
+	ci       int // cursor: index of the next not-yet-emitted comment
 }
 
 func (p *printer) write(s string) { p.b.WriteString(s) }
 func (p *printer) pad()           { p.b.WriteString(strings.Repeat("\t", p.indent)) }
 
-// stmts writes each statement on its own indented line. At the top level a blank line
-// separates each function / BEGIN-END block from its neighbors (on both sides).
-func (p *printer) stmts(list []ast.Stmt) {
+// flushBefore emits, at the current indent, each pending comment that starts before
+// source line `line` (leading / floating comments), one per line.
+func (p *printer) flushBefore(line int) {
+	for p.ci < len(p.comments) && p.comments[p.ci].Line < line {
+		p.pad()
+		p.write(strings.TrimRight(p.comments[p.ci].Text, " \t"))
+		p.write("\n")
+		p.ci++
+	}
+}
+
+// trailingOn consumes and returns a pending comment on source line `line` (a same-line
+// trailing comment), if any.
+func (p *printer) trailingOn(line int) (string, bool) {
+	if line > 0 && p.ci < len(p.comments) && p.comments[p.ci].Line == line {
+		t := strings.TrimRight(p.comments[p.ci].Text, " \t")
+		p.ci++
+		return t, true
+	}
+	return "", false
+}
+
+func (p *printer) pendingBefore(line int) bool {
+	return p.ci < len(p.comments) && p.comments[p.ci].Line < line
+}
+
+// stmts writes each statement on its own indented line, weaving in comments by source
+// position: leading/floating comments before a statement, then the statement, then a
+// same-line trailing comment. `limit` is the source line that bounds this scope (the
+// closing-brace line, or a sentinel at top level) so trailing/dangling comments before a
+// `}` are flushed at this indent. At the top level a blank line separates each function /
+// BEGIN-END block from its neighbors.
+func (p *printer) stmts(list []ast.Stmt, limit int) {
 	for i, s := range list {
 		if i > 0 && p.indent == 0 && (standsAlone(s) || standsAlone(list[i-1])) {
 			p.write("\n")
 		}
+		p.flushBefore(nodeLine(s))
 		p.pad()
 		p.stmt(s)
+		if t, ok := p.trailingOn(endLine(s)); ok {
+			p.write("  " + t)
+		}
 		p.write("\n")
 	}
+	p.flushBefore(limit)
 }
 
 // standsAlone reports whether a top-level statement should be set off by blank lines.
@@ -55,25 +148,94 @@ func standsAlone(s ast.Stmt) bool {
 }
 
 // block writes a brace-delimited body: "{" on the current line, statements indented one
-// level, and "}" padded to the current indent. An empty body collapses to "{}".
+// level, and "}" padded to the current indent. An empty body collapses to "{}" unless it
+// holds dangling comments. Comments inside the braces are flushed up to the closing-brace
+// line (b.Rbrace).
 func (p *printer) block(b *ast.Block) {
 	if len(b.Stmts) == 0 {
+		if b.Rbrace > 0 && p.pendingBefore(b.Rbrace) {
+			p.write("{\n")
+			p.indent++
+			p.flushBefore(b.Rbrace)
+			p.indent--
+			p.pad()
+			p.write("}")
+			return
+		}
 		p.write("{}")
 		return
 	}
 	p.write("{\n")
 	p.indent++
-	p.stmts(b.Stmts)
+	p.stmts(b.Stmts, blockLimit(b))
 	p.indent--
 	p.pad()
 	p.write("}")
+}
+
+func blockLimit(b *ast.Block) int {
+	if b.Rbrace > 0 {
+		return b.Rbrace
+	}
+	return 0 // synthesized block (not reached via block()); flush nothing extra
+}
+
+// nodeLine is a statement's source start line (0 if unset).
+func nodeLine(s ast.Stmt) int {
+	if l, ok := s.(interface{ Loc() (int, int) }); ok {
+		line, _ := l.Loc()
+		return line
+	}
+	return 0
+}
+
+// endLine is the last source line a statement occupies — its closing-brace line for
+// block-bearing forms, else its start line — used to attach same-line trailing comments.
+func endLine(s ast.Stmt) int {
+	switch n := s.(type) {
+	case *ast.FnDecl:
+		return blockEnd(n.Body, nodeLine(s))
+	case *ast.SpecialBlock:
+		return blockEnd(n.Body, nodeLine(s))
+	case *ast.IfStmt:
+		if n.Postfix != 0 {
+			return nodeLine(s)
+		}
+		switch e := n.Else.(type) {
+		case *ast.Block:
+			return blockEnd(e, nodeLine(s))
+		case *ast.IfStmt:
+			return endLine(e)
+		}
+		return blockEnd(n.Then, nodeLine(s))
+	case *ast.WhileStmt:
+		if n.Postfix != 0 {
+			return nodeLine(s)
+		}
+		return blockEnd(n.Body, nodeLine(s))
+	case *ast.ForStmt:
+		if n.Postfix != 0 {
+			return nodeLine(s)
+		}
+		return blockEnd(n.Body, nodeLine(s))
+	}
+	return nodeLine(s)
+}
+
+func blockEnd(b *ast.Block, fallback int) int {
+	if b != nil && b.Rbrace > 0 {
+		return b.Rbrace
+	}
+	return fallback
 }
 
 // stmt writes a single statement's content (no leading indent, no trailing newline).
 func (p *printer) stmt(s ast.Stmt) {
 	switch n := s.(type) {
 	case *ast.ExprStmt:
-		p.expr(n.X)
+		// A statement that begins with `{` would be read as a block, so a leading map
+		// literal must be parenthesized.
+		p.operand(n.X, startsWithBrace(n.X))
 	case *ast.DeclStmt:
 		op := ":="
 		if n.Const {
@@ -343,8 +505,9 @@ func (p *printer) expr(e ast.Expr) {
 		p.params(n.Params, n.Defaults)
 		p.write("|")
 		if es, ok := soleExprStmt(n.Body); ok {
+			// |x| {..} would parse as a block body, so a leading map literal needs parens.
 			p.write(" ")
-			p.expr(es.X)
+			p.operand(es.X, startsWithBrace(es.X))
 		} else {
 			p.write(" ")
 			p.block(n.Body)
@@ -353,6 +516,36 @@ func (p *printer) expr(e ast.Expr) {
 		// Unknown expression: debug form rather than dropping it.
 		p.write(e.String())
 	}
+}
+
+// startsWithBrace reports whether an expression's printed form begins with `{` (a map
+// literal as its leftmost leaf). Such an expression must be parenthesized at statement
+// start or as a lambda expression-body, where a leading `{` would otherwise be read as a
+// block.
+func startsWithBrace(e ast.Expr) bool {
+	switch n := e.(type) {
+	case *ast.MapLit:
+		return true
+	case *ast.Binary:
+		return startsWithBrace(n.L)
+	case *ast.Logical:
+		return startsWithBrace(n.L)
+	case *ast.DefOr:
+		return startsWithBrace(n.X)
+	case *ast.RangeLit:
+		return startsWithBrace(n.Lo)
+	case *ast.Pipe:
+		return startsWithBrace(n.Lhs)
+	case *ast.Call:
+		return startsWithBrace(n.Callee)
+	case *ast.Index:
+		return startsWithBrace(n.X)
+	case *ast.Field:
+		return startsWithBrace(n.X)
+	case *ast.Propagate:
+		return startsWithBrace(n.X)
+	}
+	return false
 }
 
 // soleExprStmt reports whether a block is a single expression statement (an

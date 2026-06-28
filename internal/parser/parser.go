@@ -314,35 +314,35 @@ func (p *Parser) applyPostfix(s ast.Stmt) ast.Stmt {
 		if cond == nil {
 			return nil
 		}
-		return &ast.IfStmt{Cond: cond, Then: blockOf(s), Postfix: token.IF}
+		return &ast.IfStmt{Pos: stmtPos(s), Cond: cond, Then: blockOf(s), Postfix: token.IF}
 	case token.UNLESS:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.IfStmt{Cond: notExpr(cond), Then: blockOf(s), Postfix: token.UNLESS}
+		return &ast.IfStmt{Pos: stmtPos(s), Cond: notExpr(cond), Then: blockOf(s), Postfix: token.UNLESS}
 	case token.WHILE:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.WhileStmt{Cond: cond, Body: blockOf(s), Postfix: token.WHILE}
+		return &ast.WhileStmt{Pos: stmtPos(s), Cond: cond, Body: blockOf(s), Postfix: token.WHILE}
 	case token.UNTIL:
 		p.next()
 		cond := p.parseExpr(lowest)
 		if cond == nil {
 			return nil
 		}
-		return &ast.WhileStmt{Cond: notExpr(cond), Body: blockOf(s), Postfix: token.UNTIL}
+		return &ast.WhileStmt{Pos: stmtPos(s), Cond: notExpr(cond), Body: blockOf(s), Postfix: token.UNTIL}
 	case token.FOR:
 		p.next()
 		iter := p.parseExpr(lowest)
 		if iter == nil {
 			return nil
 		}
-		return &ast.ForStmt{Vars: []string{"_"}, Iter: iter, Body: blockOf(s), Postfix: token.FOR}
+		return &ast.ForStmt{Pos: stmtPos(s), Vars: []string{"_"}, Iter: iter, Body: blockOf(s), Postfix: token.FOR}
 	}
 	return s
 }
@@ -658,14 +658,16 @@ func (p *Parser) parseBlock() *ast.Block {
 		p.errorf("expected '{', got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
+	lbrace := p.here()
 	p.next()
 	p.blockDepth++
-	blk := &ast.Block{Stmts: p.parseStmtsUntil(token.RBRACE)}
+	blk := &ast.Block{Pos: lbrace, Stmts: p.parseStmtsUntil(token.RBRACE)}
 	p.blockDepth--
 	if p.tok.Kind != token.RBRACE {
 		p.errorf("expected '}', got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
+	blk.Rbrace = p.tok.Line // closing-brace line, for the formatter's comment placement
 	p.next()
 	return blk
 }
@@ -676,6 +678,16 @@ func (p *Parser) here() ast.Pos { return ast.Pos{Line: p.tok.Line, Col: p.tok.Co
 // exprPos returns an already-parsed expression's position (every node embeds Pos).
 func exprPos(e ast.Expr) ast.Pos {
 	if l, ok := e.(interface{ Loc() (int, int) }); ok {
+		line, col := l.Loc()
+		return ast.Pos{Line: line, Col: col}
+	}
+	return ast.Pos{}
+}
+
+// stmtPos returns an already-parsed statement's position (every node embeds Pos). Used
+// to give synthetic postfix-modifier nodes the position of their wrapped statement.
+func stmtPos(s ast.Stmt) ast.Pos {
+	if l, ok := s.(interface{ Loc() (int, int) }); ok {
 		line, col := l.Loc()
 		return ast.Pos{Line: line, Col: col}
 	}

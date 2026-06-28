@@ -48,7 +48,8 @@ func (p *Program) String() string { return joinStmts(p.Stmts, "\n") }
 // Block is a brace-delimited sequence of statements (introduces a scope).
 type Block struct {
 	Pos
-	Stmts []Stmt
+	Stmts  []Stmt
+	Rbrace int // source line of the closing '}', for the formatter; 0 if synthesized (postfix/expr-lambda body)
 }
 
 func (b *Block) String() string { return "(block " + joinStmts(b.Stmts, " ") + ")" }
