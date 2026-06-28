@@ -69,7 +69,12 @@ func Program(prog *ast.Program, comments []lexer.Comment) string {
 }
 
 // sameComments reports whether two comment lists carry the same multiset of (trimmed)
-// texts — the formatter's drop-guard against losing or inventing comments.
+// texts — the formatter's drop-guard against losing or inventing comments. It is
+// deliberately a multiset check (loss/invention only), not a position check: the printer
+// legitimately reshapes the token stream (adds/removes parens, normalizes bare pipes,
+// collapses single-expression lambda bodies), so a runtime position check would risk
+// refusing valid files. Comment *placement* is verified by tests instead (printer_test.go
+// TestCommentPlacement / TestComments).
 func sameComments(in, out []lexer.Comment) error {
 	count := map[string]int{}
 	for _, c := range in {
@@ -175,8 +180,12 @@ func (p *printer) stmts(list []ast.Stmt, limit int) {
 		p.flushBefore(nodeLine(s))
 		p.pad()
 		p.stmt(s)
-		if t, ok := p.trailingOn(endLine(s)); ok {
-			p.write("  " + t)
+		// Attach a same-line trailing comment only when no later statement also starts on
+		// this source line (so `a; b; c  # x` attaches the comment to c, not a).
+		if i == len(list)-1 || nodeLine(list[i+1]) != endLine(s) {
+			if t, ok := p.trailingOn(endLine(s)); ok {
+				p.write("  " + t)
+			}
 		}
 		p.write("\n")
 	}
@@ -358,13 +367,30 @@ func (p *printer) ifStmt(n *ast.IfStmt) {
 	p.expr(n.Cond)
 	p.write(" ")
 	p.block(n.Then)
+	if n.Else == nil {
+		return
+	}
+	p.elseSep(n.Then)
 	switch e := n.Else.(type) {
 	case *ast.IfStmt:
-		p.write(" else ")
+		p.write("else ")
 		p.ifStmt(e)
 	case *ast.Block:
-		p.write(" else ")
+		p.write("else ")
 		p.block(e)
+	}
+}
+
+// elseSep writes the gap between a then-block's } and the following else: a single space
+// for the usual "} else", but if a comment trails the } line, that comment is emitted
+// there and else continues on the next line ("} # c" / "else …"), so the comment stays
+// attached to the then branch instead of leaking into the else body.
+func (p *printer) elseSep(then *ast.Block) {
+	if t, ok := p.trailingOn(blockEnd(then, 0)); ok {
+		p.write("  " + t + "\n")
+		p.pad()
+	} else {
+		p.write(" ")
 	}
 }
 
@@ -428,14 +454,24 @@ func (p *printer) params(names []string, defaults []ast.Expr) {
 	}
 }
 
-func (p *printer) callArgs(args []ast.Expr) { p.list("(", ")", args) }
+func (p *printer) callArgs(args []ast.Expr, closeLine int) { p.list("(", ")", args, closeLine) }
 
 // list emits a delimited expression list (call args or an array literal): single-line
-// when it fits, otherwise one element per line (no trailing comma — drang calls reject
-// it), with the closing delimiter dedented to this indent. Newlines inside ( and [ are
-// insignificant, so the wrapped form re-parses.
-func (p *printer) list(open, close string, items []ast.Expr) {
+// when it fits AND holds no interior comments, otherwise one element per line (no trailing
+// comma — drang calls reject it), with the closing delimiter dedented to this indent.
+// Newlines inside ( and [ are insignificant, so the wrapped form re-parses. closeLine is
+// the source line of the closing delimiter, used to weave in interior comments.
+func (p *printer) list(open, close string, items []ast.Expr, closeLine int) {
 	if len(items) == 0 {
+		if p.pendingBefore(closeLine) {
+			p.write(open + "\n")
+			p.indent++
+			p.flushBefore(closeLine)
+			p.indent--
+			p.pad()
+			p.write(close)
+			return
+		}
 		p.write(open + close)
 		return
 	}
@@ -449,28 +485,43 @@ func (p *printer) list(open, close string, items []ast.Expr) {
 		}
 		q.write(close)
 	}
-	if p.fitsOneLine(render) {
+	if !p.pendingBefore(closeLine) && p.fitsOneLine(render) {
 		p.inOneLine(func() { render(p) })
 		return
 	}
 	p.write(open + "\n")
 	p.indent++
 	for i, it := range items {
+		p.flushBefore(exprLine(it))
 		p.pad()
 		p.expr(it)
 		if i < len(items)-1 {
 			p.write(",")
 		}
+		if t, ok := p.trailingOn(exprLine(it)); ok {
+			p.write("  " + t)
+		}
 		p.write("\n")
 	}
+	p.flushBefore(closeLine)
 	p.indent--
 	p.pad()
 	p.write(close)
 }
 
-// mapLit emits a map literal, wrapping one entry per line when it doesn't fit.
+// mapLit emits a map literal, wrapping one entry per line when it doesn't fit or holds
+// interior comments.
 func (p *printer) mapLit(n *ast.MapLit) {
 	if len(n.Keys) == 0 {
+		if p.pendingBefore(n.Rbrace) {
+			p.write("{\n")
+			p.indent++
+			p.flushBefore(n.Rbrace)
+			p.indent--
+			p.pad()
+			p.write("}")
+			return
+		}
 		p.write("{}")
 		return
 	}
@@ -486,13 +537,14 @@ func (p *printer) mapLit(n *ast.MapLit) {
 		}
 		q.write("}")
 	}
-	if p.fitsOneLine(render) {
+	if !p.pendingBefore(n.Rbrace) && p.fitsOneLine(render) {
 		p.inOneLine(func() { render(p) })
 		return
 	}
 	p.write("{\n")
 	p.indent++
 	for i := range n.Keys {
+		p.flushBefore(exprLine(n.Keys[i]))
 		p.pad()
 		p.expr(n.Keys[i])
 		p.write(": ")
@@ -500,34 +552,43 @@ func (p *printer) mapLit(n *ast.MapLit) {
 		if i < len(n.Keys)-1 {
 			p.write(",")
 		}
+		if t, ok := p.trailingOn(exprLine(n.Keys[i])); ok {
+			p.write("  " + t)
+		}
 		p.write("\n")
 	}
+	p.flushBefore(n.Rbrace)
 	p.indent--
 	p.pad()
 	p.write("}")
 }
 
-// pipe emits a |> pipeline: one line when it fits, otherwise broken at every stage with
-// a trailing |> (leading |> would terminate the statement; a trailing operator continues
-// the line), each stage indented one level.
+// pipe emits a |> pipeline: one line when it fits and holds no interior comments,
+// otherwise broken at every stage with a trailing |> (leading |> would terminate the
+// statement; a trailing operator continues the line), each stage indented one level.
 func (p *printer) pipe(n *ast.Pipe) {
-	if p.fitsOneLine(func(q *printer) { q.pipeOneLine(n) }) {
+	head, stages := flattenPipe(n)
+	interior := len(stages) > 0 && p.pendingBefore(exprLine(stages[len(stages)-1]))
+	if !interior && p.fitsOneLine(func(q *printer) { q.pipeOneLine(n) }) {
 		p.inOneLine(func() { p.pipeOneLine(n) })
 		return
 	}
-	head, stages := flattenPipe(n)
 	p.operand(head, prec(head) < pPipeline)
 	p.write(" |>")
 	p.indent++
 	for i, c := range stages {
 		p.write("\n")
+		p.flushBefore(exprLine(c))
 		p.pad()
 		p.operand(c.Callee, prec(c.Callee) < pCall)
 		if len(c.Args) > 0 {
-			p.callArgs(c.Args)
+			p.callArgs(c.Args, c.Rparen)
 		}
 		if i < len(stages)-1 {
 			p.write(" |>")
+		}
+		if t, ok := p.trailingOn(exprLine(c)); ok {
+			p.write("  " + t)
 		}
 	}
 	p.indent--
@@ -538,8 +599,17 @@ func (p *printer) pipeOneLine(n *ast.Pipe) {
 	p.write(" |> ")
 	p.operand(n.Call.Callee, prec(n.Call.Callee) < pCall)
 	if len(n.Call.Args) > 0 {
-		p.callArgs(n.Call.Args)
+		p.callArgs(n.Call.Args, n.Call.Rparen)
 	}
+}
+
+// exprLine is an expression's source start line (0 if unset).
+func exprLine(e ast.Expr) int {
+	if l, ok := e.(interface{ Loc() (int, int) }); ok {
+		line, _ := l.Loc()
+		return line
+	}
+	return 0
 }
 
 // flattenPipe unwinds a left-nested pipe chain into its head expression and ordered call
@@ -629,7 +699,7 @@ func (p *printer) expr(e ast.Expr) {
 		p.pipe(n)
 	case *ast.Call:
 		p.operand(n.Callee, prec(n.Callee) < pCall)
-		p.callArgs(n.Args)
+		p.callArgs(n.Args, n.Rparen)
 	case *ast.Index:
 		p.operand(n.X, prec(n.X) < pCall)
 		p.write("[")
@@ -645,7 +715,7 @@ func (p *printer) expr(e ast.Expr) {
 		if n.Qw && n.Raw != "" {
 			p.write(n.Raw)
 		} else {
-			p.list("[", "]", n.Elems)
+			p.list("[", "]", n.Elems, n.Rbrack)
 		}
 	case *ast.MapLit:
 		p.mapLit(n)
@@ -653,7 +723,9 @@ func (p *printer) expr(e ast.Expr) {
 		p.write("|")
 		p.params(n.Params, n.Defaults)
 		p.write("|")
-		if es, ok := soleExprStmt(n.Body); ok {
+		// Collapse a single-expression body to |x| expr — but only when the block holds no
+		// interior comments (otherwise keep the block so they have somewhere to live).
+		if es, ok := soleExprStmt(n.Body); ok && !(n.Body.Rbrace > 0 && p.pendingBefore(n.Body.Rbrace)) {
 			// |x| {..} would parse as a block body, so a leading map literal needs parens.
 			p.write(" ")
 			p.operand(es.X, startsWithBrace(es.X))
