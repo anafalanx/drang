@@ -373,6 +373,7 @@ type Call struct {
 	Pos
 	Callee Expr
 	Args   []Expr
+	Rparen int // source line of the closing ')', for the formatter's comment placement
 }
 
 func (e *Call) String() string {
@@ -457,8 +458,9 @@ type ArrayLit struct {
 	// Qw marks an array that came from a qw{...} word list; Raw is then the verbatim
 	// source (qw{a b c}) so the formatter reprints it as written instead of as [..].
 	// Formatter only — eval treats it as an ordinary array of string Elems.
-	Qw  bool
-	Raw string
+	Qw     bool
+	Raw    string
+	Rbrack int // source line of the closing ']', for the formatter's comment placement
 }
 
 func (e *ArrayLit) String() string {
@@ -473,8 +475,9 @@ func (*ArrayLit) exprNode() {}
 // MapLit is a map literal: {k1: v1, k2: v2, ...} (parallel Keys/Vals).
 type MapLit struct {
 	Pos
-	Keys []Expr
-	Vals []Expr
+	Keys   []Expr
+	Vals   []Expr
+	Rbrace int // source line of the closing '}', for the formatter's comment placement
 }
 
 func (e *MapLit) String() string {

@@ -439,8 +439,9 @@ func (p *Parser) parseArrayLit() ast.Expr {
 		p.errorf("expected ']' to close array, got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
+	rbrack := p.tok.Line
 	p.next()
-	return &ast.ArrayLit{Pos: pos, Elems: elems}
+	return &ast.ArrayLit{Pos: pos, Elems: elems, Rbrack: rbrack}
 }
 
 func (p *Parser) parseMapLit() ast.Expr {
@@ -475,8 +476,9 @@ func (p *Parser) parseMapLit() ast.Expr {
 		p.errorf("expected '}' to close map, got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
+	rbrace := p.tok.Line
 	p.next()
-	return &ast.MapLit{Pos: pos, Keys: keys, Vals: vals}
+	return &ast.MapLit{Pos: pos, Keys: keys, Vals: vals, Rbrace: rbrace}
 }
 
 // parseLambda parses an anonymous function: |$a, $b| expr  or  |$a| { ... }.
@@ -920,8 +922,9 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 		p.errorf("expected ')' to close call, got %s %q", p.tok.Kind, p.tok.Lit)
 		return nil
 	}
+	rparen := p.tok.Line
 	p.next()
-	return &ast.Call{Pos: exprPos(callee), Callee: callee, Args: args}
+	return &ast.Call{Pos: exprPos(callee), Callee: callee, Args: args, Rparen: rparen}
 }
 
 // makePipe builds a faithful  left |> right  Pipe node. When right is a call f(b),

@@ -108,6 +108,38 @@ func TestWrapping(t *testing.T) {
 	}
 }
 
+// TestCommentPlacement locks in the fixes from the final review: comments must stay with
+// the construct they document — inside multi-line collections/calls (not evicted to the
+// next statement), inside a lambda body (which then keeps its block form), on the correct
+// statement of a ;-joined line, and on a then-block's } rather than leaking into else.
+func TestCommentPlacement(t *testing.T) {
+	cases := []struct{ name, in, wantSub string }{
+		{"call-arg-interior", "foo(\n\t1,  # c\n\t2\n)", "1,  # c"},
+		{"array-interior", "$xs := [\n\t1,  # one\n\t2\n]", "1,  # one"},
+		{"map-interior", "$m := {\n\t\"a\": 1,  # alpha\n\t\"b\": 2\n}", "\"a\": 1,  # alpha"},
+		{"lambda-body-comment", "$f := |$x| {\n\t# inner\n\t$x + 1\n}", "# inner"},
+		{"semicolon-trailing-last", "a(); b(); c()  # x", "c()  # x"},
+		{"else-brace-comment", "if x {\n\ta()\n}  # done\nelse {\n\tb()\n}", "}  # done"},
+	}
+	for _, c := range cases {
+		got := mustFormat(t, c.in)
+		if !strings.Contains(got, c.wantSub) {
+			t.Errorf("%s: expected %q in:\n%s", c.name, c.wantSub, got)
+		}
+		if again := mustFormat(t, got); again != got {
+			t.Errorf("%s: not idempotent:\n--- once ---\n%s--- twice ---\n%s", c.name, got, again)
+		}
+	}
+	// the lambda with an interior comment must NOT collapse to |x| expr
+	if got := mustFormat(t, "$f := |$x| {\n\t# inner\n\t$x + 1\n}"); !strings.Contains(got, "|$x| {") {
+		t.Errorf("lambda with interior comment should keep block form:\n%s", got)
+	}
+	// the ;-joined comment must NOT land on the first statement
+	if got := mustFormat(t, "a(); b(); c()  # x"); strings.Contains(got, "a()  # x") {
+		t.Errorf("trailing comment wrongly attached to first statement:\n%s", got)
+	}
+}
+
 // TestComments verifies comments survive formatting (the drop-guard) and land in
 // sensible places: leading, same-line trailing, inside blocks, before a closing brace,
 // floating, and at EOF — and that the result is idempotent.
