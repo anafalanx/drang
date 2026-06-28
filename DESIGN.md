@@ -2179,3 +2179,35 @@ groups) is filled the drang way: **named-capture → a map** on `match`
 The one scenario that could reopen `s///`: a future push to be a drop-in sed/perl
 **one-liner** replacement, where `drang -pe 's/x/y/'` terseness matters — and even then
 scoped to one-liner mode, not the language. MANUAL + ROADMAP updated accordingly.
+
+## Decision + plan: `drang fmt` (2026-06-28)
+
+A code formatter — gofmt-spirit (opinionated, ~zero knobs, idempotent), and also
+drang's edition/migration mechanism (`fmt --fix`). Decisions (owner-approved):
+
+- **Fully faithful.** fmt preserves the author's surface — literal spellings, `|>`
+  pipelines, postfix modifiers (`x if c`) — and only normalizes whitespace / blank
+  lines / parens. It must never rewrite idioms or change a string's value.
+- **Side-table comments, not in-AST.** The lexer captures each `#` comment (verbatim
+  text + position) into a side-table while still skipping it as trivia, so the token
+  stream/AST are byte-identical and the interpreter-shared lexer/parser are provably
+  untouched. The formatter reattaches comments by position, with a drop-detection
+  guard (output comment multiset must equal input's).
+- **Per-node provenance, no eval/compiler surgery.** The eval AST is intentionally
+  lossy (it desugars + decodes for execution): interpolation → `~`-chains, `qr/x/i` →
+  `(?i)x`, `|>` → `Call`, postfix → block stmts, literals decoded. Rather than
+  un-desugar (which would ripple through eval/compiler), keep the desugaring and add
+  *provenance* the printer reconstructs from: raw spelling on string/regex/number
+  literals, a `Qw` marker on `qw{}` arrays, a `Piped` marker on pipeline `Call`s, a
+  postfix flag on the wrapped stmt. `ast.String()` is a lisp-y debug dump, unusable as
+  a backend — a fresh `internal/printer` emits canonical drang.
+- **Zero config knobs; ship the empty `--fix` hook now** (identity pass + one smoke
+  rule), since it's the stated edition mechanism.
+
+Staged plan: (1) comment capture [done], (2) literal/structural provenance, (3) core
+printer, (4) comment associator + drop-guard, (5) wrapping engine (width 100), (6)
+CLI (`drang fmt [-w|--check|-d]`, stdin, dir recursion), (7) test harness + golden
+corpus (round-trip, idempotence `fmt(fmt(x))==fmt(x)`, run-before==run-after on real
+`.dr` files), (8) `--fix` hook. Also surfaced: numeric literals with `_`/hex/exp do
+not lex today (`1_000` → `1` + `_000`) — a latent gap to fix when adding number
+provenance.
