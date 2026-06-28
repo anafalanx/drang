@@ -36,17 +36,22 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 }
 
-func TestWriteFileAtomicReadOnly(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ro.dr")
-	if err := os.WriteFile(p, []byte("old"), 0o444); err != nil {
+func TestIsReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	rw := filepath.Join(dir, "rw.dr")
+	ro := filepath.Join(dir, "ro.dr")
+	if err := os.WriteFile(rw, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(p, 0o600) // let TempDir cleanup remove it
-	if err := writeFileAtomic(p, "new"); err != nil {
-		t.Fatalf("writeFileAtomic on a read-only file: %v", err)
+	if err := os.WriteFile(ro, []byte("x"), 0o444); err != nil {
+		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(p); string(b) != "new" {
-		t.Errorf("got %q, want %q", string(b), "new")
+	defer os.Chmod(ro, 0o600) // let TempDir cleanup remove it
+	if isReadOnly(rw) {
+		t.Errorf("rw.dr (0644) reported read-only")
+	}
+	if !isReadOnly(ro) {
+		t.Errorf("ro.dr (0444) not reported read-only")
 	}
 }
 

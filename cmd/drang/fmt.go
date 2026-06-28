@@ -74,7 +74,11 @@ func runFmt(args []string) {
 		switch {
 		case write:
 			if changed {
-				if werr := writeFileAtomic(f, out); werr != nil {
+				if isReadOnly(f) {
+					// Respect a deliberate read-only marking; report it and leave the file.
+					fmt.Fprintf(os.Stderr, "drang fmt: %s: read-only, not modified\n", f)
+					anyErr = true
+				} else if werr := writeFileAtomic(f, out); werr != nil {
 					fmt.Fprintf(os.Stderr, "drang fmt: %v\n", werr)
 					anyErr = true
 				}
@@ -197,18 +201,18 @@ func writeFileAtomic(path, content string) error {
 		os.Chmod(name, fi.Mode())
 	}
 	if rerr := os.Rename(name, path); rerr != nil {
-		// The destination may be read-only (Windows refuses to replace it). Make it
-		// writable and retry once; the temp already carries the destination's original
-		// mode, so the rewritten file keeps its permissions.
-		if os.Chmod(path, 0o600) == nil {
-			rerr = os.Rename(name, path)
-		}
-		if rerr != nil {
-			os.Remove(name)
-			return rerr
-		}
+		os.Remove(name)
+		return rerr
 	}
 	return nil
+}
+
+// isReadOnly reports whether path exists and has its owner-write bit cleared (the
+// read-only marking, including the Windows read-only attribute). drang fmt -w respects
+// that marking rather than overriding it.
+func isReadOnly(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().Perm()&0o200 == 0
 }
 
 // unifiedDiff returns a line-based diff of a vs b (every line annotated: "  " context,
