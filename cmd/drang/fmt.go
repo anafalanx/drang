@@ -197,8 +197,16 @@ func writeFileAtomic(path, content string) error {
 		os.Chmod(name, fi.Mode())
 	}
 	if rerr := os.Rename(name, path); rerr != nil {
-		os.Remove(name)
-		return rerr
+		// The destination may be read-only (Windows refuses to replace it). Make it
+		// writable and retry once; the temp already carries the destination's original
+		// mode, so the rewritten file keeps its permissions.
+		if os.Chmod(path, 0o600) == nil {
+			rerr = os.Rename(name, path)
+		}
+		if rerr != nil {
+			os.Remove(name)
+			return rerr
+		}
 	}
 	return nil
 }

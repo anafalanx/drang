@@ -40,6 +40,21 @@ func TestFixMechanism(t *testing.T) {
 	}
 }
 
+// TestRegexFallback checks the synthesized-regex fallback picks a valid same-char qr
+// delimiter (only / and | are valid) or a brace form — never an invalid one like #.
+func TestRegexFallback(t *testing.T) {
+	cases := []struct{ pattern, want string }{
+		{"abc", "qr/abc/"},
+		{"a/b", "qr|a/b|"},     // has /, so use |
+		{"a|b/c", "qr{a|b/c}"}, // has both / and |, so brace form
+	}
+	for _, c := range cases {
+		if got := regexFallback(c.pattern); got != c.want {
+			t.Errorf("regexFallback(%q) = %q, want %q", c.pattern, got, c.want)
+		}
+	}
+}
+
 // TestFixEmptyByDefault confirms FormatFix with no registered rules equals Format (the
 // mechanism ships empty).
 func TestFixEmptyByDefault(t *testing.T) {
