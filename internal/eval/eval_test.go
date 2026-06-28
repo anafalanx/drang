@@ -148,6 +148,30 @@ func TestStdlibWalls2(t *testing.T) {
 	}
 }
 
+// TestFirstClassBuiltins verifies a bare builtin name is a first-class function value:
+// it can be passed to HOFs (closing the long-standing map($xs, basename) wart), bound to
+// a variable, and called — while a user binding of the same name still shadows it.
+func TestFirstClassBuiltins(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"map-basename", `say(["/a/b.txt", "/c/d.md"] |> map(basename))`, "[b.txt, d.md]\n"},
+		{"map-len", `say(["x", "yy"] |> map(len))`, "[1, 2]\n"},
+		{"filter-bool", `say([0, 1, "", "x"] |> filter(bool))`, "[1, x]\n"},
+		{"reduce-max", `say([3, 1, 2] |> reduce(0, max))`, "3\n"},
+		{"bare-value-called", "$f := upper\nsay($f(\"hi\"))", "HI\n"},
+		{"type-is-function", `say(type(len))`, "function\n"},
+		{"passed-to-fn", "fn .ap($f, $x) { $f($x) }\nsay(.ap(upper, \"hi\"))", "HI\n"},
+		{"user-binding-shadows", "$len := 99\nsay($len)", "99\n"},
+		{"display", `say(str(upper))`, "<builtin upper>\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := run(t, tc.src); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestOutput drives whole programs and compares their say output. It locks in
 // the collections slice: literals, indexing, autovivification, compound
 // assignment, for-in over every iterable, the builtins, and the error model.

@@ -156,6 +156,7 @@ type Function struct {
 	Body     *ast.Block
 	Env      *Env
 	Proto    *Proto
+	Builtin  builtin // non-nil for a first-class builtin value (only Name is also set)
 }
 
 // vmEnabled controls whether functions compile their bodies to bytecode (and thus
@@ -183,6 +184,9 @@ func newFunction(name string, params []string, defaults []ast.Expr, body *ast.Bl
 func (f *Function) TypeName() string { return "function" }
 
 func (f *Function) Display() string {
+	if f.Builtin != nil {
+		return "<builtin " + f.Name + ">"
+	}
 	if f.Name == "" {
 		return "<fn>"
 	}
@@ -1005,6 +1009,11 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		if v, ok := env.get(n.Name); ok {
 			return v, nil
 		}
+		if b, ok := builtins[n.Name]; ok {
+			// a bare builtin name in value position is a first-class function value, so it
+			// can be passed to HOFs: map($xs, basename). A user binding (above) still wins.
+			return value.MakeObj(value.Func, &Function{Name: n.Name, Builtin: b}), nil
+		}
 		return value.MakeNil(), fmt.Errorf("undefined: %s", n.Name)
 	case *ast.Unary:
 		return evalUnary(n, env)
@@ -1435,6 +1444,9 @@ func arityError(fn *Function, got int) error {
 }
 
 func callFunction(fn *Function, args []value.Value) (value.Value, error) {
+	if fn.Builtin != nil {
+		return fn.Builtin(args) // a first-class builtin does its own arity/type checks
+	}
 	args, err := bindArgs(fn, args)
 	if err != nil {
 		return value.MakeNil(), err

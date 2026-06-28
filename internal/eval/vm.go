@@ -500,7 +500,12 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			name := p.Consts[in.B].AsStr()
 			v, ok := env.get(name)
 			if !ok {
-				return value.MakeNil(), fmt.Errorf("undefined: %s", name)
+				b, found := builtins[name]
+				if !found {
+					return value.MakeNil(), fmt.Errorf("undefined: %s", name)
+				}
+				// a bare builtin name is a first-class function value (mirrors the walker)
+				v = value.MakeObj(value.Func, &Function{Name: name, Builtin: b})
 			}
 			regs[in.A] = v
 		case OpMakeClosure:

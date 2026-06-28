@@ -101,8 +101,13 @@ func hofFn(name string, v value.Value) (*Function, value.Value) {
 	return fn, value.MakeNil()
 }
 
-// callCb calls an element callback, passing the index too if it declares two params.
+// callCb calls an element callback, passing the index too if it declares two params. A
+// first-class builtin (e.g. map($xs, basename)) has no declared params, so it gets just
+// the element and does its own arity check.
 func callCb(fn *Function, el value.Value, idx int) (value.Value, error) {
+	if fn.Builtin != nil {
+		return callFunction(fn, []value.Value{el})
+	}
 	switch len(fn.Params) {
 	case 1:
 		return callFunction(fn, []value.Value{el})
@@ -223,10 +228,10 @@ func hofReduce(arr *value.Array, init value.Value, fn *Function) (value.Value, e
 	for i, el := range src {
 		var v value.Value
 		var err error
-		switch len(fn.Params) {
-		case 2:
+		switch {
+		case fn.Builtin != nil || len(fn.Params) == 2:
 			v, err = callFunction(fn, []value.Value{acc, el})
-		case 3:
+		case len(fn.Params) == 3:
 			v, err = callFunction(fn, []value.Value{acc, el, value.MakeInt(int64(i))})
 		default:
 			return value.MakeNil(), fmt.Errorf("reduce callback takes 2 or 3 parameters, got %d", len(fn.Params))
