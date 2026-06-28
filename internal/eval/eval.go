@@ -1644,6 +1644,12 @@ var builtins = map[string]builtin{
 	"sys_gc": builtinSysGC,
 	"cwd":    builtinCwd,
 	"env":    builtinEnv,
+
+	// HTTP client (minimal + robust; net/http). Transport failure -> catchable Err;
+	// an HTTP status (incl. 4xx/5xx) is data in the returned {status, ok, body, headers, url}.
+	"http":      builtinHTTP,
+	"http_get":  builtinHTTPGet,
+	"http_post": builtinHTTPPost,
 }
 
 // stdout is where say writes its output; tests override it to capture output.

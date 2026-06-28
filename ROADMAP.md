@@ -73,7 +73,8 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | `group_by`, `mean`/`median`, `partition`/`uniq_by`/`enumerate`, set ops, `clamp`/`sign`, `get_in`/`dig`, `deep_merge`, `retry` | high-value ergonomic shaping | **drang prelude** | NICE |
 | `pad`/`dedent`/`indent`/`capitalize`/`title`/`reverse` | string conveniences, composable | **drang prelude** | NICE |
 | `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings | Go | NICE |
-| `http_get` / minimal `http(method,url,opts)` | reverses the no-client line; `curl` not guaranteed on Windows | Go | **DEFERRED** (decision pending) |
+| ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
+| ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
 | TOML / INI config parsing | no Go-stdlib parser → conflicts with stdlib-only pillar | Go | GATED (decision-record first) |
 | First-class builtin values (`map($xs, basename)`) | HOF style forces wrapper lambdas — a persistent wart | (language) | NOT-STARTED |
 | `sh()` shell-escape; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency batteries; build on demand | mixed | DEFERRED-BY-DESIGN |

@@ -2224,3 +2224,26 @@ Implementation notes for the record:
 - Numeric `_`/hex/exp literals still do not lex (`1_000` → `1` + `_000`); fmt stores the
   current verbatim lexeme as Raw, so it is correct on the subset that parses. Real numeric
   separators/bases remain a separate, deferred language feature.
+
+## Decision: HTTP — a client, not a server (2026-06-28)
+
+We explored adding HTTP, including serving small browser GUI tools (a `serve` builtin +
+htmx-over-the-wire + a `cell` value type + `chrome --app` confined windows). **Decision:
+scrap the server / GUI vertical; ship only a client, done well.** A GUI-serving capability,
+even minimal, pulls drang toward being a web framework (routing, templating, sessions,
+state) — off-grain for a sharp glue tool. So that whole vertical is out of scope.
+
+The client (`http` + `http_get`/`http_post`, in `internal/eval/http.go`) is deliberately
+minimal-but-robust:
+- **Error model = the subprocess `capture`/`capture_all` split.** A *completed* exchange is
+  data — an HTTP 4xx/5xx returns `{status, ok, body, headers, url}`, never an Err. A
+  *failure to complete* (DNS, refused, timeout, TLS, bad URL, body over `max_body`) is a
+  catchable Err; a timeout carries `err_code` 124 (the subprocess convention). So `?` means
+  "couldn't reach the server" and `//` masks only that, never a real 500.
+- **Robust defaults** Go's bare client lacks: 30s timeout, ≤10 redirects (dropping
+  `Authorization` cross-host), TLS verify on (opt out via `insecure`), 32 MiB body cap
+  (overflow → Err, no silent truncation), transparent gzip, one shared connection-pooled
+  transport (goroutine-safe for `pmap`).
+- **Out (compose in drang, don't configure):** client object / request builder, cookie
+  jar / sessions, retry-backoff (a prelude combinator), multipart, streaming, proxies,
+  auth schemes. PUT/PATCH/DELETE go through `http(method, …)` — no `http_put` kitchen sink.
