@@ -185,9 +185,40 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 	// printf habit (format("%s", x) has no placeholders) and over/under-supply, as a
 	// catchable Err rather than silently dropping or emitting a literal brace run.
 	if holes != len(rest) {
-		return value.MakeErr(fmt.Sprintf("format: template has %d placeholder(s) but got %d argument(s)", holes, len(rest)), 1), nil
+		msg := fmt.Sprintf("format: template has %d placeholder(s) but got %d argument(s)", holes, len(rest))
+		if looksLikePrintf(f) {
+			msg += ". format uses {} / {:spec} placeholders, not %-style verbs (example: format(\"{} {:.2f}\", name, x))"
+		}
+		return value.MakeErr(msg, 1), nil
 	}
 	return value.MakeStr(b.String()), nil
+}
+
+// looksLikePrintf reports whether s carries a C/printf-style verb (%d, %s, %5.2f,
+// %-10s, %x). It is the muscle-memory mistake when reaching for format() with %-style
+// instead of {} placeholders, so the arity error points it out. Detection is strict —
+// % then optional flags/width/precision then a KNOWN verb letter — so prose like
+// "100% done" (no verb after the %) does not trip it.
+func looksLikePrintf(s string) bool {
+	const verbs = "bcdeEfFgGopqstTvxX"
+	const flags = "#+-.0123456789"
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		j := i + 1
+		if s[j] == '%' { // %% is a literal percent, not a verb
+			i = j
+			continue
+		}
+		for j < len(s) && strings.IndexByte(flags, s[j]) >= 0 {
+			j++
+		}
+		if j < len(s) && strings.IndexByte(verbs, s[j]) >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // builtinLines splits text into lines (CRLF-normalized), dropping a single

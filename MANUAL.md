@@ -2,7 +2,7 @@
 
 *A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration, implemented in Go.*
 
-*Covers drang 0.4.*
+*Covers drang 0.5.*
 
 > Every code example in this manual was executed against the interpreter; the shown output is real.
 
@@ -16,7 +16,7 @@
 - [Arrays, Maps, and the Collection Toolkit](#arrays-maps-and-the-collection-toolkit)
 - [Errors as Values](#errors-as-values)
 - [Regular expressions](#regular-expressions)
-- [External Commands & Concurrency](#external-commands-concurrency)
+- [External Commands and Concurrency](#external-commands-and-concurrency)
 - [In-language concurrency](#in-language-concurrency)
 - [Files and Paths](#files-and-paths)
 - [JSON](#json)
@@ -759,6 +759,7 @@ hi
 [a, b, c]
 [a, b, c]
 a-b-c
+a-b-c
 true
 true
 ababab
@@ -829,7 +830,7 @@ say(format("%s", 5))
 
 ```
 error: format: template has 2 placeholder(s) but got 1 argument(s)
-error: format: template has 0 placeholder(s) but got 1 argument(s)
+error: format: template has 0 placeholder(s) but got 1 argument(s). format uses {} / {:spec} placeholders, not %-style verbs (example: format("{} {:.2f}", name, x))
 ```
 
 The result is a regular error value (the program does not crash); it propagates through `?` like any other drang error, see the error-handling section.
@@ -1936,7 +1937,7 @@ error: bad regex "(a)\\1": error parsing regexp: invalid escape sequence: `\1`
 
 ---
 
-## External Commands & Concurrency
+## External Commands and Concurrency
 
 drang is a glue language, so running other programs and doing work in parallel are
 first-class. External commands go through `os/exec` directly, with **no shell
@@ -2310,7 +2311,7 @@ for $m in glob(join($dir, "*.txt")) {
   say("glob   : " ~ basename($m))
 }
 
-rm($dir)             # tidy up — nothing left behind
+rm($dir)             # tidy up: nothing left behind
 say("gone   : " ~ !exists($dir))
 ```
 
@@ -2466,14 +2467,14 @@ $src := join($dir, "main.c")
 $obj := join($dir, "main.o")
 write_file($src, "int main(){}")
 
-say(stale($obj, $src))   # true  — target missing, build it
+say(stale($obj, $src))   # true  (target missing, build it)
 ```
 
 After building the object and later editing the source, `stale` flips back to
 true and `newer` agrees:
 
 ```drang
-say(stale($obj, $src))    # true   — source edited after obj built
+say(stale($obj, $src))    # true   (source edited after obj built)
 say(newer($src, $obj))    # true
 ```
 
@@ -2548,7 +2549,7 @@ fallback
 
 `from_csv` parses RFC 4180 CSV into rows; `to_csv` renders rows back. Both are built
 on a battle-tested parser, so the awkward parts are handled: fields containing
-commas, quotes, or newlines, and the doubled-quote escape (`""`). PLACEHOLDER (`int($row.age)`); there is no type inference.
+commas, quotes, or newlines, and the doubled-quote escape (`""`). Every field comes back as a string, so convert numerics yourself (`int($row.age)`); there is no type inference.
 
 By default rows are arrays of strings. With `{header: true}` the first row names the
 columns and every later row becomes a record keyed by those names:
@@ -2587,7 +2588,7 @@ unknown option key) aborts; malformed CSV and unencodable rows are catchable `Er
 values:
 
 ```drang
-say(is_err(from_csv("a,b\n1,2,3")))                          # true — ragged row (strict)
+say(is_err(from_csv("a,b\n1,2,3")))                          # true (ragged row, strict)
 $rows := from_csv(read_file("data.csv"), {header: true}) // []   # [] on a read error
 ```
 
@@ -2662,8 +2663,8 @@ say(uuid())                    # e.g. 5b1f9d2c-...-4e7a-...
 
 ## HTTP client
 
-A small, robust HTTP client over Go's `net/http`. The whole surface is `http` plus `get`
-and `post` sugar; PUT/PATCH/DELETE go through `http(method, url, ...)`. Higher-level
+A small, robust HTTP client over Go's `net/http`. The whole surface is `http` plus `http_get`
+and `http_post` sugar; PUT/PATCH/DELETE go through `http(method, url, ...)`. Higher-level
 patterns (retry, cookies, auth, pagination) are written in drang, not configured in the
 builtin.
 
@@ -2726,7 +2727,7 @@ $ drang tasks.dr                 # no task, or `list` / `-l` / `--list`: print t
 tasks:
   build
   clean
-$ drang tasks.dr build a b       # runs .build(["a", "b"]) — the remaining argv as a string array
+$ drang tasks.dr build a b       # runs .build(["a", "b"]); the remaining argv as a string array
 building ["a","b"]
 $ drang tasks.dr nope            # unknown task: list to stderr, exit 2
 drang: unknown task "nope"
@@ -3095,7 +3096,7 @@ Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bign
 | `map` | `map(arr, fn)` | Apply `fn` to each element → new array; fail-loud on first Err. |
 | `filter` | `filter(arr, fn)` | Keep elements where `fn` is truthy. |
 | `reject` | `reject(arr, fn)` | Drop elements where `fn` is truthy. |
-| `each` | `each(arr, fn)` | Run `fn` for side effects; returns the original array (for `\|>`). |
+| `each` | `each(arr, fn)` | Run `fn` for side effects; returns the original array (for `|>`). |
 | `find` | `find(arr, fn)` | First element where `fn` is truthy, else undef (composes with `//`). |
 | `any` | `any(arr, fn)` | True if `fn` is truthy for any element (false over empty). |
 | `all` | `all(arr, fn)` | True if `fn` is truthy for every element (true over empty). |
@@ -3281,7 +3282,7 @@ Trig (`sin`, `cos`, `tan`, …) is planned as a thin binding over Go's `math`, n
   say(int(10 / 4))   # 2
   ```
 
-- **No `**` exponent operator**: `2 ** 8` is a parse error (`unexpected STAR`).
+- **The exponent operator `**` is absent**: `2 ** 8` is a parse error (`unexpected STAR`).
 - **No ternary**: `1 > 0 ? 1 : 2` does not parse. `if` is a statement, not an expression, so there is no inline conditional. Use `and`/`or` short-circuit value-returning logic (`$cond and $a or $b`) as the workaround.
 - **No bitwise operators**: `&`, `|` (as bitwise), `<<`, `>>` all fail to parse (`&` lexes as `ILLEGAL`; `<<` is read as a heredoc start). `|` is the lambda delimiter, not bitwise-or.
 - **No `++` / `--`**: `$x++` is a parse error. Use compound assignment: `$x += 1`.
@@ -3291,11 +3292,18 @@ Trig (`sin`, `cos`, `tan`, …) is planned as a thin binding over Go's `math`, n
 Several features are specified in DESIGN.md but do not work in the binary yet. Don't reach for them:
 
 - **Structs.** `struct Foo { ... }` is a parse error. Use maps as records in the meantime: `$s := {reqs: 0, by_ip: {}}`.
-- **Named arguments** (`f(port: 9090)`) are not supported. Arguments are positional (default parameters *are* supported; see [Named functions](#named-functions-fn-name)). **Variadic parameters** (`$a...`) are deliberately out of scope: pass an array instead.- **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
+- **Named arguments** (`f(port: 9090)`) are not supported. Arguments are positional (default parameters *are* supported; see [Named functions](#named-functions-fn-name)). **Variadic parameters** (`$a...`) are deliberately out of scope: pass an array instead.
+- **No automatic stringy coercion.** `"5" + 3` is an error, not `8`. Convert explicitly with `int()`:
 
   ```drang
-  say("5" + 3)        # error: cannot use string and int with '+'
   say(int("5") + 3)   # 8
+  ```
+
+  A bare `"5" + 3` aborts the program:
+
+  ```drang
+  say("5" + 3)
+  # drang: cannot use string and int with '+' (no automatic coercion: convert with int()/float()/str(), or ~ to join strings)
   ```
 
 (Modules *are* shipped, see [Modules: `use`](#modules-use), as is the one-liner `BEGIN`/`END` block; both were once listed here as missing.)
@@ -3313,7 +3321,8 @@ Several features are specified in DESIGN.md but do not work in the binary yet. D
 
   ```drang
   say(format("{:>3}: {:.2f}", "pi", 3.14159))   # " pi: 3.14"
-  say(format("%d", 5))                          # error: format: template has 0 placeholder(s) but got 1 argument(s)
+  say(format("%d", 5))
+  # error: format: template has 0 placeholder(s) but got 1 argument(s). format uses {} / {:spec} placeholders, not %-style verbs (example: format("{} {:.2f}", name, x))
   ```
 
   There is no `sprintf` (`unknown function`); `format` is the only string-formatting builtin.

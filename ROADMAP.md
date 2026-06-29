@@ -26,9 +26,17 @@ like Ruby, thinks like Perl, runs like Go").*
     `Equal`/`Display` stack overflow; the VM swallowing a top-level `return`; `x |> f() == y`
     always erroring), and 4 MED/LOW. All have regression tests; the suite is `-race` clean.
     See DESIGN.md → *Pre-0.4 core hardening*.
-- **Next (post-0.4).** The genuinely-remaining items below: named-capture→map +
-  `replace_first`, one-liner in-place `-i`, character ranges (`'a'..'z'`), the stringy-
-  coercion decision, and `match`/`switch`.
+- **0.5 (2026-06-29).** Opt-in string interpolation (`$"..."`; `''`/`""` no longer
+  interpolate — a breaking change), `exe()` + `is_terminal()`, portable process supervision
+  (`{supervise: true}`, Windows-validated / Unix pending), and a self-documenting `format`
+  error for the printf habit. Plus a `gen_manual` table-renderer fix (a pipe inside a
+  `code span` no longer over-splits a row).
+- **0.6 candidates (triaged 2026-06-29 — build on real daily-driver need, not speculatively).**
+  Ordered by likely use: **`walk`** (recursive dir traversal) and **named-capture `match` →
+  map** are the two most likely to be hit and are genuine *powers*; then `replace_first`,
+  `parse_url`, `hmac`/`sha512`, `indent`, array `reverse`, `title`, `chmod`. Also parked:
+  one-liner in-place `-i`, char/string ranges, `match`/`switch`. **Decision (2026-06-29):
+  stringy-numeric coercion is rejected** — `"5" + 3` stays a type error.
 
 ## State of the language
 
@@ -60,7 +68,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | Default params (`fn .f($a, $b=8080)`) | option/config/task fns — **DONE**: call-time eval, may reference earlier params, works in fns + lambdas + both backends. Named args deferred indefinitely; variadic params scrapped (pass an array) | M | ✅ DONE |
 | ~~Slices + string indexing/substring (`$a[1..3]`, `$s[2..5]`)~~ | core text moves — **DONE**: inclusive range slices on arrays + strings, rune-aware string indexing, negatives, clamping (read-only; slice-assignment deferred) | M | ✅ DONE |
 | Char ranges `'a'..'z'` (needs char literals) | lower frequency; `'a'` lexes as ILLEGAL | M | NOT-STARTED |
-| Stringy-numeric coercion (`"5" + 3`) | genuine unresolved tension (§2 locked, §14 deferred) — **decide and document** | S–M | DEFERRED-BY-DESIGN |
+| Stringy-numeric coercion (`"5" + 3`) | **DECIDED 2026-06-29: rejected.** drang will not coerce; `"5" + 3` stays a type error (convert with `int()`/`str()`). Keeps the "explicit over implicit, no surprises" stance | — | ✅ DECIDED |
 | Ratify provisional bits (truthiness, language name / `.dr`) | working but never formally locked; doc/decision close | S | PARTIAL |
 | `match`/`switch` multi-way dispatch | value/regex dispatch for text; `dispatch({...})` partly covers it | M | NOT-STARTED |
 
@@ -87,8 +95,8 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~`group_by`, `partition`, `uniq_by`, `enumerate`, `mean`, `median`, set ops (`intersect`/`union`/`difference`)~~ | high-value ergonomic shaping — **DONE** (prelude batch 1) | **drang prelude** | ✅ DONE |
 | ~~`pad`, `capitalize`, `reverse`~~ | string conveniences — **DONE** (prelude batch 1) | **drang prelude** | ✅ DONE |
 | ~~`clamp`/`sign`, `get_in`, `deep_merge`, `retry`, `dedent`~~ | ergonomic helpers — **DONE** (prelude finish-up) | **drang prelude** | ✅ DONE |
-| `indent`, `title`, array `reverse` | leftover string/array conveniences | **drang prelude** | NICE |
-| `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings | Go | NICE |
+| `indent`, `title`, array `reverse` | leftover string/array conveniences | **drang prelude** | 0.6 CANDIDATE |
+| `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits) | Go | 0.6 CANDIDATE |
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
 | ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
 | TOML / INI config parsing | no Go-stdlib parser → conflicts with stdlib-only pillar | Go | GATED (decision-record first) |

@@ -1190,7 +1190,7 @@ func mulOverflows(a, b int64) bool {
 
 func arith(op token.Kind, l, r value.Value) (value.Value, error) {
 	if !l.IsNumber() || !r.IsNumber() {
-		return value.MakeNil(), fmt.Errorf("cannot use %s and %s with '%s' (stringy coercion is a later slice)",
+		return value.MakeNil(), fmt.Errorf("cannot use %s and %s with '%s' (no automatic coercion: convert with int()/float()/str(), or ~ to join strings)",
 			l.TypeName(), r.TypeName(), opSym(op))
 	}
 	if l.Tag() == value.Int && r.Tag() == value.Int && op != token.SLASH {
