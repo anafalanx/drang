@@ -732,12 +732,21 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case token.STRING:
 		raw, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
+		// Escaped, NO interpolation ("...", qq{...}, <<TAG, <<"TAG"): $ is a literal byte.
+		return &ast.StringLit{Pos: pos, Value: decodeEscapes(raw), Raw: rawSrc, Form: stringForm(rawSrc, false)}
+	case token.ISTRING:
+		raw, rawSrc := p.tok.Lit, p.tok.Raw
+		p.next()
+		// Escaped + interpolation ($"...", $qq{...}, <<$TAG).
+		form := stringForm(rawSrc, true)
 		switch e := p.interpolate(raw, pos).(type) {
-		case *ast.StringLit: // no interpolation
+		case *ast.StringLit: // no interpolation actually occurred
 			e.Raw = rawSrc
+			e.Form = form
 			return e
 		case *ast.Interp:
 			e.Raw = rawSrc
+			e.Form = form
 			return e
 		default:
 			return e
@@ -745,7 +754,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case token.RAWSTR:
 		s, rawSrc := p.tok.Lit, p.tok.Raw
 		p.next()
-		return &ast.StringLit{Pos: pos, Value: s, Raw: rawSrc} // q{...}/<<'TAG': literal, no interpolation
+		// Raw, no escapes, no interpolation (q{...}, '...', <<'TAG').
+		return &ast.StringLit{Pos: pos, Value: s, Raw: rawSrc, Form: stringForm(rawSrc, false)}
 	case token.QW:
 		words := strings.Fields(p.tok.Lit)
 		rawSrc := p.tok.Raw
@@ -957,12 +967,92 @@ func makePipe(left, right ast.Expr) ast.Expr {
 	return nil
 }
 
+// stringForm classifies a string literal by its verbatim Raw prefix, so the printer can
+// regenerate the right form class if Raw is later cleared (synthesized / fix-rewritten).
+// interp says whether the token was an ISTRING (an interpolating form). When Raw is empty
+// (already synthesized) it falls back to the dollar/escaped double-quote default.
+func stringForm(rawSrc string, interp bool) ast.StrForm {
+	switch {
+	case strings.HasPrefix(rawSrc, "<<"):
+		// Skip the '<<' and an optional '~' to inspect the tag introducer.
+		s := rawSrc[2:]
+		s = strings.TrimPrefix(s, "~")
+		switch {
+		case strings.HasPrefix(s, "$"):
+			return ast.FormHeredocInterp
+		case strings.HasPrefix(s, "'"):
+			return ast.FormHeredocRaw
+		default:
+			return ast.FormHeredocEscaped
+		}
+	case strings.HasPrefix(rawSrc, "$qq"):
+		return ast.FormDollarQQ
+	case strings.HasPrefix(rawSrc, "$\""):
+		return ast.FormDollarDQuote
+	case strings.HasPrefix(rawSrc, "qq"):
+		return ast.FormQQ
+	case strings.HasPrefix(rawSrc, "q"):
+		return ast.FormQ
+	case strings.HasPrefix(rawSrc, "'"):
+		return ast.FormSingle
+	case strings.HasPrefix(rawSrc, "\""):
+		return ast.FormDQuote
+	}
+	if interp {
+		return ast.FormDollarDQuote
+	}
+	return ast.FormDQuote
+}
+
+// writeEscape decodes the escape sequence at raw[i] (raw[i] is '\' and i+1 < len(raw))
+// into b, returning the number of bytes consumed (always 2). The escape table is shared
+// by decodeEscapes and interpolate so it can never diverge: \n \t \r \\ \" \$ are decoded;
+// any other escape is kept verbatim (lenient — regex "\d", paths "C:\dir"). Note \$ -> $
+// is consumed here, BEFORE interpolate's $-splice step sees it, so an escaped $ is always
+// a literal $ (suppressing interpolation in the interpolating forms).
+func writeEscape(b *strings.Builder, raw string, i int) int {
+	switch raw[i+1] {
+	case 'n':
+		b.WriteByte('\n')
+	case 't':
+		b.WriteByte('\t')
+	case 'r':
+		b.WriteByte('\r')
+	case '\\':
+		b.WriteByte('\\')
+	case '"':
+		b.WriteByte('"')
+	case '$':
+		b.WriteByte('$') // escaped interpolation -> literal $
+	default:
+		// lenient: keep the backslash (regex "\d", paths "C:\dir")
+		b.WriteByte('\\')
+		b.WriteByte(raw[i+1])
+	}
+	return 2
+}
+
+// decodeEscapes processes only escape sequences (no $-interpolation): $ is an ordinary
+// byte. Used by the escaped-no-interp forms ("...", qq{...}, <<TAG, <<"TAG").
+func decodeEscapes(raw string) string {
+	var b strings.Builder
+	for i := 0; i < len(raw); {
+		if raw[i] == '\\' && i+1 < len(raw) {
+			i += writeEscape(&b, raw, i)
+			continue
+		}
+		b.WriteByte(raw[i])
+		i++
+	}
+	return b.String()
+}
+
 // interpolate decodes a raw string body, processing escapes and $-interpolation
 // together (it has the raw form, so it can tell "\$" — a literal $ — from "$x").
 // "$name" splices a variable; "${expr}" splices any expression. The result is a plain
 // StringLit when there is no interpolation, otherwise an ast.Interp holding the literal
 // and expression parts (eval stringifies each via Display and concatenates, so the value
-// is always a string).
+// is always a string). Reached only by the interpolating forms ($"...", $qq{...}, <<$TAG).
 func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 	var ops []ast.Expr
 	var seg strings.Builder
@@ -976,25 +1066,7 @@ func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 	for i < len(raw) {
 		c := raw[i]
 		if c == '\\' && i+1 < len(raw) {
-			switch raw[i+1] {
-			case 'n':
-				seg.WriteByte('\n')
-			case 't':
-				seg.WriteByte('\t')
-			case 'r':
-				seg.WriteByte('\r')
-			case '\\':
-				seg.WriteByte('\\')
-			case '"':
-				seg.WriteByte('"')
-			case '$':
-				seg.WriteByte('$') // escaped interpolation -> literal $
-			default:
-				// lenient: keep the backslash (regex "\d", paths "C:\dir")
-				seg.WriteByte('\\')
-				seg.WriteByte(raw[i+1])
-			}
-			i += 2
+			i += writeEscape(&seg, raw, i)
 			continue
 		}
 		if c == '$' && i+1 < len(raw) {

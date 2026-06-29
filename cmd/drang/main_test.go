@@ -17,7 +17,7 @@ func TestREPL(t *testing.T) {
 		`$n * $n`,        //
 		`}`,              // function persists
 		`.sq(9)`,         // -> 81 (runs the defined function)
-		`"v=$x"`,         // interpolation + persisted var -> v=10
+		`$"v=$x"`,        // interpolation + persisted var -> v=10
 		`@@@`,            // garbage -> parse error; loop must recover
 		`100 + 1`,        // -> 101 proves recovery
 		`fn .noop() { }`, // declaration -> nil, must NOT echo a value line

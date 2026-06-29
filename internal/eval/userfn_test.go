@@ -12,7 +12,7 @@ func TestUserFnSigil(t *testing.T) {
 		{"recursion", `fn .fact($n) { if $n <= 1 { return 1 }  $n * .fact($n - 1) }  say(.fact(5))`, "120\n"},
 		{"call-then-field-access", `fn .mk() { {n: 7} }  say(.mk().n)`, "7\n"},
 		// a user .len is disjoint from the len builtin — no shadow, no collision
-		{"disjoint-from-builtin", `fn .len($x) { 99 }  say("${.len([1,2])}/${len([1,2])}")`, "99/2\n"},
+		{"disjoint-from-builtin", `fn .len($x) { 99 }  say($"${.len([1,2])}/${len([1,2])}")`, "99/2\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

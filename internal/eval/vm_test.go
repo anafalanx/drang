@@ -123,9 +123,9 @@ say(.reassign(5))`,
 	// string interpolation: $name, ${expr}, escaped \$, and a Display'd value
 	`$who := "drang"
 $n := 6
-say("hi $who, ${$n * 7} and a literal \$n = $n")`,
+say($"hi $who, ${$n * 7} and a literal \$n = $n")`,
 	`$xs := [1, 2, 3]
-say("list ${$xs} len ${len($xs)}")`,
+say($"list ${$xs} len ${len($xs)}")`,
 	// ordering: <=>, sort (natural + comparator), sort_by, min_by/max_by
 	`$xs := [5, 3, 8, 1, 3]
 say(sort($xs))
@@ -156,7 +156,7 @@ say($n, $sum)`,
 for $i in 1..3 {
   for $j in 1..3 {
     if $j == $i { next }
-    $s = $s ~ "$i$j "
+    $s = $s ~ $"$i$j "
   }
 }
 say($s)`,
@@ -191,10 +191,10 @@ say($i)`,
 	`say(qw(alpha beta gamma))
 $w := "W"
 say(q(raw $w stays))
-say(qq{interp $w and ${2 * 21}})`,
+say($qq{interp $w and ${2 * 21}})`,
 	// heredoc: interpolated body, then normal code resumes after the terminator
 	`$who := "Sam"
-$msg := <<END
+$msg := <<$END
 hi $who
 the answer is ${6 * 7}
 END
@@ -455,7 +455,7 @@ func TestScanExprPipeInterpCapture(t *testing.T) {
 fn .make($n) { |$x| $x |> .add($n) }
 $f := .make(10)
 say($f(5))`, "15\n"},
-		{"interp-capture", `fn .greeter($name) { || "hi $name" }
+		{"interp-capture", `fn .greeter($name) { || $"hi $name" }
 $g := .greeter("bob")
 say($g())`, "hi bob\n"},
 	}
@@ -619,7 +619,7 @@ func TestQuoteHeredocEdges(t *testing.T) {
 		{"$x := <<END\n\nEND\nsay(len($x))", "1\n"},
 		{"$x := <<END\nhi\nEND\nsay(len($x))", "3\n"}, // "hi\n"
 		// a non-brace delimiter handles a brace inside a ${...} interpolation
-		{"say(qq[x${ \"}\" }y])", "x}y\n"},
+		{"say($qq[x${ \"}\" }y])", "x}y\n"},
 	}
 	for _, c := range cases {
 		got, err := runBackend(t, c.src, true)

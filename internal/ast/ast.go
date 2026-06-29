@@ -268,13 +268,32 @@ type FloatLit struct {
 func (e *FloatLit) String() string { return strconv.FormatFloat(e.Value, 'g', -1, 64) }
 func (*FloatLit) exprNode()        {}
 
+// StrForm records which surface form a string literal came from, so the printer can
+// regenerate the correct form class when Raw is absent (synthesized or fix-rewritten
+// nodes). For parsed source Raw still wins; Form is dormant.
+type StrForm int
+
+const (
+	FormDQuote        StrForm = iota // "..."  — escaped, no interpolation
+	FormQ                            // q{...} — raw
+	FormQQ                           // qq{...} — escaped, no interpolation
+	FormSingle                       // '...'  — raw
+	FormDollarDQuote                 // $"..." — escaped + interpolation
+	FormDollarQQ                     // $qq{...} — escaped + interpolation
+	FormHeredocRaw                   // <<'TAG' — raw
+	FormHeredocEscaped               // <<TAG / <<"TAG" — escaped, no interpolation
+	FormHeredocInterp                // <<$TAG — escaped + interpolation
+)
+
 // StringLit is a string literal. Raw is the verbatim source incl. delimiters/form
 // ("..", q{..}, qq{..}, <<TAG..) for the formatter; Value is the decoded value used by
-// eval. Raw is "" for synthesized/interpolated-segment nodes (printer falls back).
+// eval. Raw is "" for synthesized/interpolated-segment nodes (printer falls back, using
+// Form to pick the form class).
 type StringLit struct {
 	Pos
 	Value string
 	Raw   string
+	Form  StrForm
 }
 
 func (e *StringLit) String() string { return strconv.Quote(e.Value) }
@@ -289,6 +308,7 @@ type Interp struct {
 	Pos
 	Raw   string
 	Parts []Expr
+	Form  StrForm // surface form ($"...", $qq{...}, <<$TAG), for the printer's fallback
 }
 
 func (e *Interp) String() string {
