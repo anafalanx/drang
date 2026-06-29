@@ -3140,6 +3140,8 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 | `os` | `os()` | Operating system name (`windows`/`darwin`/`linux`/…). |
 | `arch` | `arch()` | CPU architecture (`amd64`/`arm64`/…). |
 | `home` | `home()` | Current user's home directory; failure → Err. |
+| `exe` | `exe()` | Path of the running drang executable (find your own install location); failure → Err. |
+| `is_terminal` | `is_terminal(stream?)` | Whether `stream` (`stdin` default, `stdout`, `stderr`) is a terminal vs a pipe/file. |
 | `parse_args` | `parse_args(argv, value_opts?)` | Parse an argv array into a flat map: `--flag`→`true`, `--key=val`/`--key val` (if `key` is in `value_opts`)→string, positionals under `"_"`. |
 
 ### Date & time

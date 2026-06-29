@@ -63,3 +63,32 @@ func TestStartDetached(t *testing.T) {
 		t.Errorf("await of a clean exit should be truthy, got %v", st.Display())
 	}
 }
+
+// exe() and is_terminal() unblock porting the zmal `z` launcher (find-own-location and
+// TTY detection).
+
+func TestExe(t *testing.T) {
+	v := callBuiltin(t, "exe")
+	if v.Tag() != value.Str || v.AsStr() == "" {
+		t.Errorf("exe() should return a non-empty path string, got %v", v.Display())
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	// Under the test harness stdio is piped, so the values are clean bools; the contract is
+	// a bool for a valid stream and a catchable Err otherwise.
+	for _, s := range []string{"stdin", "stdout", "stderr"} {
+		if v := callBuiltin(t, "is_terminal", str(s)); v.Tag() != value.Bool {
+			t.Errorf("is_terminal(%q) should return a bool, got %v", s, v.Display())
+		}
+	}
+	if v := callBuiltin(t, "is_terminal"); v.Tag() != value.Bool {
+		t.Errorf("is_terminal() should default to stdin and return a bool, got %v", v.Display())
+	}
+	if e := callBuiltin(t, "is_terminal", str("bogus")); !e.IsErr() {
+		t.Error("is_terminal with an unknown stream should be a catchable Err")
+	}
+	if e := callBuiltin(t, "is_terminal", value.MakeInt(1)); !e.IsErr() {
+		t.Error("is_terminal with a non-string should be a catchable Err")
+	}
+}

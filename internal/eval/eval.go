@@ -1658,12 +1658,14 @@ var builtins = map[string]builtin{
 	"uuid":     builtinUUID,
 
 	// runtime knobs + platform
-	"sys_gc": builtinSysGC,
-	"cwd":    builtinCwd,
-	"env":    builtinEnv,
-	"os":     builtinOS,
-	"arch":   builtinArch,
-	"home":   builtinHome,
+	"sys_gc":      builtinSysGC,
+	"cwd":         builtinCwd,
+	"env":         builtinEnv,
+	"os":          builtinOS,
+	"arch":        builtinArch,
+	"home":        builtinHome,
+	"exe":         builtinExe,
+	"is_terminal": builtinIsTerminal,
 
 	// HTTP client (minimal + robust; net/http). Transport failure -> catchable Err;
 	// an HTTP status (incl. 4xx/5xx) is data in the returned {status, ok, body, headers, url}.
