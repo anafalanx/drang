@@ -19,13 +19,14 @@ import (
 // execOpts holds the trailing {cwd, env, stdin, timeout} options for the process
 // builtins.
 type execOpts struct {
-	cwd      string
-	env      []string // nil = inherit the parent environment
-	stdin    string
-	hasStdin bool
-	arg0     string // present a different argv[0] than the launched executable
-	hasArg0  bool
-	timeout  time.Duration // 0 = no limit
+	cwd       string
+	env       []string // nil = inherit the parent environment
+	stdin     string
+	hasStdin  bool
+	arg0      string // present a different argv[0] than the launched executable
+	hasArg0   bool
+	timeout   time.Duration // 0 = no limit
+	supervise bool          // tie the child's lifetime to ours via the reaper (see supervise.go)
 }
 
 // newCmd builds the command, wiring a deadline when a timeout is set. The returned
@@ -94,7 +95,7 @@ func builtinRun(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
-	if runErr := cmd.Run(); runErr != nil {
+	if runErr := runCmd(cmd, opts.supervise, false); runErr != nil { // run inherits the tty: no own group
 		return finishErr(argv[0], runErr, "", ctx, opts), nil
 	}
 	return value.MakeBool(true), nil // truthy success, composes with // and if
@@ -134,12 +135,15 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if opts.hasStdin {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
+	superviseBegin(cmd, opts.supervise, true) // detached stdio: safe to own its process group
 	if startErr := cmd.Start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
 	}
+	dereg := superviseAfterStart(cmd, opts.supervise)
 	p := &Proc{cmd: cmd, done: make(chan struct{}), res: value.MakeBool(true)}
 	go func() {
 		defer close(p.done)
+		defer dereg() // tell the reaper the child is gone once we've reaped it
 		if werr := cmd.Wait(); werr != nil {
 			p.res = execError(argv[0], werr, "") // exit code as a catchable Err
 		}
@@ -208,6 +212,7 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
+	superviseBegin(cmd, opts.supervise, true) // stdout is a pipe, stdin a reader: not the tty
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return value.MakeErr(fmt.Sprintf("each_line: %v", err), 1), nil
@@ -215,6 +220,7 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	if startErr := cmd.Start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
 	}
+	defer superviseAfterStart(cmd, opts.supervise)() // deregister once we return (child reaped)
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long lines
 	for scanner.Scan() {
@@ -261,7 +267,7 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
-	if runErr := cmd.Run(); runErr != nil {
+	if runErr := runCmd(cmd, opts.supervise, true); runErr != nil { // captured stdio, not the tty
 		return finishErr(argv[0], runErr, errBuf.String(), ctx, opts), nil
 	}
 	return value.MakeStr(strings.TrimSpace(out.String())), nil
@@ -288,7 +294,7 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	applyExecOpts(cmd, opts)
 
 	code := 0
-	if runErr := cmd.Run(); runErr != nil {
+	if runErr := runCmd(cmd, opts.supervise, true); runErr != nil { // captured stdio, not the tty
 		switch {
 		case ctx != nil && ctx.Err() == context.DeadlineExceeded:
 			code = 124
@@ -369,7 +375,8 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 			cmds[i] = exec.Command(av[0], av[1:]...)
 		}
 		applyExecOpts(cmds[i], o)
-		cmds[i].Stderr = stderr // intermediate diagnostics stay visible
+		superviseBegin(cmds[i], o.supervise, true) // wired via pipes, not the tty
+		cmds[i].Stderr = stderr                    // intermediate diagnostics stay visible
 	}
 	if o.hasStdin {
 		cmds[0].Stdin = strings.NewReader(o.stdin)
@@ -407,6 +414,12 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 		}
 		started++
 	}
+	// All stages started: register each for supervision (no-op when off). Registering only
+	// after a full successful start means the start-failure cleanup above has nothing to undo.
+	var deregs []func()
+	for i := range cmds {
+		deregs = append(deregs, superviseAfterStart(cmds[i], o.supervise))
+	}
 	closePipes() // drop the parent's copies so EOF propagates between children
 
 	var lastWaitErr error
@@ -414,6 +427,9 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 		if werr := cmds[i].Wait(); i == n-1 {
 			lastWaitErr = werr
 		}
+	}
+	for _, d := range deregs {
+		d() // children reaped — clear them from the supervisor
 	}
 	if lastWaitErr != nil {
 		return finishErr(argvs[n-1][0], lastWaitErr, lastErr.String(), ctx, o)
@@ -515,6 +531,11 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 				return o, fmt.Errorf("%s: env option must be a map", name)
 			}
 			o.env = mergeEnv(vals[i].Obj().(*value.OrderedMap))
+		case "supervise":
+			if vals[i].Tag() != value.Bool {
+				return o, fmt.Errorf("%s: supervise must be true or false", name)
+			}
+			o.supervise = vals[i].Truthy()
 		default:
 			return o, fmt.Errorf("%s: unknown option %q", name, k.AsStr())
 		}

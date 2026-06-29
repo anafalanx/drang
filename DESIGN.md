@@ -2383,3 +2383,53 @@ mechanism is ready to host a v2 rule that rewrites pre-v2 interpolating `"..."`/
 into the `$`-forms — but that rule is deferred (the rule set currently ships empty). Every
 behavior-dependent migration site was in the Go test corpus; zero shipping `.dr` interpolates
 (prelude/examples/gen_manual use `format()`/`~`), so the runtime stdlib needed no migration.
+
+## Portable process supervision: the reaper side-car (2026-06-29)
+
+`{supervise: true}` on the exec builtins ties a child's lifetime to the drang process,
+portably, *without* OS job objects / `PR_SET_PDEATHSIG` / a per-OS guarantee.
+
+We rejected the Windows Job Object: its guarantee doesn't port (Windows is clean; Linux needs
+PID namespaces or cgroups; macOS has nothing equivalent), it would be the first `unsafe`/
+syscall-DLL code in the tree, and a guarantee that forks by OS is against the "runs identically
+everywhere" grain. Instead we use the one universal liveness primitive — **pipe EOF**: when any
+process dies (clean exit, panic, SIGKILL, crash) the kernel closes its fds. So:
+
+- On the first supervised child, drang lazily spawns one reaper side-car, `drang --reap` (the
+  same single binary; a hidden subcommand intercepted before everything else, so a `drang
+  build` standalone answers it too). The reaper gets the read end of a pipe as its stdin;
+  drang keeps the write end open for life and sends `+ PID` / `- PID` lines as supervised
+  children start and finish. When drang dies, the write end closes, the reaper's stdin hits
+  EOF, and it kills every still-registered child tree, then exits.
+
+Correctness hinges on the write end never being inherited by the workload children (else EOF
+would wait on them): `os.Pipe` sets close-on-exec and `exec.Cmd` only clears it for fds it
+assigns, so a child we never hand it to can't pin it. The reaper is detached (Setsid on Unix,
+a new process group on Windows) so it outlives drang's group. The tree-kill step is the only
+real platform fork: `taskkill /T` on Windows; `kill(-pid)` on Unix, for which supervised
+children are made their own process-group leader (Setpgid) — *except* the foreground `run`
+form, which shares the controlling terminal, where a new group would stall an interactive
+child on SIGTTIN. Concurrency: the supervisor is a guarded package global (sync.Once spawn,
+mutex'd pipe writes), so a `pmap` fan-out of supervised launches is safe.
+
+Crude by design: an extra lightweight process, a small PID-reuse window (closed by
+deregister-on-reap), best-effort if the reaper itself is killed. Files:
+`internal/eval/supervise{,_unix,_windows}.go`, `cmd/drang/reap{,_unix,_windows}.go`; the
+eval/VM core is untouched.
+
+**Validation status.** Windows is exercised hard — 15 test functions (cmd/drang/supervise_*_
+test.go): basic die/survive, framing, then an adversarial + hostile battery covering grandchild
+tree-kill, an external `taskkill /T` of the parent, a 16-way `pmap` fan-out, rapid churn, a
+failed start leaving no phantom, immediate kills, fd hygiene, clean-exit semantics, deregister
+leaks, hostile reaper stdin, and the reaper-killed *ceiling* (proving the ONLY failure mode is a
+pre-killed reaper). All green. The two residuals are inherent, not bugs: a ~microsecond
+in-process start→register window (the same race the Job Object approach accepts) and a PID-reuse
+sliver (closed by deregister-on-reap in the normal case).
+
+**Unix is NOT yet validated at runtime — this needs exhaustive testing before it is trusted
+there.** The Unix path (supervise_unix.go, reap_unix.go) builds and vets cleanly on linux/darwin
+(amd64 + arm64) and is a direct translation of the proven Windows logic, but it has never been
+*run* on a real Unix host. The Windows battery must be ported (only the `pidAlive`/`taskkill`
+helpers are Windows-specific) and run on Linux and macOS, verifying the Setsid detach, Setpgid +
+`kill(-pid)` whole-tree reap, pipe-EOF on every death mode, fd close-on-exec hygiene, and the
+foreground-`run` SIGTTIN exclusion. Tracked in ROADMAP.md and flagged in supervise_unix.go.

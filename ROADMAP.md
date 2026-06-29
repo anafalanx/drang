@@ -115,6 +115,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | Startup benchmark + prelude precompile (go:generate bytecode) | reserved optimization; gate behind a real benchmark first | S / M | DEFERRED-BY-DESIGN |
 | `--profile` pprof output | called a freebie in §11; `sys_gc` exists, no flag | S | NOT-STARTED |
 | Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
+| **Exhaustively test process supervision (`{supervise: true}`) on Unix** | the reaper side-car is hard-tested on Windows (15 funcs) but the Unix path (Setsid / Setpgid / `kill(-pid)`) has only been built+vetted, never *run*. Port the `cmd/drang/supervise_*_test.go` battery (only `pidAlive`/`taskkill` are Windows-specific) to Linux + macOS and run it before trusting supervision there. See the note in `internal/eval/supervise_unix.go` and DESIGN.md | M | **NOT-STARTED — blocks trusting supervise on Unix** |
 
 ## (e) Polish / recent-feature follow-ups
 

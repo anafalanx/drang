@@ -30,6 +30,13 @@ import (
 var version = "0.4"
 
 func main() {
+	// `drang --reap` is the hidden process-supervision side-car (see reap.go). It must be
+	// intercepted before everything else — including the standalone-payload path — so that a
+	// `drang build` binary can spawn ITSELF as the reaper for its supervised children.
+	if len(os.Args) > 1 && os.Args[1] == "--reap" {
+		runReap()
+		return
+	}
 	// A standalone executable (made by `drang build`) carries its program appended
 	// to this binary; run it directly, with every argument going to the script as
 	// $ARGV. A plain drang binary has no such payload and continues to the CLI.
