@@ -27,7 +27,7 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.4"
+var version = "0.5"
 
 func main() {
 	// `drang --reap` is the hidden process-supervision side-car (see reap.go). It must be

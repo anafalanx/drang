@@ -121,11 +121,31 @@ fn .isSep($s) {
   true
 }
 
-# split a table row into trimmed cells, dropping the empty edges from leading/trailing |
+# Split a table row into trimmed cells. A bare scan on "|" would wrongly break a cell that
+# documents a pipe inside a `code span` (e.g. `|$x| $x * 2`, `|>`, `||`), inflating the row's
+# column count. So honor code spans (a | between backticks is literal) and GFM \| escapes;
+# drop the empty edges from a leading/trailing |.
 fn .cells($line) {
-  $raw := split(trim($line), "|")
+  $sc := chars(trim($line))
+  $n := len($sc)
   $cs := []
-  for $x in $raw { push($cs, trim($x)) }
+  $buf := []
+  $inCode := false
+  $i := 0
+  while $i < $n {
+    $c := $sc[$i]
+    if $c == "`" {
+      $inCode = !$inCode
+      push($buf, $c); $i = $i + 1
+    } else if $c == "\\" and !$inCode and ($i + 1) < $n and $sc[$i + 1] == "|" {
+      push($buf, "|"); $i = $i + 2          # GFM-escaped pipe -> literal |
+    } else if $c == "|" and !$inCode {
+      push($cs, trim(join($buf, ""))); $buf = []; $i = $i + 1
+    } else {
+      push($buf, $c); $i = $i + 1
+    }
+  }
+  push($cs, trim(join($buf, "")))
   if len($cs) > 1 and $cs[0] == "" { $cs = $cs[1..(len($cs) - 1)] }
   if len($cs) > 1 and $cs[len($cs) - 1] == "" { $cs = $cs[0..(len($cs) - 2)] }
   $cs
@@ -267,7 +287,7 @@ push($h, "<header><a class=\"brand\" href=\"/\">drang</a><nav><a href=\"/\">Home
 push($h, "<main id=\"main\" class=\"wrap\"><div class=\"prose\">")
 push($h, $body)
 push($h, "</div></main>")
-push($h, "<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.4 · built by drang</div></footer>")
+push($h, "<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.5 · built by drang</div></footer>")
 push($h, "<script src=\"site.js\"></script>")
 push($h, "</body></html>")
 

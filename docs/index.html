@@ -31,24 +31,59 @@
 <main id="main" class="wrap">
 
   <section class="hero">
-    <span class="pill">v0.4 · released</span>
+    <span class="pill">v0.5 · released</span>
     <h1 class="mark">drang</h1>
     <p class="tag">Your agents write the glue. You can read it.</p>
     <p class="lede">Reads like Ruby, thinks like Perl, runs like Go. A small, parallel
       scripting language for text, glue, and orchestration.</p>
     <p class="etym">drang: Dutch/German for drive, urge, momentum.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.4</a>
+      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.5</a>
       <a class="btn ghost" href="https://github.com/anafalanx/drang">View on GitHub</a>
     </div>
   </section>
 
-<pre class="code"><span class="c"># square the evens and sum them</span>
+  <div class="demo" id="demo" aria-roledescription="carousel" aria-label="drang code examples">
+    <div class="demo-bar">
+      <span class="demo-label" id="demoLabel">Pipelines</span>
+      <span class="demo-ctl">
+        <button class="cnav" id="demoPrev" type="button" aria-label="Previous example">&lsaquo;</button>
+        <button class="cnav" id="demoNext" type="button" aria-label="Next example">&rsaquo;</button>
+      </span>
+    </div>
+    <div class="demo-view">
+<pre class="code slide" data-label="Pipelines"><span class="c"># square the evens, then sum them</span>
 $xs := [1, 2, 3, 4, 5, 6]
-
 $xs <span class="op">|&gt;</span> filter(|$x| $x % 2 == 0)
     <span class="op">|&gt;</span> map(|$x| $x * $x)
     <span class="op">|&gt;</span> reduce(0, |$a, $b| $a + $b)   <span class="c"># 56</span></pre>
+<pre class="code slide" data-label="Effortless parallelism" hidden><span class="c"># rename map to pmap and the same work</span>
+<span class="c"># fans out across every core, lock-free</span>
+[1, 2, 3, 4]
+    <span class="op">|&gt;</span> pmap(|$n| $n * $n)   <span class="c"># [1, 4, 9, 16]</span></pre>
+<pre class="code slide" data-label="Errors are values" hidden><span class="c"># ? propagates failures, // recovers</span>
+$cfg  := read_file("app.json") <span class="op">//</span> "{}"
+$port := from_json($cfg).port <span class="op">//</span> 8080
+say($port)   <span class="c"># 8080</span></pre>
+<pre class="code slide" data-label="String interpolation" hidden><span class="c"># $"..." interpolates; '...' and "..." stay literal</span>
+$user := "ada"
+$msgs := 3
+say($"hi $user, you have $msgs new")   <span class="c"># hi ada, you have 3 new</span></pre>
+<pre class="code slide" data-label="Glue built in" hidden><span class="c"># shell out, capture stdout, fail loud on error;</span>
+<span class="c"># a timeout tree-kills the whole job</span>
+$v := capture(exe(), "--version")
+say($"running $v")   <span class="c"># running drang 0.5</span></pre>
+<pre class="code slide" data-label="No orphaned processes" hidden><span class="c"># workers under {supervise: true} die with the parent:</span>
+<span class="c"># the whole tree, on every OS (clean exit, crash, or kill)</span>
+["api", "worker", "cron"]
+    <span class="op">|&gt;</span> map(|$svc| start(exe(), "-e", "sleep(30)", {supervise: true}))
+    <span class="op">|&gt;</span> len   <span class="c"># 3, all reaped when this script exits</span></pre>
+<pre class="code slide" data-label="RE2 regex" hidden><span class="c"># qr// literals, RE2-backed: no runaway backtracking</span>
+$line := "a1 b22 c333"
+find_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
+    </div>
+    <div class="dots" id="demoDots" role="tablist" aria-label="Choose an example"></div>
+  </div>
 
   <h2 class="sec">Why drang</h2>
   <div class="grid">
@@ -100,7 +135,7 @@ $xs <span class="op">|&gt;</span> filter(|$x| $x % 2 == 0)
     <a href="manual.html">Manual</a>
     <a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a>
   </nav>
-  <div>MIT licensed · drang 0.4</div>
+  <div>MIT licensed · drang 0.5</div>
 </footer>
 
 <script src="site.js"></script>

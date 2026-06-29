@@ -65,7 +65,7 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 - **Scalars:** `int64`, `float64`, immutable `string`, `bool`, `undef`. `[LOCKED]`
 - **Numbers:** `int64` + `float64` with auto-promotion; arbitrary-precision **deferred**. `[LOCKED]`
 - **Strings are immutable**; `$x =~ s/a/b/` rebinds the lvalue (sugar for `$x = replace($x, …)`). `[LOCKED]`
-- **Stringy-numeric coercion** (`"5" + 3 == 8`), with distinct numeric vs string operators. `[LOCKED]`
+- **No stringy-numeric coercion** (decided 2026-06-29, reversing the earlier locked idea): `"5" + 3` is a type error, not `8` — convert explicitly with `int()`/`str()`. Distinct numeric vs string operators; `~` concatenates. `[DECIDED]`
 - **Arrays & hashes**, with **transparent nesting** — reach in with `.` chains (`$data.users[0].name`); no explicit `\`-refs or deref gymnastics. `[LOCKED]`
 - **`[]` indexes both** arrays and hashes (`$x[0]`, `$x["k"]`). `[LOCKED]`
 - **Write-side autovivification** — deep *writes* create intermediate containers; deep *reads* of missing keys do not. `[LOCKED]`
@@ -417,7 +417,7 @@ Implementation underway in Go: stdlib-only, `module github.com/anafalanx/drang`,
 - Go-style automatic terminator insertion, with bracket-depth suppression. `[LOCKED]`
 - Truthiness: `nil`/`false`/`0`/`0.0`/`""` are falsy. `[PROVISIONAL]`
 - `/` is float division (`10/4 == 2.5`). `[PROVISIONAL]`
-- Stringy-numeric coercion (`"5" + 3`) deferred; string + number errors for now. `[DEFERRED]`
+- Stringy-numeric coercion (`"5" + 3`) **rejected** (2026-06-29): string + number is a type error; convert explicitly. `[DECIDED]`
 
 **Build order from here:** control flow (`if/else`, `while`, `for`-in) + blocks +
 assignment → user functions (`fn`) → the `?`/must-use error model → orchestration
