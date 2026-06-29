@@ -2006,10 +2006,10 @@ pipe -> banana
 (For genuine shell features: globbing, `&&`, redirection, invoke `cmd /c "..."`
 yourself as a single stage.)
 
-### Options: `{cwd, env, stdin, timeout}`
+### Options: `{cwd, env, stdin, timeout, supervise}`
 
-A trailing map sets per-command options on `run`, `capture`, `pipe`, and
-`each_line`. `env` is **overlaid** onto the inherited environment (matched
+A trailing map sets per-command options on `run`, `capture`, `pipe`, `each_line`,
+and `start`. `env` is **overlaid** onto the inherited environment (matched
 case-insensitively, per Windows); `timeout` is in **milliseconds** and `0` means
 no limit.
 
@@ -2026,6 +2026,25 @@ cwd -> C:\Windows
 env -> hi there
 stdin -> world
 ```
+
+**`{supervise: true}`** ties a child's lifetime to the drang process: if drang exits or dies
+for *any* reason (a clean finish, a crash, or an outright kill), the child and its whole
+process tree are terminated too. It is opt-in (default off) and works on every OS via a tiny
+reaper side-car, with no platform job-object or signal machinery. Use it for launchers and
+supervisors that must not leave orphans behind:
+
+```drang
+# a background server that must not outlive us, even if we crash
+$srv := start("my-server", "--port", "8080", {supervise: true})
+# ...do work... whether we return cleanly or are killed, my-server goes down with us
+```
+
+A *clean* exit kills supervised children too: that is the point of `supervise`. For a child
+that should outlive drang, use a plain `start` with no `supervise`. (Implementation: on Unix
+a supervised child runs in its own process group so its whole tree is reaped; the foreground
+`run` form is the exception, where only the direct child is, since `run` shares your
+terminal. On Windows the tree is reaped with `taskkill /T`. The guarantee is best-effort, not
+kernel-enforced.)
 
 There is no global `cd`; per-command `{cwd}` is the only way to change the working
 directory (a process-wide chdir would race across goroutines).
@@ -3155,8 +3174,9 @@ a bool; the rest signal real I/O failures as Err.
 ### Process & concurrency
 
 Process builtins take command words (arrays splice, scalars stringify) and an
-optional trailing options map `{cwd, env, stdin, timeout, arg0}` (`timeout` in ms;
-`arg0` presents a different argv[0] than the launched executable).
+optional trailing options map `{cwd, env, stdin, timeout, arg0, supervise}` (`timeout`
+in ms; `arg0` presents a different argv[0] than the launched executable; `supervise:
+true` ties the child's lifetime to ours, see [Options](#options-cwd-env-stdin-timeout-supervise)).
 No shell is involved; args are passed verbatim. Channels and tasks are shared
 reference types; values are deep-copied on send and on `await`.
 
