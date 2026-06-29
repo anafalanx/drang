@@ -1,0 +1,9 @@
+{
+  "commands": {
+    "build": ["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", "drang.exe", "./cmd/drang"],
+    "test": ["go", "test", "./..."],
+    "run": ["./drang.exe"],
+    "drang-version": ["./drang.exe", "--version"],
+    "drang-help": ["./drang.exe", "--help"]
+  }
+}
