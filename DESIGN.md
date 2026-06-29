@@ -55,7 +55,7 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 ## 3. Decision record
 
 ### 3.1 Variables & scope
-- **One sigil `$`** on every variable; type comes from the value, not the name. Unifies regular vars with the already-`$` magic vars; keeps `"$x"` interpolation trivial. `[LOCKED]` *(revised from an earlier "three invariant sigils" choice.)*
+- **One sigil `$`** on every variable; type comes from the value, not the name. Unifies regular vars with the already-`$` magic vars; keeps `$"$x"` interpolation trivial. `[LOCKED]` *(revised from an earlier "three invariant sigils" choice.)*
 - **No scalar/list context**; every function returns one well-defined thing. `[LOCKED]`
 - **Lexical declaration only**, keyword `let`. Enables slot resolution and goroutine-local safety. No dynamic scoping. `[LOCKED]`
 - **Curated magic vars:** `$_`, `$1..$n`, `$ARGV`, `$ENV` — held as per-goroutine state. The punctuation globals (`$/ $\ $,`) are dropped. `[LOCKED]`
@@ -70,7 +70,7 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 - **`[]` indexes both** arrays and hashes (`$x[0]`, `$x["k"]`). `[LOCKED]`
 - **Write-side autovivification** — deep *writes* create intermediate containers; deep *reads* of missing keys do not. `[LOCKED]`
 - **Slices** (`$a[1,3,5]`, `$h["x","y"]`). `[LOCKED]`
-- **Ranges** — numbers and `'a'..'z'`. `[LOCKED]`
+- **Ranges** — integers ship; `'a'..'z'` is re-specced as a single-rune **string** range (char *literals* are abandoned; `'...'` is now a raw string), **deferred**. `[LOCKED v2]`
 - **Lightweight structs/records** with named fields and methods — no inheritance. `[LOCKED]` Default field values: `[PROPOSED]`
 - **Truthiness:** clean rule — falsy = `undef`/`false`/`0`/`""`/empty collection; drops Perl's `"0"`-is-false wart. Exact rule `[OPEN]`
 
@@ -89,8 +89,8 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 - **Postfix modifiers:** `if`/`unless`/`while`/`until`/`for`. `[LOCKED]`
 - **`last`/`next` + loop labels**; no `redo`. `[LOCKED]`
 - **`:` for pairs** (over `=>`); **`#` line comments**. `[LOCKED]`
-- **String interpolation:** bare `$var`; `${ expr }` blocks for anything complex; lists interpolate space-joined; heredocs supported. `[LOCKED]`
-- **Quote operators: full set** — `qw// q// qq//` with custom delimiters (the one place we spend lexer complexity, for slash/quote-heavy text). `[LOCKED]`
+- **String interpolation is opt-in:** plain `"..."`/`qq{}`/`<<TAG` are escaped but do **not** interpolate (a `$` is literal); you opt in with `$"..."`, `$qq{}`, or a `<<$TAG` heredoc. Inside an interpolating form: bare `$var`; `${ expr }` blocks for anything complex; lists interpolate space-joined; `\$` suppresses interpolation. `[LOCKED v2]`
+- **Quote operators: full set** — `qw// q// qq//` with custom delimiters (the one place we spend lexer complexity, for slash/quote-heavy text); `'...'` is a raw string (alias of `q//`), and each escaped form has a `$`-prefixed interpolating cousin (`$"..."`, `$qq//`). `[LOCKED]`
 - **`-n`/`-p` autoloop** binding `$_` per input line. `[LOCKED]`
 - **`BEGIN`/`END`** blocks as the autoloop's pre/post companions. `[PROPOSED]`
 - **Implicit return** (value of last expression). `[OPEN]`
@@ -123,9 +123,11 @@ $a ~ $b            string concat
 $arr[0]  $h["k"]   indexing (arrays and hashes both use [])
 $h{a: 1, b: 2}     hash literal (':' pairs)
 [1, 2, 3]          array literal
-1..10  'a'..'z'    ranges
-"$x and ${expr}"   interpolation (bare var; ${} for complex; lists space-joined)
-qw(a b c)          word list (full q// qq// quote ops available)
+1..10  'a'..'z'    ranges (int; string ranges 'a'..'z' deferred)
+"$x literal"       "..." is escaped, NOT interpolated ($ is literal)
+$"$x and ${expr}"  opt-in interpolation (bare var; ${} for complex; space-joined)
+'raw $x \n'        single-quote raw string (alias of q//)
+qw(a b c)          word list (full q// qq// $qq// quote ops available)
 /pat/  $s =~ /…/   regex literal + match (RE2); $1.. and match object
 $s =~ s/a/b/       in-place-feel substitution (rebinds; strings immutable)
 if $c { … }        paren-free, braces mandatory
@@ -174,9 +176,9 @@ sub merge($a, $b) {                                 # runs serially -> in-place 
 }
 
 sub report($s) {
-    say "requests ${$s.reqs}  ·  bytes ${$s.bytes}  ·  errors ${$s.errors}"
+    say $"requests ${$s.reqs}  ·  bytes ${$s.bytes}  ·  errors ${$s.errors}"
     let $top = sort(pairs($s.by_ip), |$a, $b| $b.value <=> $a.value)
-    say "  ${$_.value}\t${$_.key}" for $top[0..4]
+    say $"  ${$_.value}\t${$_.key}" for $top[0..4]
 }
 
 # serial:
@@ -189,7 +191,7 @@ report( reduce(pmap($ARGV, |$f| scan_file($f)), Stats(), merge) )
 One-liner form (needs the proposed `END`):
 
 ```
-drang -ne '$c[$1]++ if /^(\S+)/; END { for $ip in keys($c) { say "${$c[$ip]}\t$ip" } }' access.log
+drang -ne '$c[$1]++ if /^(\S+)/; END { for $ip in keys($c) { say $"${$c[$ip]}\t$ip" } }' access.log
 ```
 
 Why the parallel version is race-free: `scan_file` touches no shared mutable state; each returns a `Stats` partial that copy-on-send isolates; the `reduce`/`merge` runs serially on the main goroutine. The language offers no shared accumulator to mutate, so the racy version is unwriteable.
@@ -274,7 +276,7 @@ Still open:
 | Regex | RE2; callbacks; match object; literals as values | LOCKED |
 | Syntax | `.` `~` `[]`; newline-term; paren-free braces | LOCKED |
 | Loops | `for`-in + `while`; postfix modifiers; labels | LOCKED |
-| Quotes | Full `qw// q// qq//` | LOCKED |
+| Quotes | `qw// q// qq//`; `'...'` raw; opt-in interp `$"..." $qq// <<$TAG` | LOCKED v2 |
 | Subs | Signatures; closures; file modules | LOCKED |
 | Errors | `try`/`catch`; no string eval | LOCKED |
 | Exec | `os/exec` builtins, no shell | LOCKED |
@@ -1256,11 +1258,20 @@ correctly point *into* the function body, not the call site. Verified by
 
 ## 31. Build progress (2026-06-26) — string interpolation (the Perl soul)
 
-The LOCKED-but-deferred headline ergonomic, now real: `"$name"` splices a variable
-and `"${expr}"` any expression, with `\$` escaping a literal dollar.
+> **Superseded by string-literals v2 (opt-in interpolation).** This entry shipped
+> interpolation on the *bare* `"..."` form. v2 makes interpolation **opt-in**:
+> `"..."` is now escaped-but-literal (a `$` is just a dollar) and you opt in with
+> `$"..."`/`$qq{}`/`<<$TAG`. The mechanism below (parse-time desugaring to `~`, the
+> `interpolate` decoder) is unchanged — only the *trigger* moved from the bare
+> quote to the `$`-prefixed form (routed by a new `ISTRING` token). Read the example
+> below as `$"..."`. See the v2 tenet at §3.4 and the v2 build entry for details.
+
+The headline ergonomic: `$"$name"` splices a variable and `$"${expr}"` any
+expression, with `\$` escaping a literal dollar. (Pre-v2 this fired on bare
+`"..."`; the desugaring is identical.)
 
 ```
-say("Hello, $name! ${$n * $n} items, a literal \$n, nested ${ {a:7}.a }")
+say($"Hello, $name! ${$n * $n} items, a literal \$n, nested ${ {a:7}.a }")
 ```
 
 Design: interpolation is **parse-time desugaring to `~` concatenation** — no new AST
@@ -1406,7 +1417,7 @@ drang> fn sq($n) {
   ...> }
 drang> sq($x)
 100
-drang> "answer is ${sq($x) - 58}"
+drang> $"answer is ${sq($x) - 58}"
 answer is 42
 ```
 
@@ -1429,14 +1440,23 @@ qw//, q//qq//, heredocs) remain optional future work.
 
 ## 36. Build progress (2026-06-26) — Perl-soul quote operators + heredocs
 
+> **Amended by string-literals v2 (opt-in interpolation).** Under v2 `qq{}` is
+> escaped-but-**non**-interpolating (the interpolating cousin is `$qq{}`), `'...'`
+> joins `q{}` as a raw form, and heredocs interpolate only via `<<$TAG` — bare
+> `<<TAG`/`<<"TAG"` are escaped-no-interp. The lexer hook below is unchanged for
+> the bare forms; the v2 build adds the `$`-prefixed openers (emitting `ISTRING`).
+> Read the `qq`/`<<TAG` examples below as `$qq`/`<<$TAG`.
+
 Quote operators and heredocs — the deferred "Perl soul" text features.
 
 ```
 qw(red green blue)            # -> ["red", "green", "blue"]
 q{C:\Users\me\n literal}      # raw string: no interpolation, no escapes
-qq{she said "hi", ${1 + 2}}   # interpolated, flexible delimiters (no quote-escaping)
+'C:\Users\me\n literal'       # raw string: same as q{} (v2)
+qq{she said "hi", ${1 + 2}}   # v2: escaped, NON-interpolating ($qq{} to interpolate)
+$qq{she said "hi", ${1 + 2}}  # v2: escaped + interpolated, flexible delimiters
 
-$readme := <<~END             # heredoc; <<~ strips common indentation
+$readme := <<~$END            # heredoc; <<~ strips indent; <<$ opts into interp
     # $project
     version $ver
     END
@@ -1447,15 +1467,18 @@ it is `q`/`qq`/`qw` and is *immediately* followed by a delimiter, the body is re
 to the matching close (`( [ {` nest by depth; `/ |` run to the next one; no
 delimiter escaping by design — pick a non-conflicting or nesting delimiter).
 `qw`→`QW` token (parser splits on whitespace into an array), `q`→`RAWSTR` (literal
-StringLit), `qq`→`STRING` (reuses the existing interpolation path, so it behaves
-exactly like `"..."`). Because the trigger requires an immediately-following
-delimiter, `$qw` variables and identifiers like `queue` are unaffected.
+StringLit), `qq`→`STRING` (reuses the existing string path, so it behaves exactly
+like `"..."` — which under v2 means escaped-but-non-interpolating; `$qq{}` →
+`ISTRING` is the interpolating cousin). Because the trigger requires an
+immediately-following delimiter, `$qw` variables and identifiers like `queue` are
+unaffected.
 
-Heredocs (`<<TAG`) read the following lines up to a line equal to `TAG`: `<<TAG`/
-`<<"TAG"` interpolate, `<<'TAG'` is raw, `<<~TAG` strips the smallest common
-indentation (relative indentation preserved). The opener must be last on its line;
-after the terminator a NEWLINE is emitted so the statement closes and normal lexing
-resumes. Interpolated bodies reuse the same `interpolate` path as `qq`/`"..."`.
+Heredocs (`<<TAG`) read the following lines up to a line equal to `TAG`: under v2
+`<<TAG`/`<<"TAG"` are escaped-no-interp, `<<$TAG` interpolates, `<<'TAG'` is raw,
+`<<~TAG` strips the smallest common indentation (relative indentation preserved,
+combinable with all). The opener must be last on its line; after the terminator a
+NEWLINE is emitted so the statement closes and normal lexing resumes. Interpolating
+bodies (`<<$TAG`) reuse the same `interpolate` path as `$qq`/`$"..."`.
 
 Everything desugars to existing string/array AST, so walker-vs-VM parity holds for
 free (added to the parity corpus). Unterminated quotes/heredocs error cleanly (no
@@ -1493,7 +1516,7 @@ globals; JS's stateful/mutable RegExp):
 $id := qr/[a-z]\w*/i          # compiled-regex literal, with flags
 matches($s, $id)              # builtins accept a regex OR a string pattern
 match("k=42", qr{(\w+)=(\d+)})# capture groups returned as an array (no $1 globals)
-$re := re("$prefix\d+")      # re() compiles a dynamic pattern into a regex value
+$re := re($"$prefix\d+")     # re() compiles a dynamic pattern into a regex value
 ```
 
 What avoids the warts:
@@ -2314,3 +2337,49 @@ pass found nine real bugs, all now fixed with regression tests:
 Deferred (noted, not blocking 0.4): an AST-equality drop-guard for `drang fmt` (re-parse
 the output and structurally compare to the input, refusing to write on any mismatch) would
 defend against the *whole class* of printer bugs, beyond the one paren case fixed here.
+
+## 44. Build progress — string-literals v2 (opt-in interpolation)
+
+The biggest deliberate reversal in the language so far, and a signed-off override of
+four `[LOCKED]` entries. **Interpolation is now opt-in.** The motivation: the headline
+ergonomic of §31 made *every* `"..."` interpolate, which meant a literal `$` (prices,
+shell-ish text, `$PATH`, regex `$` anchors) needed `\$` escaping — a constant low-grade
+tax on the most common string form. v2 flips the default so the unmarked form is the
+safe, literal one and interpolation is a visible request.
+
+**The model:**
+- `"..."` — escaped (`\n \t \r \\ \" \$`, lenient-unknown), **no** interpolation. A `$`
+  is literal. `\$` still decodes to `$` (harmless redundancy here; load-bearing in the
+  interpolating forms).
+- `'...'` — **raw** string (no escapes, no interp), an exact alias of `q{...}`. This is
+  the new claim on `'`.
+- `q{...}` raw · `qq{...}` escaped-no-interp · `qw{...}` word-list — unchanged surface,
+  but `qq` no longer interpolates.
+- `$"..."`, `$qq{...}` — escaped **and** interpolated (the opt-in cousins). Inside:
+  `$name`, `${expr}`, `\$` suppresses.
+- Heredocs mirror the quotes: `<<TAG`/`<<"TAG"` escaped-no-interp, `<<$TAG` interpolating,
+  `<<'TAG'` raw, `<<~` dedent combinable with all (`<<~$TAG`).
+- Rejected: `$q{...}`, `$'...'` (dollar before a *raw* form is a contradiction) → clear
+  lex error.
+
+**Decisions recorded (the §0 sign-off, overriding prior `[LOCKED]` entries at the old
+3.2-Ranges / cheat-sheet / quote-op / heredoc lines):**
+- **`'...'` is a raw string** (alias of `q{...}`). The apostrophe is spent on raw strings,
+  not char literals.
+- **Char *literals* are abandoned.** drang has no scalar char type — strings are the rune
+  unit (§3.2) — so a distinct char literal was always an awkward fit.
+- **Char ranges `'a'..'z'` are re-specced as single-rune *string* ranges** and remain
+  **deferred** (not part of v2; `'...'` raw strings are all v2 ships on the `'` front).
+
+**Implementation (front-end + docs only; eval/VM untouched):** a new `ISTRING` token tags
+the interpolating forms; the lexer routes `$"`/`$qq{`/`<<$TAG` to it (recording the leading
+`$` in `Raw` for verbatim `fmt`). The parser splits the old fused `interpolate` into a
+shared escape decoder (used by `STRING`) plus the `$`-splice layer (used by `ISTRING`), so
+the escape table can't diverge and `\$` is consumed before `$`-splicing. The `Interp` AST
+node and both backends are byte-identical to §31 — only the *trigger* moved. The printer
+stays Raw-verbatim-first (every v2 form round-trips); fallbacks gained a `StrForm` flag so
+synthesized/`fix`-rewritten nodes regenerate the correct form class, so the `drang fix`
+mechanism is ready to host a v2 rule that rewrites pre-v2 interpolating `"..."`/`qq{}`/`<<TAG`
+into the `$`-forms — but that rule is deferred (the rule set currently ships empty). Every
+behavior-dependent migration site was in the Go test corpus; zero shipping `.dr` interpolates
+(prelude/examples/gen_manual use `format()`/`~`), so the runtime stdlib needed no migration.

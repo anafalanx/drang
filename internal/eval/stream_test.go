@@ -51,7 +51,7 @@ func TestStreamAutoSplit(t *testing.T) {
 }
 
 func TestStreamLineNumber(t *testing.T) {
-	got := streamOut(t, `$_ = "${nr}:${_}"`, "x\ny\nz\n", StreamOpts{AutoPrint: true})
+	got := streamOut(t, `$_ = $"${nr}:${_}"`, "x\ny\nz\n", StreamOpts{AutoPrint: true})
 	if got != "1:x\n2:y\n3:z\n" {
 		t.Errorf("got %q, want %q", got, "1:x\n2:y\n3:z\n")
 	}
@@ -59,7 +59,7 @@ func TestStreamLineNumber(t *testing.T) {
 
 func TestStreamBeginPersistsAcrossLines(t *testing.T) {
 	// BEGIN seeds an accumulator that survives every line (awk-style global).
-	got := streamOut(t, `BEGIN{ $n := 0 } $n = $n + 1; $_ = "${n}"`, "a\nb\nc\n", StreamOpts{AutoPrint: true})
+	got := streamOut(t, `BEGIN{ $n := 0 } $n = $n + 1; $_ = $"${n}"`, "a\nb\nc\n", StreamOpts{AutoPrint: true})
 	if got != "1\n2\n3\n" {
 		t.Errorf("got %q, want %q", got, "1\n2\n3\n")
 	}
@@ -69,7 +69,7 @@ func TestStreamEndRunsAfterLoop(t *testing.T) {
 	// END runs once after the loop with the accumulated value. Observe it via a file
 	// write (the path comes in through $ARGV, which RunStream seeds).
 	out := filepath.Join(t.TempDir(), "n.txt")
-	src := `BEGIN{ $n := 0 } $n = $n + 1; END{ write_file($ARGV[0], "${n}") }`
+	src := `BEGIN{ $n := 0 } $n = $n + 1; END{ write_file($ARGV[0], $"${n}") }`
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
@@ -97,7 +97,7 @@ func TestStreamFilesAndFilename(t *testing.T) {
 	if err := os.WriteFile(b, []byte("3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := parser.New(`$_ = "${file}|${nr}|${_}"`)
+	p := parser.New(`$_ = $"${file}|${nr}|${_}"`)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parse: %v", errs)

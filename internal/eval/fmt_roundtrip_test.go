@@ -24,7 +24,7 @@ func TestFmtRunEquality(t *testing.T) {
 	progs := append([]string{}, vmSubset...)
 	progs = append(progs,
 		`say([1, 2, 3] |> map(|$x| $x * 2) |> reduce(0, |$a, $b| $a + $b))`,
-		"$x := 5\nsay(\"v=$x ${$x + 1}\")",
+		"$x := 5\nsay($\"v=$x ${$x + 1}\")",
 		`say(qq{hi there})`,
 		`say(qw{a b c}[2])`,
 		`say(qr/abc/i)`,

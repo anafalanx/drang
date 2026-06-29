@@ -27,8 +27,11 @@ var corpus = []string{
 	`$x = $x + 1`,
 	`$a += 2`,
 	`say("hello")`,
-	`say("hi $name and ${1 + 2}")`,
-	`say(qq{a $b})`,
+	`say($"hi $name and ${1 + 2}")`, // opt-in interpolation
+	`say("lit $ stays")`,            // bare "..." is escaped, no interp: $ is literal
+	`say(qq{a $b})`,                 // qq{...} is now escaped-no-interp too
+	`say($qq{a $b})`,                // $qq{...} interpolates
+	`say('a $b \n')`,                // '...' raw: no escapes, no interp
 	`say(q{raw})`,
 	`say(qw{a b c})`,
 	`say(qr/foo/i)`,
@@ -69,6 +72,12 @@ var corpus = []string{
 	`$xs := ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo"]`,
 	`say("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "x")`,
 	`$m := {"alpha": 1, "bravo": 2, "charlie": 3, "delta": 4, "echo": 5, "foxtrot": 6, "golf": 7, "hotel": 8, "i": 9}`,
+	// heredocs: escaped-no-interp (<<TAG / <<"TAG"), raw (<<'TAG'), interpolating (<<$TAG, <<~$TAG)
+	"$t := <<END\nhi $x\nEND",
+	"$t := <<\"END\"\nhi $x\nEND",
+	"$t := <<'END'\nhi $x\nEND",
+	"$t := <<$END\nhi $x\nEND",
+	"$t := <<~$END\n  hi $x\n  END",
 }
 
 // TestReparseAndIdempotent is the core correctness invariant: formatted output must
@@ -193,7 +202,8 @@ func TestFormatGolden(t *testing.T) {
 		{"range", `1..10`, "1..10\n"},
 		{"defor", `a//b`, "a // b\n"},
 		{"qw", `qw{a b c}`, "qw{a b c}\n"},
-		{"interp", `"hi $name"`, "\"hi $name\"\n"},
+		{"interp", `$"hi $name"`, "$\"hi $name\"\n"},
+		{"dquote-noninterp", `"hi $name"`, "\"hi $name\"\n"}, // bare "..." round-trips verbatim (no interp)
 		{"lambda-expr-from-block", `|$x|{$x+1}`, "|$x| $x + 1\n"},
 		{"fn", `fn .f($x){return $x}`, "fn .f($x) {\n\treturn $x\n}\n"},
 		{"if-else", `if x{say(1)}else{say(2)}`, "if x {\n\tsay(1)\n} else {\n\tsay(2)\n}\n"},

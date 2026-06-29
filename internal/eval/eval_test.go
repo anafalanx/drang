@@ -59,14 +59,14 @@ say(.bump() |> .id())`, "1\n"},
 func TestInterpFaithful(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"literal-var-expr", `$x := 5
-say("v=$x ${$x + 1}")`, "v=5 6\n"},
+say($"v=$x ${$x + 1}")`, "v=5 6\n"},
 		{"leading-interp-forces-string", `$x := 7
-say("$x!")`, "7!\n"},
+say($"$x!")`, "7!\n"},
 		{"escaped-dollar", `$x := 1
-say("\$x is $x")`, "$x is 1\n"},
+say($"\$x is $x")`, "$x is 1\n"},
 		{"qq-interp", `$n := "bob"
-say(qq{hi $n})`, "hi bob\n"},
-		{"closure-captures-interp-var", `fn .make($x) { || "got $x" }
+say($qq{hi $n})`, "hi bob\n"},
+		{"closure-captures-interp-var", `fn .make($x) { || $"got $x" }
 $f := .make(42)
 say($f())`, "got 42\n"},
 	}

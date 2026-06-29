@@ -61,10 +61,10 @@ drang&gt; exit</code></pre>
 <pre><code>build
 [x.dr, y.dr]</code></pre>
 <h3 id="a-taste">A taste</h3>
-<p>Variables are declared with <code>:=</code> (a lexical) or <code>::=</code> (a frozen top-level constant); plain <code>=</code> reassigns. Builtins are called with parentheses, strings interpolate bare <code>$var</code> (or <code>${ expr }</code> for anything complex), and data nests transparently with <code>.</code> and <code>[]</code>:</p>
+<p>Variables are declared with <code>:=</code> (a lexical) or <code>::=</code> (a frozen top-level constant); plain <code>=</code> reassigns. Builtins are called with parentheses, <code>$</code>-prefixed strings interpolate bare <code>$var</code> (or <code>${ expr }</code> for anything complex), and data nests transparently with <code>.</code> and <code>[]</code>:</p>
 <pre><code class="language-drang">$d := {users: [{name: "ada"}, {name: "alan"}]}
 say($d.users[1].name)
-say("count: ${len($d.users)}")</code></pre>
+say($"count: ${len($d.users)}")</code></pre>
 <pre><code>alan
 count: 2</code></pre>
 <p>Subroutines use <code>fn</code> and carry a leading-dot sigil (<code>fn .name</code>, called <code>.name</code>, more on the three name sigils later), are first-class values, and pair with the higher-order combinators (<code>map</code>, <code>filter</code>, <code>reduce</code>, …) using <code>|args| body</code> lambdas. Loops are <code>for</code>-in over ranges, with postfix modifiers for one-liners:</p>
@@ -207,9 +207,14 @@ $x++</code></pre>
 line 2: unexpected PLUS "+"</code></pre>
 <hr>
 <h2 id="strings">Strings</h2>
-<p>drang strings are UTF-8 text. The most common form is a double-quoted literal, which both processes escapes and interpolates <code>$</code> expressions. Several quote operators and heredocs give you raw, interpolated, and word-list variants.</p>
+<p>drang strings are UTF-8 text. The most common form is a double-quoted literal, which processes escapes but <strong>does not interpolate</strong>: a <code>$</code> inside <code>"..."</code> is just a dollar sign. Interpolation is <strong>opt-in</strong>: you ask for it with a <code>$</code>-prefixed form (<code>$"..."</code>, <code>$qq{...}</code>, or a <code>&lt;&lt;$TAG</code> heredoc). Single-quoted <code>'...'</code> strings are raw. Several quote operators and heredocs round out the raw / escaped / interpolated / word-list variants.</p>
 <h3 id="string-literals-and-the-lenient-escape-policy">String literals and the lenient escape policy</h3>
 <p>Inside <code>"..."</code>, exactly five escapes are decoded: <code>\n</code>, <code>\t</code>, <code>\r</code>, <code>\\</code>, and <code>\"</code>. Any other backslash escape is <strong>left intact</strong>: the backslash and the following character are kept verbatim. This "lenient" policy is deliberate: it makes regex classes and Windows paths far less painful, since you don't have to double every backslash.</p>
+<p>Because <code>"..."</code> does not interpolate, a literal dollar needs no escaping; it just works:</p>
+<pre><code class="language-drang">say("price is $5")
+say("$x is not a variable here")</code></pre>
+<pre><code>price is $5
+$x is not a variable here</code></pre>
 <pre><code class="language-drang">say("a\tb\nc")
 say("\d+")</code></pre>
 <pre><code>a	b
@@ -220,39 +225,54 @@ c
 <pre><code class="language-drang">say("C:\dir\new")</code></pre>
 <pre><code>C:\dir
 ew</code></pre>
-<p>Here <code>\d</code> stayed literal but <code>\new</code> became <code>\</code> + a newline + <code>ew</code>. For paths use a raw quote operator (<code>q{...}</code>, below) or build the path with <code>join</code>.</p>
-<h3 id="interpolation">Interpolation</h3>
-<p>A <code>$name</code> splices a variable's value; <code>${expr}</code> splices any expression. Escape a literal dollar with <code>\$</code>.</p>
+<p>Here <code>\d</code> stayed literal but <code>\new</code> became <code>\</code> + a newline + <code>ew</code>. For paths use a raw string (<code>'...'</code> or <code>q{...}</code>, below) or build the path with <code>join</code>.</p>
+<p>The decoded escapes, in full:</p>
+<table><thead><tr><th>Escape</th><th>Result</th></tr></thead><tbody><tr><td><code>\n</code></td><td>newline</td></tr><tr><td><code>\t</code></td><td>tab</td></tr><tr><td><code>\r</code></td><td>carriage return</td></tr><tr><td><code>\\</code></td><td>backslash</td></tr><tr><td><code>\"</code></td><td>double quote</td></tr><tr><td><code>\$</code></td><td>dollar sign</td></tr><tr><td>any other <code>\x</code></td><td>kept verbatim (<code>\</code> + <code>x</code>)</td></tr></tbody></table>
+<p><code>\$</code> decodes to a literal <code>$</code>. In a <code>"..."</code> string the <code>$</code> is already literal, so <code>\$</code> and <code>$</code> are equivalent there; <code>\$</code> earns its keep in the interpolating forms below, where it suppresses interpolation. The same escape table applies to <code>"..."</code>, <code>qq{...}</code>, <code>&lt;&lt;TAG</code>/<code>&lt;&lt;"TAG"</code> heredocs, and their interpolating cousins <code>$"..."</code>, <code>$qq{...}</code>, <code>&lt;&lt;$TAG</code>. The raw forms (<code>'...'</code>, <code>q{...}</code>, <code>&lt;&lt;'TAG'</code>) decode nothing at all.</p>
+<h3 id="interpolation-opt-in">Interpolation (opt-in)</h3>
+<p>A plain <code>"..."</code> does not interpolate. To splice variables and expressions into a string, prefix it with <code>$</code>: a <code>$"..."</code> string is escaped <strong>and</strong> interpolated. Inside it, <code>$name</code> splices a variable's value and <code>${expr}</code> splices any expression. Escape a literal dollar with <code>\$</code>.</p>
 <pre><code class="language-drang">$x := 42
 say("x is $x")
-say("sum=${$x + 4}")
-say("\$x stays literal, $x splices")</code></pre>
-<pre><code>x is 42
+say($"x is $x")
+say($"sum=${$x + 4}")
+say($"\$x stays literal, $x splices")</code></pre>
+<pre><code>x is $x
+x is 42
 sum=46
 $x stays literal, 42 splices</code></pre>
+<p>Note the first line: the bare <code>"x is $x"</code> printed the dollar literally; only the <code>$</code>-prefixed form interpolated.</p>
 <p><code>${...}</code> can hold arithmetic, calls, and indexing:</p>
 <pre><code class="language-drang">$a := [10, 20, 30]
-say("second is ${$a[1]}")</code></pre>
+say($"second is ${$a[1]}")</code></pre>
 <pre><code>second is 20</code></pre>
-<p>One limitation: a <code>${...}</code> body cannot itself contain a double-quoted string while inside a <code>"..."</code> literal. The nested <code>"</code> confuses brace matching and you get an <code>unterminated ${...}</code> parse error. Reach for <code>qq{...}</code> (a different delimiter) when the interpolated expression needs a string literal:</p>
-<pre><code class="language-drang">say(qq{up is ${upper("hi")}})</code></pre>
+<p>One limitation: a <code>${...}</code> body cannot itself contain a double-quoted string while inside a <code>$"..."</code> literal. The nested <code>"</code> confuses brace matching and you get an <code>unterminated ${...}</code> parse error. Reach for <code>$qq{...}</code> (a different delimiter) when the interpolated expression needs a string literal:</p>
+<pre><code class="language-drang">say($qq{up is ${upper("hi")}})</code></pre>
 <pre><code>up is HI</code></pre>
+<h3 id="raw-strings">Raw strings (<code>'...'</code>)</h3>
+<p>A single-quoted <code>'...'</code> string is <strong>raw</strong>: no escapes, no interpolation, every byte verbatim (it may span newlines). It is an exact alias of <code>q{...}</code> (below), and the clean choice for Windows paths and regexes:</p>
+<pre><code class="language-drang">say('a $b and \n stay literal')
+say('C:\Users\new\tmp')</code></pre>
+<pre><code>a $b and \n stay literal
+C:\Users\new\tmp</code></pre>
+<p>There is no escape for the delimiter, so a <code>'...'</code> string cannot contain a <code>'</code>; use <code>q{...}</code> (or <code>q( )</code>, <code>q[ ]</code>) when the body has a single quote.</p>
 <h3 id="quote-operators">Quote operators</h3>
 <p>Three quote operators avoid escaping gymnastics. The delimiter follows the operator with <strong>no space</strong>; allowed delimiters are <code>( [ { / |</code>. The paired ones (<code>()</code>, <code>[]</code>, <code>{}</code>) <strong>nest</strong>; <code>/</code> and <code>|</code> simply run to the next matching delimiter.</p>
-<ul><li><strong><code>q{...}</code></strong>: raw. No interpolation, no escape processing at all.</li><li><strong><code>qq{...}</code></strong>: interpolated, exactly like <code>"..."</code>.</li><li><strong><code>qw{...}</code></strong>: whitespace-split word list, producing an <strong>array</strong>.</li></ul>
+<ul><li><strong><code>q{...}</code></strong>: raw. No interpolation, no escape processing at all (the same as <code>'...'</code>).</li><li><strong><code>qq{...}</code></strong>: escaped, <strong>no</strong> interpolation, like <code>"..."</code>, just with flexible delimiters.</li><li><strong><code>$qq{...}</code></strong>: escaped <strong>and</strong> interpolated: the opt-in interpolating form of <code>qq</code> (like <code>$"..."</code>).</li><li><strong><code>qw{...}</code></strong>: whitespace-split word list, producing an <strong>array</strong>.</li></ul>
 <pre><code class="language-drang">$x := 9
 say(q{no $x interp, \n stays literal})
-say(qq{x=$x and a \t tab})
+say(qq{x=$x stays literal, a \t tab})
+say($qq{x=$x interpolates})
 say(qw{red green blue})</code></pre>
 <pre><code>no $x interp, \n stays literal
-x=9 and a 	 tab
+x=$x stays literal, a 	 tab
+x=9 interpolates
 [red, green, blue]</code></pre>
 <p><code>q{...}</code> is the clean way to write a Windows path or a regex with backslashes:</p>
 <pre><code class="language-drang">say(q(C:\Users\new\tmp))</code></pre>
 <pre><code>C:\Users\new\tmp</code></pre>
-<p>Nesting and alternate delimiters:</p>
+<p>Nesting and alternate delimiters (the <code>$</code> opt-in works with every delimiter):</p>
 <pre><code class="language-drang">say(q{outer {inner} done})
-say(qq|x is ${3 + 4}|)</code></pre>
+say($qq|x is ${3 + 4}|)</code></pre>
 <pre><code>outer {inner} done
 x is 7</code></pre>
 <p><code>qw{...}</code> is a real array: splits on runs of whitespace and works with the usual array tools:</p>
@@ -265,14 +285,19 @@ two
 a+b+c</code></pre>
 <p>Note: the quote body is taken literally: there is no backslash escaping of the delimiter itself, so pick a delimiter the content avoids (or a nesting paired one).</p>
 <h3 id="heredocs">Heredocs</h3>
-<p>A heredoc starts with <code>&lt;&lt;TAG</code> and runs on the following lines until a line equal to <code>TAG</code>. The opener <strong>must be the last thing on its line</strong>. Forms:</p>
-<ul><li><strong><code>&lt;&lt;END</code></strong> and <strong><code>&lt;&lt;"END"</code></strong>: interpolate, like <code>qq</code>/<code>"..."</code>.</li><li><strong><code>&lt;&lt;'END'</code></strong>: raw, like <code>q</code>.</li><li><strong><code>&lt;&lt;~END</code></strong>: strips the common leading indentation of the body (the terminator may be indented too).</li></ul>
+<p>A heredoc starts with <code>&lt;&lt;TAG</code> and runs on the following lines until a line equal to <code>TAG</code>. The opener <strong>must be the last thing on its line</strong>. Heredocs mirror the quote forms; interpolation is opt-in here too, via a <code>$</code> on the tag:</p>
+<ul><li><strong><code>&lt;&lt;END</code></strong> and <strong><code>&lt;&lt;"END"</code></strong>: escaped, <strong>no</strong> interpolation (like <code>"..."</code>/<code>qq</code>).</li><li><strong><code>&lt;&lt;$END</code></strong>: escaped <strong>and</strong> interpolated (like <code>$"..."</code>/<code>$qq</code>).</li><li><strong><code>&lt;&lt;'END'</code></strong>: raw, no escapes or interpolation (like <code>'...'</code>/<code>q</code>).</li><li><strong><code>&lt;&lt;~END</code></strong>: strips the common leading indentation of the body (the terminator may be indented too); combines with any of the above (e.g. <code>&lt;&lt;~$END</code>).</li></ul>
 <pre><code class="language-drang">$name := "world"
-$msg := &lt;&lt;END
+$msg := &lt;&lt;$END
 Hello, $name!
 Sum is ${2 + 3}.
 END
 say($msg)
+
+$lit := &lt;&lt;END
+Literal $name here, no interp.
+END
+say($lit)
 
 $raw := &lt;&lt;'END'
 Literal $name and \n here.
@@ -281,8 +306,10 @@ say($raw)</code></pre>
 <pre><code>Hello, world!
 Sum is 5.
 
+Literal $name here, no interp.
+
 Literal $name and \n here.</code></pre>
-<p>(A non-empty body keeps a trailing newline, which is why a blank line follows each block above.) The dedenting form <code>&lt;&lt;~END</code> removes the smallest shared indent; extra indentation is preserved relative to it:</p>
+<p>(A non-empty body keeps a trailing newline, which is why a blank line follows each block above.) The dedenting form <code>&lt;&lt;~END</code> removes the smallest shared indent; extra indentation is preserved relative to it (combine with <code>$</code> for an interpolating dedented heredoc, <code>&lt;&lt;~$END</code>):</p>
 <pre><code class="language-drang">$body := &lt;&lt;~END
     line one
       line two (extra indent)
@@ -848,7 +875,7 @@ say(find_all("a1b2", qr/\d/))</code></pre>
 <p>In <code>gsub</code>, the <strong>replacement</strong> string uses Go's <code>$1</code> / <code>${name}</code> substitution (this is replacement-side substitution, not a pattern backreference, RE2 has none of those):</p>
 <pre><code class="language-drang">say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))</code></pre>
 <pre><code>26/06/2026</code></pre>
-<p>For <code>${name}</code> references, name the groups with RE2's <code>(?P&lt;name&gt;...)</code> syntax. Beware: a <code>"..."</code> double-quoted replacement is interpolated by drang first, so use a non-interpolating literal (<code>q{...}</code>) to keep the <code>${...}</code> intact for <code>gsub</code>:</p>
+<p>For <code>${name}</code> references, name the groups with RE2's <code>(?P&lt;name&gt;...)</code> syntax. A plain <code>"..."</code> (or <code>q{...}</code>) replacement is non-interpolating, so its <code>${...}</code> reaches <code>gsub</code> intact. Beware only the opt-in interpolating forms: a <code>$"..."</code> or <code>$qq{...}</code> replacement is interpolated by drang first and would consume the <code>${...}</code> before <code>gsub</code> sees it. Use a non-interpolating literal here:</p>
 <pre><code class="language-drang">say(gsub("john smith", qr/(?P&lt;first&gt;\w+) (?P&lt;last&gt;\w+)/, q{${last}, ${first}}))</code></pre>
 <pre><code>smith, john</code></pre>
 <h3 id="bad-patterns-are-catchable-errors">Bad patterns are catchable errors</h3>
@@ -869,9 +896,9 @@ say(is_err($e))</code></pre>
 <h3 id="run-execute-and-stream-stdio"><code>run</code>: execute and stream stdio</h3>
 <p><code>run(cmd, args..., {opts}?)</code> runs a command with the child's stdin/stdout/stderr wired straight through to drang's. It returns <code>true</code> on success (so it composes with <code>if</code> and <code>//</code>) or an <code>Err</code> on failure.</p>
 <pre><code class="language-drang">$ok := run("cmd", "/c", "exit 0")
-say("success returns true: $ok")
+say($"success returns true: $ok")
 $bad := run("cmd", "/c", "exit 5")
-say("failure is_err: ${is_err($bad)}  code: ${err_code($bad)}")</code></pre>
+say($"failure is_err: ${is_err($bad)}  code: ${err_code($bad)}")</code></pre>
 <pre><code>success returns true: true
 failure is_err: true  code: 5</code></pre>
 <p>Array arguments are <strong>flattened one level</strong>, so you can build an argv list and splat it: <code>run("git", ["log", "--oneline"])</code>.</p>
@@ -880,24 +907,24 @@ failure is_err: true  code: 5</code></pre>
 <pre><code class="language-drang">$ver := capture("cmd", "/c", "ver")
 say($ver)
 $where := capture("where", "cmd")
-say("where cmd -&gt; $where")</code></pre>
+say($"where cmd -&gt; $where")</code></pre>
 <pre><code>Microsoft Windows [Version 10.0.26200.6899]
 where cmd -&gt; C:\Windows\System32\cmd.exe</code></pre>
 <h3 id="pipe-a-pipeline-no-shell"><code>pipe</code>: a pipeline, no shell</h3>
 <p><code>pipe([cmd, args...], [cmd, args...], ..., {opts}?)</code> wires each stage's stdout to the next stage's stdin through real OS pipes (streamed, not buffered between stages). Each stage is an array. It returns the <strong>last stage's trimmed stdout</strong>. This is native <code>os/exec</code> wiring. There is still no shell.</p>
 <pre><code class="language-drang">$out := pipe(["cmd", "/c", "echo apple&amp; echo banana&amp; echo cherry"],
              ["findstr", "an"])
-say("pipe -&gt; $out")</code></pre>
+say($"pipe -&gt; $out")</code></pre>
 <pre><code>pipe -&gt; banana</code></pre>
 <p>(For genuine shell features: globbing, <code>&amp;&amp;</code>, redirection, invoke <code>cmd /c "..."</code> yourself as a single stage.)</p>
 <h3 id="options-cwd-env-stdin-timeout">Options: <code>{cwd, env, stdin, timeout}</code></h3>
 <p>A trailing map sets per-command options on <code>run</code>, <code>capture</code>, <code>pipe</code>, and <code>each_line</code>. <code>env</code> is <strong>overlaid</strong> onto the inherited environment (matched case-insensitively, per Windows); <code>timeout</code> is in <strong>milliseconds</strong> and <code>0</code> means no limit.</p>
 <pre><code class="language-drang">$dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
-say("cwd -&gt; $dir")
+say($"cwd -&gt; $dir")
 $e := capture("cmd", "/c", "echo", "%GREETING%", {env: {GREETING: "hi there"}})
-say("env -&gt; $e")
+say($"env -&gt; $e")
 $s := capture("findstr", "world", {stdin: "hello\nworld\nfoo\n"})
-say("stdin -&gt; $s")</code></pre>
+say($"stdin -&gt; $s")</code></pre>
 <pre><code>cwd -&gt; C:\Windows
 env -&gt; hi there
 stdin -&gt; world</code></pre>
@@ -905,11 +932,11 @@ stdin -&gt; world</code></pre>
 <h3 id="error-codes-124-timeout-and-127-cannot-start">Error codes: 124 (timeout) and 127 (cannot start)</h3>
 <p>Two exit codes are synthesized, matching GNU <code>timeout</code>/shell conventions. On <strong>timeout</strong> the whole process <em>tree</em> is killed (not just the direct child, so a <code>cmd /c &lt;spawner&gt;</code> whose grandchild holds the pipe can't keep the call blocked):</p>
 <pre><code class="language-drang">$r := run("cmd", "/c", "ping -n 5 127.0.0.1 &gt;NUL", {timeout: 300})
-say("is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
+say($"is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
 <pre><code>is_err: true  code: 124</code></pre>
 <p>When a command <strong>cannot be started</strong> (not found, not executable), the code is <code>127</code>:</p>
 <pre><code class="language-drang">$r := run("no_such_program_xyz")
-say("code: ${err_code($r)}  msg: ${err_msg($r)}")</code></pre>
+say($"code: ${err_code($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>code: 127  msg: no_such_program_xyz: exec: "no_such_program_xyz": executable file not found in %PATH%</code></pre>
 <p><code>pipe</code> follows bash's pipeline semantics: <code>127</code> if a stage can't start, <code>124</code> on timeout, otherwise the <strong>last</strong> stage's exit code.</p>
 <h3 id="each_line-stream-output-line-by-line"><code>each_line</code>: stream output line by line</h3>
@@ -917,9 +944,9 @@ say("code: ${err_code($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code class="language-drang">$n := 0
 each_line("cmd", "/c", "echo one&amp; echo two&amp; echo three", |$line| {
   $n = $n + 1
-  say("[$n] $line")
+  say($"[$n] $line")
 })
-say("total lines: $n")</code></pre>
+say($"total lines: $n")</code></pre>
 <pre><code>[1] one
 [2] two
 [3] three
@@ -927,15 +954,15 @@ total lines: 3</code></pre>
 <h3 id="start-a-detached-process-handle"><code>start</code>: a detached process handle</h3>
 <p><code>start(cmd, args...)</code> launches a child <strong>without waiting</strong> (the equivalent of <code>cmd &amp;</code>), with stdio detached, and returns a process handle. Three builtins act on it: <code>pid(p)</code> reads the PID, <code>await(p)</code> blocks for its exit status (<code>true</code>, or an <code>Err</code> with the code), and <code>kill(p)</code> terminates the whole tree.</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "exit 3")
-say("pid &gt; 0: ${pid($p) &gt; 0}")
+say($"pid &gt; 0: ${pid($p) &gt; 0}")
 $status := await($p)
-say("await -&gt; is_err: ${is_err($status)}  code: ${err_code($status)}")</code></pre>
+say($"await -&gt; is_err: ${is_err($status)}  code: ${err_code($status)}")</code></pre>
 <pre><code>pid &gt; 0: true
 await -&gt; is_err: true  code: 3</code></pre>
 <p><code>kill</code> works on a still-running process; its pending <code>await</code> then yields an error:</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "ping -n 30 127.0.0.1 &gt;NUL")
 kill($p)
-say("after kill, is_err: ${is_err(await($p))}")</code></pre>
+say($"after kill, is_err: ${is_err(await($p))}")</code></pre>
 <pre><code>after kill, is_err: true</code></pre>
 <hr>
 <h2 id="in-language-concurrency">In-language concurrency</h2>
@@ -945,12 +972,12 @@ say("after kill, is_err: ${is_err(await($p))}")</code></pre>
 <pre><code class="language-drang">fn .work($n) { $n * 2 }
 $tasks := [1, 2, 3, 4] |&gt; map(|$n| spawn(.work, $n))
 $results := $tasks |&gt; map(|$t| await($t))
-say("fan-out: $results")</code></pre>
+say($"fan-out: $results")</code></pre>
 <pre><code>fan-out: [2, 4, 6, 8]</code></pre>
 <p>An error inside a spawned task (returned, <code>?</code>-propagated, or panicked) is captured and surfaced by <code>await</code>, so <code>await($t)?</code> propagates and <code>await($t) // x</code> recovers:</p>
 <pre><code class="language-drang">fn .boom() { fail("worker failed") }
 $res := await(spawn(.boom))
-say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")</code></pre>
+say($"is_err: ${is_err($res)}  msg: ${err_msg($res)}")</code></pre>
 <pre><code>is_err: true  msg: worker failed</code></pre>
 <h3 id="channels-chan-send-recv-recv_ok-close-drain">Channels: <code>chan</code> / <code>send</code> / <code>recv</code> / <code>recv_ok</code> / <code>close</code> / <code>drain</code></h3>
 <p><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> a buffered one. A channel is the one intentionally <em>shared</em> value type. <code>send</code> blocks until received (and copies the value, copy-on-send); <code>recv</code> blocks for the next value (and yields <code>undef</code> once the channel is closed and drained); <code>recv_ok</code> returns <code>[value, ok]</code>; <code>close</code> is idempotent; <code>drain</code> collects every remaining value into an array, blocking until the channel is closed.</p>
@@ -962,7 +989,7 @@ fn .produce($ch) {
 $t := spawn(.produce, $c)
 $all := drain($c)
 await($t)
-say("drained: $all")</code></pre>
+say($"drained: $all")</code></pre>
 <pre><code>drained: [10, 20, 30]</code></pre>
 <pre><code class="language-drang">$c := chan()
 fn .worker($ch) {
@@ -971,10 +998,10 @@ fn .worker($ch) {
   close($ch)
 }
 $t := spawn(.worker, $c)
-say("recv: ${recv($c)}")
+say($"recv: ${recv($c)}")
 $pair := recv_ok($c)
-say("recv_ok: $pair")
-say("after close, undef: ${not recv($c)}")
+say($"recv_ok: $pair")
+say($"after close, undef: ${not recv($c)}")
 await($t)</code></pre>
 <pre><code>recv: first
 recv_ok: [second, true]
@@ -983,7 +1010,7 @@ after close, undef: true</code></pre>
 <h3 id="pmap-parallel-map-across-cpu-cores"><code>pmap</code>: parallel map across CPU cores</h3>
 <p><code>pmap(arr, fn)</code> is the high-level workhorse: the same contract as <code>map</code> (array-first so <code>$xs |&gt; pmap(f)</code> composes; element + optional index callback; results in <strong>input order</strong>; fail-loud on the first <code>Err</code>), but fanned across a bounded <code>NumCPU</code> worker pool for <strong>true parallelism</strong>.</p>
 <pre><code class="language-drang">$squares := [1, 2, 3, 4, 5] |&gt; pmap(|$x| $x * $x)
-say("pmap squares: $squares")</code></pre>
+say($"pmap squares: $squares")</code></pre>
 <pre><code>pmap squares: [1, 4, 9, 16, 25]</code></pre>
 <p>The win is real, not cooperative. Four <code>ping -n 3</code> calls (each ~2s of wall time), <code>map</code> vs <code>pmap</code>, measured end-to-end:</p>
 <pre><code>serial (map):    8.14s
@@ -994,8 +1021,8 @@ $out := pmap($rows, |$row| {
   push($row, 99)   # mutates the worker's COPY
   len($row)
 })
-say("callback saw lengths: $out")
-say("original rows unchanged: $rows")</code></pre>
+say($"callback saw lengths: $out")
+say($"original rows unchanged: $rows")</code></pre>
 <pre><code>callback saw lengths: [2, 2, 2]
 original rows unchanged: [[1], [2], [3]]</code></pre>
 <p>The language deliberately offers no shared accumulator to reduce into, so the canonical racy form is largely unwriteable. Mutating a <em>captured mutable lexical container</em> from a parallel callback is documented-undefined. Keep callbacks pure.</p>
@@ -1003,7 +1030,7 @@ original rows unchanged: [[1], [2], [3]]</code></pre>
 <pre><code class="language-drang">$r := pmap([1, 2, 3], |$x| {
   if $x == 2 { fail("boom on 2") } else { $x }
 })
-say("is_err: ${is_err($r)}  msg: ${err_msg($r)}")</code></pre>
+say($"is_err: ${is_err($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>is_err: true  msg: boom on 2</code></pre>
 <p>Parallel subprocesses are just <code>pmap</code> over commands: each call gets its own <code>{timeout}</code>/<code>cwd</code>/<code>env</code> and runs lock-free:</p>
 <pre><code class="language-drang">$versions := ["git", "go", "node"] |&gt; pmap(|$tool| capture($tool, "--version") // "(missing)")</code></pre>
@@ -1363,7 +1390,7 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <p>Transport failure → catchable Err (a <code>timeout</code> carries <code>err_code</code> 124); an HTTP status (incl. 4xx/5xx) is data in the returned <code>{status, ok, body, headers, url}</code> map. <code>opts</code>: <code>headers</code>, <code>body</code>, <code>json</code>, <code>timeout</code> (ms; 0=∞), <code>redirects</code> (0=don't follow), <code>max_body</code> (0=∞), <code>insecure</code>. Defaults: 30s timeout, follow ≤10 redirects, TLS on, 32 MiB body cap.</p>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>http</code></td><td><code>http(method, url, opts?)</code></td><td>Request with any method; the primitive.</td></tr><tr><td><code>http_get</code></td><td><code>http_get(url, opts?)</code></td><td>GET.</td></tr><tr><td><code>http_post</code></td><td><code>http_post(url, body, opts?)</code></td><td>POST a string body (use <code>http(..., {json: x})</code> for JSON).</td></tr></tbody></table>
 <h3 id="system">System</h3>
-<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>sys_gc</code></td><td><code>sys_gc(mode)</code></td><td>Tune the GC (<code>off</code>/<code>lean</code>/<code>normal</code>/<code>relaxed</code>, or a GOGC int); returns the previous percent.</td></tr><tr><td><code>cwd</code></td><td><code>cwd()</code></td><td>Current working directory as a native path.</td></tr><tr><td><code>env</code></td><td><code>env(name, default?)</code></td><td>Process env var (case-insensitive on Windows); <code>default</code> or nil if unset.</td></tr><tr><td><code>os</code></td><td><code>os()</code></td><td>Operating system name (<code>windows</code>/<code>darwin</code>/<code>linux</code>/…).</td></tr><tr><td><code>arch</code></td><td><code>arch()</code></td><td>CPU architecture (<code>amd64</code>/<code>arm64</code>/…).</td></tr><tr><td><code>home</code></td><td><code>home()</code></td><td>Current user's home directory; failure → Err.</td></tr><tr><td><code>parse_args</code></td><td><code>parse_args(argv, value_opts?)</code></td><td>Parse an argv array into a flat map: <code>--flag</code>→<code>true</code>, <code>--key=val</code>/<code>--key val</code> (if <code>key</code> is in <code>value_opts</code>)→string, positionals under <code>"_"</code>.</td></tr></tbody></table>
+<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>sys_gc</code></td><td><code>sys_gc(mode)</code></td><td>Tune the GC (<code>off</code>/<code>lean</code>/<code>normal</code>/<code>relaxed</code>, or a GOGC int); returns the previous percent.</td></tr><tr><td><code>cwd</code></td><td><code>cwd()</code></td><td>Current working directory as a native path.</td></tr><tr><td><code>env</code></td><td><code>env(name, default?)</code></td><td>Process env var (case-insensitive on Windows); <code>default</code> or nil if unset.</td></tr><tr><td><code>os</code></td><td><code>os()</code></td><td>Operating system name (<code>windows</code>/<code>darwin</code>/<code>linux</code>/…).</td></tr><tr><td><code>arch</code></td><td><code>arch()</code></td><td>CPU architecture (<code>amd64</code>/<code>arm64</code>/…).</td></tr><tr><td><code>home</code></td><td><code>home()</code></td><td>Current user's home directory; failure → Err.</td></tr><tr><td><code>exe</code></td><td><code>exe()</code></td><td>Path of the running drang executable (find your own install location); failure → Err.</td></tr><tr><td><code>is_terminal</code></td><td><code>is_terminal(stream?)</code></td><td>Whether <code>stream</code> (<code>stdin</code> default, <code>stdout</code>, <code>stderr</code>) is a terminal vs a pipe/file.</td></tr><tr><td><code>parse_args</code></td><td><code>parse_args(argv, value_opts?)</code></td><td>Parse an argv array into a flat map: <code>--flag</code>→<code>true</code>, <code>--key=val</code>/<code>--key val</code> (if <code>key</code> is in <code>value_opts</code>)→string, positionals under <code>"_"</code>.</td></tr></tbody></table>
 <h3 id="date-time">Date &amp; time</h3>
 <p>A point in time is epoch seconds (a float); see the Date-and-time chapter. <code>strftime</code>/<code>parse_time</code>/<code>date_parts</code> take an optional trailing <code>{utc: true}</code> map (local time otherwise).</p>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>now</code></td><td><code>now()</code></td><td>Current time as epoch seconds (float).</td></tr><tr><td><code>sleep</code></td><td><code>sleep(secs)</code></td><td>Pause for <code>secs</code> seconds (fractional ok).</td></tr><tr><td><code>strftime</code></td><td><code>strftime(epoch, fmt, {utc}?)</code></td><td>Format an epoch via <code>%</code>-codes (local, or UTC).</td></tr><tr><td><code>parse_time</code></td><td><code>parse_time(str, fmt, {utc}?)</code></td><td>Parse a string back to an epoch, or Err.</td></tr><tr><td><code>date_parts</code></td><td><code>date_parts(epoch, {utc}?)</code></td><td>Map of <code>year month day hour minute second weekday yearday</code>.</td></tr></tbody></table>
@@ -1401,7 +1428,7 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
   say(format("%d", 5))                          # error: format: template has 0 placeholder(s) but got 1 argument(s)</code></pre>
 <p>There is no <code>sprintf</code> (<code>unknown function</code>); <code>format</code> is the only string-formatting builtin.</p>
 <h3 id="also-absent-from-designmd-not-yet-built">Also absent (from DESIGN.md, not yet built)</h3>
-<p><code>sh()</code> shell escape, char ranges (<code>'a'..'z'</code>), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, <code>map($xs, basename)</code>, now <em>do</em> work; see "Functions and builtins are first-class values".)</p>
+<p><code>sh()</code> shell escape, string ranges (<code>'a'..'z'</code>: single-rune <strong>string</strong> ranges; drang has no char type, so <code>'a'..'z'</code> is a range of one-character strings, not chars), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, <code>map($xs, basename)</code>, now <em>do</em> work; see "Functions and builtins are first-class values".)</p>
 </div></main>
 <footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.4 · built by drang</div></footer>
 <script src="site.js"></script>

@@ -5,10 +5,12 @@
 // $var, ident, ')', '}', ']', or '?') and we are not inside '(' or '[' (so long
 // expressions and |> pipelines wrap across lines freely). ';' also terminates.
 //
-// Supported: string interpolation ("$x"/"${expr}"); the q/qq/qw quote operators
-// (raw / interpolated / word-list, with ( [ { / | delimiters); heredocs
-// (<<TAG, <<"TAG", <<'TAG', <<~TAG); and qr// / qr|| regex literals (a compiled
-// regex value type).
+// Strings are opt-in for interpolation. Escaped-no-interp forms ("...", qq{...},
+// <<TAG, <<"TAG") emit STRING; raw forms (q{...}, '...', <<'TAG') emit RAWSTR;
+// interpolating forms ($"...", $qq{...}, <<$TAG) emit ISTRING and are spliced by
+// the parser. Also supported: the q/qq/qw quote operators (with ( [ { / | delimiters);
+// heredocs (<<TAG, <<"TAG", <<'TAG', <<$TAG, <<~TAG); and qr// / qr|| regex literals
+// (a compiled regex value type).
 package lexer
 
 import (
@@ -138,16 +140,47 @@ func (l *Lexer) scan() token.Token {
 		}
 		return token.Token{Kind: token.Lookup(id), Lit: id, Line: line, Col: col}
 	case l.ch == '$':
+		dollar := l.pos // offset of the '$', so an interpolating form's Raw includes it
 		l.advance()
-		if !isLetter(l.ch) {
-			return token.Token{Kind: token.ILLEGAL, Lit: "$", Line: line, Col: col}
+		// $"..." — an interpolating double-quoted string.
+		if l.ch == '"' {
+			tok := l.readString(line, col)
+			if tok.Kind == token.STRING {
+				tok.Kind = token.ISTRING
+				tok.Raw = l.src[dollar:l.pos]
+			}
+			return tok
 		}
-		name := l.readIdent()
-		return token.Token{Kind: token.VAR, Lit: name, Line: line, Col: col}
+		// $qq{...} — an interpolating quote-op string. A dollar before a RAW form
+		// (q/qw/qr) or a single-quote is a contradiction and is rejected (A3).
+		if isLetter(l.ch) {
+			id := l.readIdent()
+			if isQuoteOp(id) {
+				if _, ok := quoteOpener(l.ch); ok {
+					if id == "qq" {
+						tok := l.readQuoteLike(id, line, col)
+						if tok.Kind == token.STRING {
+							tok.Kind = token.ISTRING
+							tok.Raw = l.src[dollar:l.pos]
+						}
+						return tok
+					}
+					return token.Token{Kind: token.ILLEGAL, Lit: "$ may only precede \", qq{...}, or a heredoc tag", Line: line, Col: col}
+				}
+			}
+			// $name — an ordinary variable reference.
+			return token.Token{Kind: token.VAR, Lit: id, Line: line, Col: col}
+		}
+		if l.ch == '\'' {
+			return token.Token{Kind: token.ILLEGAL, Lit: "$ may only precede \", qq{...}, or a heredoc tag", Line: line, Col: col}
+		}
+		return token.Token{Kind: token.ILLEGAL, Lit: "$", Line: line, Col: col}
 	case isDigit(l.ch):
 		return l.readNumber(line, col)
 	case l.ch == '"':
 		return l.readString(line, col)
+	case l.ch == '\'':
+		return l.readRawSingle(line, col)
 	}
 
 	mk := func(k token.Kind, lit string) token.Token {
@@ -323,13 +356,14 @@ func (l *Lexer) skipTrivia() bool {
 	}
 }
 
-// readHeredoc reads a heredoc introduced by <<. Forms: <<TAG and <<"TAG"
-// interpolate (like qq/"..."); <<'TAG' is literal; a leading ~ (<<~TAG) strips the
-// common leading indentation of the body. The <<TAG must be the last thing on its
-// line; the body runs on the following lines up to a line equal to TAG (TAG may be
-// indented for <<~). Each body line carries a trailing newline (so a non-empty body
-// ends in "\n"); a body with no lines is "" (matching Perl/Ruby). The result is a
-// STRING (the parser interpolates it) or a RAWSTR.
+// readHeredoc reads a heredoc introduced by <<. Forms: <<TAG and <<"TAG" are escaped
+// but do NOT interpolate (like "..."); <<'TAG' is raw (literal); <<$TAG interpolates
+// (like $"..."); a leading ~ (<<~TAG) strips the common leading indentation of the body
+// and combines with all three. The <<TAG must be the last thing on its line; the body
+// runs on the following lines up to a line equal to TAG (TAG may be indented for <<~).
+// Each body line carries a trailing newline (so a non-empty body ends in "\n"); a body
+// with no lines is "" (matching Perl/Ruby). The result is STRING (escaped, no interp),
+// RAWSTR (raw), or ISTRING (the parser interpolates it).
 func (l *Lexer) readHeredoc(line, col int) token.Token {
 	start := l.pos // the leading '<<', for the verbatim Raw span (<<TAG..body..TAG)
 	bad := func(msg string) token.Token {
@@ -343,6 +377,7 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 		l.advance()
 	}
 	raw := false
+	interp := false
 	var tag string
 	switch {
 	case l.ch == '"':
@@ -360,6 +395,13 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 		}
 		l.advance()
 		raw = true
+	case l.ch == '$':
+		l.advance()
+		if !isLetter(l.ch) {
+			return bad("expected an identifier after <<$")
+		}
+		tag = l.readIdent()
+		interp = true
 	case isLetter(l.ch):
 		tag = l.readIdent()
 	default:
@@ -399,10 +441,14 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 		return bad("unterminated heredoc <<" + tag)
 	}
 	body := assembleHeredoc(lines, dedent)
-	if raw {
+	switch {
+	case raw:
 		return token.Token{Kind: token.RAWSTR, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
+	case interp:
+		return token.Token{Kind: token.ISTRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
+	default:
+		return token.Token{Kind: token.STRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
 	}
-	return token.Token{Kind: token.STRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
 }
 
 // readUntilByte reads up to (not including) end or a newline/EOF.
@@ -461,7 +507,7 @@ func assembleHeredoc(lines []string, dedent bool) string {
 // whether a following newline should be turned into a NEWLINE terminator.
 func terminates(k token.Kind) bool {
 	switch k {
-	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING, token.RAWSTR, token.QW, token.QR,
+	case token.IDENT, token.VAR, token.INT, token.FLOAT, token.STRING, token.RAWSTR, token.ISTRING, token.QW, token.QR,
 		token.TRUE, token.FALSE, token.RETURN, token.BREAK, token.NEXT,
 		token.RPAREN, token.RBRACE, token.RBRACKET, token.QUESTION:
 		return true
@@ -512,9 +558,10 @@ func quoteOpener(c byte) (close byte, ok bool) {
 // readQuoteLike reads a q/qq/qw body delimited by the char at l.ch. Paired
 // delimiters ( [ { nest; same-char delimiters / | run to the next occurrence. The
 // body is taken literally (no backslash escaping of the delimiter) — choose a
-// delimiter the content avoids, or use a nesting paired one. qq bodies are
-// interpolated by the parser like "..."; q is literal; qw is split into words;
-// qr is a literal regex pattern (with trailing flags baked in as Go inline flags).
+// delimiter the content avoids, or use a nesting paired one. qq bodies are escaped
+// like "..." but do NOT interpolate (use $qq{...} to interpolate); q is raw; qw is
+// split into words; qr is a literal regex pattern (with trailing flags baked in as
+// Go inline flags).
 //
 // Nesting counts raw delimiter bytes only; it is NOT aware of strings or ${...}
 // inside a qq body, so a closing brace inside an interpolation (qq{ ${ "}" } })
@@ -613,6 +660,24 @@ func (l *Lexer) readString(line, col int) token.Token {
 	}
 	l.advance() // consume closing quote
 	return token.Token{Kind: token.STRING, Lit: b.String(), Raw: l.src[start:l.pos], Line: line, Col: col}
+}
+
+// readRawSingle reads a '...' raw string: a true alias of q{...}. The body runs to the
+// next ' (spanning newlines), with no escapes and no nesting — choose content that avoids
+// '. Emits a RAWSTR (literal, no escapes, no interpolation).
+func (l *Lexer) readRawSingle(line, col int) token.Token {
+	start := l.pos // the opening quote, for the verbatim Raw span
+	l.advance()    // consume opening quote
+	bodyStart := l.pos
+	for l.ch != '\'' && l.ch != 0 {
+		l.advance()
+	}
+	if l.ch == 0 {
+		return token.Token{Kind: token.ILLEGAL, Lit: "unterminated '...' string", Line: line, Col: col}
+	}
+	body := l.src[bodyStart:l.pos]
+	l.advance() // consume closing quote
+	return token.Token{Kind: token.RAWSTR, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
 }
 
 func isLetter(ch byte) bool {

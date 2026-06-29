@@ -667,7 +667,7 @@ func (p *printer) expr(e ast.Expr) {
 	case *ast.FloatLit:
 		p.write(orRaw(n.Raw, func() string { return strconv.FormatFloat(n.Value, 'g', -1, 64) }))
 	case *ast.StringLit:
-		p.write(orRaw(n.Raw, func() string { return strconv.Quote(n.Value) }))
+		p.write(orRaw(n.Raw, func() string { return stringLitFallback(n) }))
 	case *ast.Interp:
 		if n.Raw != "" {
 			p.write(n.Raw)
@@ -796,6 +796,39 @@ func soleExprStmt(b *ast.Block) (*ast.ExprStmt, bool) {
 	return nil, false
 }
 
+// stringLitFallback emits a StringLit with no Raw (synthesized / fix-rewritten). The
+// default is an escaped, non-interpolating "..." (strconv.Quote escapes but leaves $
+// literal — correct under v2). A raw-provenance node (FormSingle / FormQ) must NOT reprint
+// as "..." (that would re-escape its content), so it emits a raw form instead, choosing a
+// delimiter the body avoids.
+func stringLitFallback(n *ast.StringLit) string {
+	switch n.Form {
+	case ast.FormSingle:
+		if !strings.Contains(n.Value, "'") {
+			return "'" + n.Value + "'"
+		}
+		return rawQFallback(n.Value)
+	case ast.FormQ:
+		return rawQFallback(n.Value)
+	}
+	return strconv.Quote(n.Value)
+}
+
+// rawQFallback emits a canonical q{...} for a raw string body, picking a paired or
+// same-char delimiter the body does not contain.
+func rawQFallback(s string) string {
+	if !strings.ContainsAny(s, "{}") {
+		return "q{" + s + "}"
+	}
+	for _, d := range []string{"/", "|"} {
+		if !strings.Contains(s, d) {
+			return "q" + d + s + d
+		}
+	}
+	// Fall back to an escaped double-quoted form if every raw delimiter collides.
+	return strconv.Quote(s)
+}
+
 func orRaw(raw string, fallback func() string) string {
 	if raw != "" {
 		return raw
@@ -803,11 +836,18 @@ func orRaw(raw string, fallback func() string) string {
 	return fallback()
 }
 
-// interpFallback reconstructs a double-quoted interpolated string from Parts, for the
-// rare case of a synthesized Interp with no Raw.
+// interpFallback reconstructs an interpolating string from Parts, for the rare case of a
+// synthesized Interp with no Raw. Under v2, interpolation is opt-in, so the fallback MUST
+// emit a dollar form — $qq{...} when Form is FormDollarQQ, otherwise $"...". (A plain
+// "..." would print a non-interpolating string for an interpolating node.)
 func interpFallback(n *ast.Interp) string {
 	var b strings.Builder
-	b.WriteByte('"')
+	dollarQQ := n.Form == ast.FormDollarQQ
+	if dollarQQ {
+		b.WriteString("$qq{")
+	} else {
+		b.WriteString("$\"")
+	}
 	for _, part := range n.Parts {
 		switch e := part.(type) {
 		case *ast.StringLit:
@@ -821,7 +861,11 @@ func interpFallback(n *ast.Interp) string {
 			b.WriteString("}")
 		}
 	}
-	b.WriteByte('"')
+	if dollarQQ {
+		b.WriteByte('}')
+	} else {
+		b.WriteByte('"')
+	}
 	return b.String()
 }
 

@@ -142,12 +142,12 @@ build
 
 ### A taste
 
-Variables are declared with `:=` (a lexical) or `::=` (a frozen top-level constant); plain `=` reassigns. Builtins are called with parentheses, strings interpolate bare `$var` (or `${ expr }` for anything complex), and data nests transparently with `.` and `[]`:
+Variables are declared with `:=` (a lexical) or `::=` (a frozen top-level constant); plain `=` reassigns. Builtins are called with parentheses, `$`-prefixed strings interpolate bare `$var` (or `${ expr }` for anything complex), and data nests transparently with `.` and `[]`:
 
 ```drang
 $d := {users: [{name: "ada"}, {name: "alan"}]}
 say($d.users[1].name)
-say("count: ${len($d.users)}")
+say($"count: ${len($d.users)}")
 ```
 
 ```
@@ -466,11 +466,23 @@ line 2: unexpected PLUS "+"
 
 ## Strings
 
-drang strings are UTF-8 text. The most common form is a double-quoted literal, which both processes escapes and interpolates `$` expressions. Several quote operators and heredocs give you raw, interpolated, and word-list variants.
+drang strings are UTF-8 text. The most common form is a double-quoted literal, which processes escapes but **does not interpolate**: a `$` inside `"..."` is just a dollar sign. Interpolation is **opt-in**: you ask for it with a `$`-prefixed form (`$"..."`, `$qq{...}`, or a `<<$TAG` heredoc). Single-quoted `'...'` strings are raw. Several quote operators and heredocs round out the raw / escaped / interpolated / word-list variants.
 
 ### String literals and the lenient escape policy
 
 Inside `"..."`, exactly five escapes are decoded: `\n`, `\t`, `\r`, `\\`, and `\"`. Any other backslash escape is **left intact**: the backslash and the following character are kept verbatim. This "lenient" policy is deliberate: it makes regex classes and Windows paths far less painful, since you don't have to double every backslash.
+
+Because `"..."` does not interpolate, a literal dollar needs no escaping; it just works:
+
+```drang
+say("price is $5")
+say("$x is not a variable here")
+```
+
+```
+price is $5
+$x is not a variable here
+```
 
 ```drang
 say("a\tb\nc")
@@ -496,64 +508,101 @@ C:\dir
 ew
 ```
 
-Here `\d` stayed literal but `\new` became `\` + a newline + `ew`. For paths use a raw quote operator (`q{...}`, below) or build the path with `join`.
+Here `\d` stayed literal but `\new` became `\` + a newline + `ew`. For paths use a raw string (`'...'` or `q{...}`, below) or build the path with `join`.
 
-### Interpolation
+The decoded escapes, in full:
 
-A `$name` splices a variable's value; `${expr}` splices any expression. Escape a literal dollar with `\$`.
+| Escape | Result |
+|---|---|
+| `\n` | newline |
+| `\t` | tab |
+| `\r` | carriage return |
+| `\\` | backslash |
+| `\"` | double quote |
+| `\$` | dollar sign |
+| any other `\x` | kept verbatim (`\` + `x`) |
+
+`\$` decodes to a literal `$`. In a `"..."` string the `$` is already literal, so `\$` and `$` are equivalent there; `\$` earns its keep in the interpolating forms below, where it suppresses interpolation. The same escape table applies to `"..."`, `qq{...}`, `<<TAG`/`<<"TAG"` heredocs, and their interpolating cousins `$"..."`, `$qq{...}`, `<<$TAG`. The raw forms (`'...'`, `q{...}`, `<<'TAG'`) decode nothing at all.
+
+### Interpolation (opt-in)
+
+A plain `"..."` does not interpolate. To splice variables and expressions into a string, prefix it with `$`: a `$"..."` string is escaped **and** interpolated. Inside it, `$name` splices a variable's value and `${expr}` splices any expression. Escape a literal dollar with `\$`.
 
 ```drang
 $x := 42
 say("x is $x")
-say("sum=${$x + 4}")
-say("\$x stays literal, $x splices")
+say($"x is $x")
+say($"sum=${$x + 4}")
+say($"\$x stays literal, $x splices")
 ```
 
 ```
+x is $x
 x is 42
 sum=46
 $x stays literal, 42 splices
 ```
 
+Note the first line: the bare `"x is $x"` printed the dollar literally; only the `$`-prefixed form interpolated.
+
 `${...}` can hold arithmetic, calls, and indexing:
 
 ```drang
 $a := [10, 20, 30]
-say("second is ${$a[1]}")
+say($"second is ${$a[1]}")
 ```
 
 ```
 second is 20
 ```
 
-One limitation: a `${...}` body cannot itself contain a double-quoted string while inside a `"..."` literal. The nested `"` confuses brace matching and you get an `unterminated ${...}` parse error. Reach for `qq{...}` (a different delimiter) when the interpolated expression needs a string literal:
+One limitation: a `${...}` body cannot itself contain a double-quoted string while inside a `$"..."` literal. The nested `"` confuses brace matching and you get an `unterminated ${...}` parse error. Reach for `$qq{...}` (a different delimiter) when the interpolated expression needs a string literal:
 
 ```drang
-say(qq{up is ${upper("hi")}})
+say($qq{up is ${upper("hi")}})
 ```
 
 ```
 up is HI
 ```
 
+### Raw strings (`'...'`)
+
+A single-quoted `'...'` string is **raw**: no escapes, no interpolation, every byte verbatim (it may span newlines). It is an exact alias of `q{...}` (below), and the clean choice for Windows paths and regexes:
+
+```drang
+say('a $b and \n stay literal')
+say('C:\Users\new\tmp')
+```
+
+```
+a $b and \n stay literal
+C:\Users\new\tmp
+```
+
+There is no escape for the delimiter, so a `'...'` string cannot contain a `'`; use `q{...}` (or `q( )`, `q[ ]`) when the body has a single quote.
+
 ### Quote operators
 
 Three quote operators avoid escaping gymnastics. The delimiter follows the operator with **no space**; allowed delimiters are `( [ { / |`. The paired ones (`()`, `[]`, `{}`) **nest**; `/` and `|` simply run to the next matching delimiter.
 
-- **`q{...}`**: raw. No interpolation, no escape processing at all.
-- **`qq{...}`**: interpolated, exactly like `"..."`.
+- **`q{...}`**: raw. No interpolation, no escape processing at all (the same as `'...'`).
+- **`qq{...}`**: escaped, **no** interpolation, like `"..."`, just with flexible delimiters.
+- **`$qq{...}`**: escaped **and** interpolated: the opt-in interpolating form of `qq` (like `$"..."`).
 - **`qw{...}`**: whitespace-split word list, producing an **array**.
 
 ```drang
 $x := 9
 say(q{no $x interp, \n stays literal})
-say(qq{x=$x and a \t tab})
+say(qq{x=$x stays literal, a \t tab})
+say($qq{x=$x interpolates})
 say(qw{red green blue})
 ```
 
 ```
 no $x interp, \n stays literal
-x=9 and a 	 tab
+x=$x stays literal, a 	 tab
+x=9 interpolates
 [red, green, blue]
 ```
 
@@ -567,11 +616,11 @@ say(q(C:\Users\new\tmp))
 C:\Users\new\tmp
 ```
 
-Nesting and alternate delimiters:
+Nesting and alternate delimiters (the `$` opt-in works with every delimiter):
 
 ```drang
 say(q{outer {inner} done})
-say(qq|x is ${3 + 4}|)
+say($qq|x is ${3 + 4}|)
 ```
 
 ```
@@ -598,19 +647,25 @@ Note: the quote body is taken literally: there is no backslash escaping of the d
 
 ### Heredocs
 
-A heredoc starts with `<<TAG` and runs on the following lines until a line equal to `TAG`. The opener **must be the last thing on its line**. Forms:
+A heredoc starts with `<<TAG` and runs on the following lines until a line equal to `TAG`. The opener **must be the last thing on its line**. Heredocs mirror the quote forms; interpolation is opt-in here too, via a `$` on the tag:
 
-- **`<<END`** and **`<<"END"`**: interpolate, like `qq`/`"..."`.
-- **`<<'END'`**: raw, like `q`.
-- **`<<~END`**: strips the common leading indentation of the body (the terminator may be indented too).
+- **`<<END`** and **`<<"END"`**: escaped, **no** interpolation (like `"..."`/`qq`).
+- **`<<$END`**: escaped **and** interpolated (like `$"..."`/`$qq`).
+- **`<<'END'`**: raw, no escapes or interpolation (like `'...'`/`q`).
+- **`<<~END`**: strips the common leading indentation of the body (the terminator may be indented too); combines with any of the above (e.g. `<<~$END`).
 
 ```drang
 $name := "world"
-$msg := <<END
+$msg := <<$END
 Hello, $name!
 Sum is ${2 + 3}.
 END
 say($msg)
+
+$lit := <<END
+Literal $name here, no interp.
+END
+say($lit)
 
 $raw := <<'END'
 Literal $name and \n here.
@@ -622,10 +677,12 @@ say($raw)
 Hello, world!
 Sum is 5.
 
+Literal $name here, no interp.
+
 Literal $name and \n here.
 ```
 
-(A non-empty body keeps a trailing newline, which is why a blank line follows each block above.) The dedenting form `<<~END` removes the smallest shared indent; extra indentation is preserved relative to it:
+(A non-empty body keeps a trailing newline, which is why a blank line follows each block above.) The dedenting form `<<~END` removes the smallest shared indent; extra indentation is preserved relative to it (combine with `$` for an interpolating dedented heredoc, `<<~$END`):
 
 ```drang
 $body := <<~END
@@ -1834,7 +1891,7 @@ say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))
 26/06/2026
 ```
 
-For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. Beware: a `"..."` double-quoted replacement is interpolated by drang first, so use a non-interpolating literal (`q{...}`) to keep the `${...}` intact for `gsub`:
+For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. A plain `"..."` (or `q{...}`) replacement is non-interpolating, so its `${...}` reaches `gsub` intact. Beware only the opt-in interpolating forms: a `$"..."` or `$qq{...}` replacement is interpolated by drang first and would consume the `${...}` before `gsub` sees it. Use a non-interpolating literal here:
 
 ```drang
 say(gsub("john smith", qr/(?P<first>\w+) (?P<last>\w+)/, q{${last}, ${first}}))
@@ -1901,9 +1958,9 @@ with `if` and `//`) or an `Err` on failure.
 
 ```drang
 $ok := run("cmd", "/c", "exit 0")
-say("success returns true: $ok")
+say($"success returns true: $ok")
 $bad := run("cmd", "/c", "exit 5")
-say("failure is_err: ${is_err($bad)}  code: ${err_code($bad)}")
+say($"failure is_err: ${is_err($bad)}  code: ${err_code($bad)}")
 ```
 ```
 success returns true: true
@@ -1923,7 +1980,7 @@ failure.
 $ver := capture("cmd", "/c", "ver")
 say($ver)
 $where := capture("where", "cmd")
-say("where cmd -> $where")
+say($"where cmd -> $where")
 ```
 ```
 Microsoft Windows [Version 10.0.26200.6899]
@@ -1940,7 +1997,7 @@ This is native `os/exec` wiring. There is still no shell.
 ```drang
 $out := pipe(["cmd", "/c", "echo apple& echo banana& echo cherry"],
              ["findstr", "an"])
-say("pipe -> $out")
+say($"pipe -> $out")
 ```
 ```
 pipe -> banana
@@ -1958,11 +2015,11 @@ no limit.
 
 ```drang
 $dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
-say("cwd -> $dir")
+say($"cwd -> $dir")
 $e := capture("cmd", "/c", "echo", "%GREETING%", {env: {GREETING: "hi there"}})
-say("env -> $e")
+say($"env -> $e")
 $s := capture("findstr", "world", {stdin: "hello\nworld\nfoo\n"})
-say("stdin -> $s")
+say($"stdin -> $s")
 ```
 ```
 cwd -> C:\Windows
@@ -1981,7 +2038,7 @@ Two exit codes are synthesized, matching GNU `timeout`/shell conventions. On
 
 ```drang
 $r := run("cmd", "/c", "ping -n 5 127.0.0.1 >NUL", {timeout: 300})
-say("is_err: ${is_err($r)}  code: ${err_code($r)}")
+say($"is_err: ${is_err($r)}  code: ${err_code($r)}")
 ```
 ```
 is_err: true  code: 124
@@ -1992,7 +2049,7 @@ When a command **cannot be started** (not found, not executable), the code is
 
 ```drang
 $r := run("no_such_program_xyz")
-say("code: ${err_code($r)}  msg: ${err_msg($r)}")
+say($"code: ${err_code($r)}  msg: ${err_msg($r)}")
 ```
 ```
 code: 127  msg: no_such_program_xyz: exec: "no_such_program_xyz": executable file not found in %PATH%
@@ -2012,9 +2069,9 @@ command finishes.
 $n := 0
 each_line("cmd", "/c", "echo one& echo two& echo three", |$line| {
   $n = $n + 1
-  say("[$n] $line")
+  say($"[$n] $line")
 })
-say("total lines: $n")
+say($"total lines: $n")
 ```
 ```
 [1] one
@@ -2032,9 +2089,9 @@ an `Err` with the code), and `kill(p)` terminates the whole tree.
 
 ```drang
 $p := start("cmd", "/c", "exit 3")
-say("pid > 0: ${pid($p) > 0}")
+say($"pid > 0: ${pid($p) > 0}")
 $status := await($p)
-say("await -> is_err: ${is_err($status)}  code: ${err_code($status)}")
+say($"await -> is_err: ${is_err($status)}  code: ${err_code($status)}")
 ```
 ```
 pid > 0: true
@@ -2046,7 +2103,7 @@ await -> is_err: true  code: 3
 ```drang
 $p := start("cmd", "/c", "ping -n 30 127.0.0.1 >NUL")
 kill($p)
-say("after kill, is_err: ${is_err(await($p))}")
+say($"after kill, is_err: ${is_err(await($p))}")
 ```
 ```
 after kill, is_err: true
@@ -2072,7 +2129,7 @@ any async handle".)
 fn .work($n) { $n * 2 }
 $tasks := [1, 2, 3, 4] |> map(|$n| spawn(.work, $n))
 $results := $tasks |> map(|$t| await($t))
-say("fan-out: $results")
+say($"fan-out: $results")
 ```
 ```
 fan-out: [2, 4, 6, 8]
@@ -2084,7 +2141,7 @@ and surfaced by `await`, so `await($t)?` propagates and `await($t) // x` recover
 ```drang
 fn .boom() { fail("worker failed") }
 $res := await(spawn(.boom))
-say("is_err: ${is_err($res)}  msg: ${err_msg($res)}")
+say($"is_err: ${is_err($res)}  msg: ${err_msg($res)}")
 ```
 ```
 is_err: true  msg: worker failed
@@ -2108,7 +2165,7 @@ fn .produce($ch) {
 $t := spawn(.produce, $c)
 $all := drain($c)
 await($t)
-say("drained: $all")
+say($"drained: $all")
 ```
 ```
 drained: [10, 20, 30]
@@ -2122,10 +2179,10 @@ fn .worker($ch) {
   close($ch)
 }
 $t := spawn(.worker, $c)
-say("recv: ${recv($c)}")
+say($"recv: ${recv($c)}")
 $pair := recv_ok($c)
-say("recv_ok: $pair")
-say("after close, undef: ${not recv($c)}")
+say($"recv_ok: $pair")
+say($"after close, undef: ${not recv($c)}")
 await($t)
 ```
 ```
@@ -2145,7 +2202,7 @@ bounded `NumCPU` worker pool for **true parallelism**.
 
 ```drang
 $squares := [1, 2, 3, 4, 5] |> pmap(|$x| $x * $x)
-say("pmap squares: $squares")
+say($"pmap squares: $squares")
 ```
 ```
 pmap squares: [1, 4, 9, 16, 25]
@@ -2170,8 +2227,8 @@ $out := pmap($rows, |$row| {
   push($row, 99)   # mutates the worker's COPY
   len($row)
 })
-say("callback saw lengths: $out")
-say("original rows unchanged: $rows")
+say($"callback saw lengths: $out")
+say($"original rows unchanged: $rows")
 ```
 ```
 callback saw lengths: [2, 2, 2]
@@ -2189,7 +2246,7 @@ the whole result and stops further work.
 $r := pmap([1, 2, 3], |$x| {
   if $x == 2 { fail("boom on 2") } else { $x }
 })
-say("is_err: ${is_err($r)}  msg: ${err_msg($r)}")
+say($"is_err: ${is_err($r)}  msg: ${err_msg($r)}")
 ```
 ```
 is_err: true  msg: boom on 2
@@ -3243,4 +3300,4 @@ Several features are specified in DESIGN.md but do not work in the binary yet. D
 
 ### Also absent (from DESIGN.md, not yet built)
 
-`sh()` shell escape, char ranges (`'a'..'z'`), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, `map($xs, basename)`, now *do* work; see "Functions and builtins are first-class values".)
+`sh()` shell escape, string ranges (`'a'..'z'`: single-rune **string** ranges; drang has no char type, so `'a'..'z'` is a range of one-character strings, not chars), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, `map($xs, basename)`, now *do* work; see "Functions and builtins are first-class values".)

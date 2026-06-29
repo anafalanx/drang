@@ -15,8 +15,9 @@ const (
 	VAR    // $name — the single sigil; Lit holds the name without '$'
 	INT    // 123
 	FLOAT  // 1.5
-	STRING // "..."  and qq{...} / interpolating heredocs (parser interpolates)
-	RAWSTR // q{...} and '...'-style heredocs: literal, no interpolation
+	STRING  // "...", qq{...}, <<TAG / <<"TAG" heredocs: escaped, NO interpolation
+	RAWSTR  // q{...}, '...', <<'TAG' heredocs: raw — literal, no escapes, no interpolation
+	ISTRING // $"...", $qq{...}, <<$TAG heredocs: escaped + interpolation (parser interpolates)
 	QW     // qw{...}: whitespace-split word list (parser builds an array)
 	QR     // qr{...}: compiled-regex literal (Lit = pattern, inline flags baked in)
 
@@ -89,6 +90,7 @@ var names = [...]string{
 	FLOAT:     "FLOAT",
 	STRING:    "STRING",
 	RAWSTR:    "RAWSTR",
+	ISTRING:   "ISTRING",
 	QW:        "QW",
 	QR:        "QR",
 	FN:        "FN",
