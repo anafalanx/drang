@@ -124,6 +124,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | `--profile` pprof output | called a freebie in §11; `sys_gc` exists, no flag | S | NOT-STARTED |
 | Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
 | **Exhaustively test process supervision (`{supervise: true}`) on Unix** | the reaper side-car is hard-tested on Windows (15 funcs) but the Unix path (Setsid / Setpgid / `kill(-pid)`) has only been built+vetted, never *run*. Port the `cmd/drang/supervise_*_test.go` battery (only `pidAlive`/`taskkill` are Windows-specific) to Linux + macOS and run it before trusting supervision there. See the note in `internal/eval/supervise_unix.go` and DESIGN.md | M | **NOT-STARTED — blocks trusting supervise on Unix** |
+| `is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check, not a real isatty | mintty / Git-Bash / MSYS2 (named-pipe ptys) report FALSE for a genuine interactive terminal, so `drang` run bare in Git Bash may not start a REPL and `is_terminal()` underreports there; `NUL` (Windows) and `/dev/null` (Unix) report TRUE but are harmless discard sinks; the default stream is stdin (gate any output styling on `is_terminal("stdout")`). Mostly fails safe toward plain text. Proper fix: `GetConsoleMode` + the Cygwin pipe-name heuristic on Windows, `TCGETS`/`TIOCGETA` ioctl on Unix. Surfaced by the 2026-06-30 console-UI brittleness study | S–M | KNOWN, mostly benign; fix optional |
 
 ## (e) Polish / recent-feature follow-ups
 
@@ -141,7 +142,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 ## Already complete — don't reopen
 
 Value-level immutability/freeze; modules (`use`); `qr//` regex literals;
-`q{}`/`qq{}`/heredocs; break/continue; lambdas; integer-overflow→error; implicit
+`q{}`/`qq{}`/heredocs; break/next; lambdas; integer-overflow→error; implicit
 return; two-var `for $k,$v in`; `//` defined-or; `<=>`; all Phase-1 path/fs/env wins;
 the prelude (`flatten`/`sum_by`/`tally`/`count_by`/`chunk`/`zip`); JSON; CSV;
 one-liner `-n`/`-p` + `BEGIN`/`END`; concurrency (`spawn`/`chan`/`pmap`, input-ordered).
@@ -155,6 +156,14 @@ sandboxing; an HTTP *client* (orchestrate `run(["curl", …])`); bignum; GUI/Tk 
 the ops/observability and distributed/multi-host growth verticals (locked to
 "personal daily-driver"). **YAML/TOML** is the one genuine judgment-call: no Go-stdlib
 parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).
+
+**Console-UI / TUI facility** (ANSI color, tables, spinners, prompts): studied 2026-06-30 and
+declined. The attractive parts (16-color styling, tables, cooked prompts) are cheap, but the
+value-add (color under Git Bash/mintty, hidden password input) forces ownership of an
+undocumented MSYS pipe-name heuristic and per-arch termios that cannot be tested from a Windows
+dev box, and the facility would be invisibly degraded in the maintainer's own shell. A
+stdlib-only, Windows-first language should not take that on; do not re-propose without new
+information. (The pre-existing `is_terminal` brittleness this surfaced is tracked in §(d).)
 
 ## Recommended next 3–5
 

@@ -502,7 +502,7 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			if !ok {
 				b, found := builtins[name]
 				if !found {
-					return value.MakeNil(), fmt.Errorf("undefined: %s", name)
+					return value.MakeNil(), fmt.Errorf("undefined: %s%s", name, loopKeywordHint(name))
 				}
 				// a bare builtin name is a first-class function value (mirrors the walker)
 				v = value.MakeObj(value.Func, &Function{Name: name, Builtin: b})

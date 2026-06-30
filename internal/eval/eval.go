@@ -1014,7 +1014,7 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 			// can be passed to HOFs: map($xs, basename). A user binding (above) still wins.
 			return value.MakeObj(value.Func, &Function{Name: n.Name, Builtin: b}), nil
 		}
-		return value.MakeNil(), fmt.Errorf("undefined: %s", n.Name)
+		return value.MakeNil(), fmt.Errorf("undefined: %s%s", n.Name, loopKeywordHint(n.Name))
 	case *ast.Unary:
 		return evalUnary(n, env)
 	case *ast.Binary:
@@ -1114,6 +1114,21 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 		return value.MakeObj(value.Func, newFunction("", n.Params, n.Defaults, n.Body, env)), nil
 	}
 	return value.MakeNil(), fmt.Errorf("eval: unknown expression %T", e)
+}
+
+// loopKeywordHint returns guidance appended to an "undefined" error when the name is a
+// loop-control keyword from another language. drang uses Ruby's next/break; continue
+// (C/Go/Python/JS) and last (Perl) are not keywords, so a bare use lands here as an undefined
+// identifier. Catching them by name turns a cryptic "undefined: continue" into the real
+// spelling. Shared by both backends (eval.go and vm.go).
+func loopKeywordHint(name string) string {
+	switch name {
+	case "continue":
+		return " (drang uses 'next' to skip to the next iteration; there is no 'continue')"
+	case "last":
+		return " (drang uses 'break' to exit a loop; there is no 'last')"
+	}
+	return ""
 }
 
 func evalUnary(n *ast.Unary, env *Env) (value.Value, error) {
