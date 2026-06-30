@@ -3,7 +3,10 @@ package eval
 import (
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/anafalanx/drang/internal/value"
 )
 
 // TestExecArg0 verifies the {arg0} option changes the presented argv[0] without
@@ -40,5 +43,97 @@ func TestCaptureAll(t *testing.T) {
 				t.Errorf("%s\n got %q\nwant %q", c.src, got, c.want)
 			}
 		})
+	}
+}
+
+func TestExecEnvOptions(t *testing.T) {
+	t.Setenv("DRANG_PARENT_ONLY", "parent")
+
+	exact := value.MakeMap()
+	exact.Obj().(*value.OrderedMap).Set(str("DRANG_CHILD_ONLY"), str("child"))
+	exactOpts := value.MakeMap().Obj().(*value.OrderedMap)
+	exactOpts.Set(str("env_exact"), exact)
+	o, err := execOptions("run", exactOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.hasEnv || !o.resolveWithEnv {
+		t.Fatalf("exact env should set env and env-based resolution: %#v", o)
+	}
+	if len(o.env) != 1 || o.env[0] != "DRANG_CHILD_ONLY=child" {
+		t.Fatalf("exact env = %#v, want only DRANG_CHILD_ONLY=child", o.env)
+	}
+
+	overlay := value.MakeMap()
+	overlay.Obj().(*value.OrderedMap).Set(str("drang_parent_only"), str("new"))
+	overlayOpts := value.MakeMap().Obj().(*value.OrderedMap)
+	overlayOpts.Set(str("env_add"), overlay)
+	o, err = execOptions("run", overlayOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, val := 0, ""
+	for _, e := range o.env {
+		if i := strings.IndexByte(e, '='); i >= 0 && strings.EqualFold(e[:i], "DRANG_PARENT_ONLY") {
+			count++
+			val = e[i+1:]
+		}
+	}
+	if count != 1 || val != "new" {
+		t.Fatalf("env_add replaced %d entries with %q, want one replacement of new in %#v", count, val, o.env)
+	}
+	if _, ok := envLookupFold(o.env, "PATH"); !ok {
+		t.Fatalf("env_add should inherit PATH; env=%#v", o.env)
+	}
+}
+
+func TestExecEnvAndEnvAddConflict(t *testing.T) {
+	exact := value.MakeMap()
+	overlay := value.MakeMap()
+	opts := value.MakeMap().Obj().(*value.OrderedMap)
+	opts.Set(str("env_exact"), exact)
+	opts.Set(str("env_add"), overlay)
+	if _, err := execOptions("run", opts); err == nil {
+		t.Fatal("env_exact and env_add together should be rejected")
+	}
+}
+
+// The conventional name `env` is caught with a teaching error pointing to env_exact/env_add.
+func TestExecEnvRenameHint(t *testing.T) {
+	opts := value.MakeMap().Obj().(*value.OrderedMap)
+	opts.Set(str("env"), value.MakeMap())
+	_, err := execOptions("run", opts)
+	if err == nil {
+		t.Fatal("the bare 'env' option should be rejected")
+	}
+	if !strings.Contains(err.Error(), "env_exact") || !strings.Contains(err.Error(), "env_add") {
+		t.Fatalf("'env' rejection should point to env_exact and env_add, got %v", err)
+	}
+}
+
+func TestCaptureExactEnvDoesNotInheritParent(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("end-to-end env test uses cmd.exe")
+	}
+	t.Setenv("DRANG_PARENT_ONLY", "parent")
+	src := `$e := {
+	PATH: env("PATH"),
+	SystemRoot: env("SystemRoot"),
+	DRANG_CHILD_ONLY: "child",
+}
+say(capture("cmd", "/c", "if defined DRANG_PARENT_ONLY (echo inherited:%DRANG_PARENT_ONLY%) else (echo exact:%DRANG_CHILD_ONLY%)", {env_exact: $e}))`
+	if got := run(t, src); got != "exact:child\n" {
+		t.Fatalf("exact env leaked or failed:\n got %q\nwant %q", got, "exact:child\n")
+	}
+}
+
+func TestCaptureEnvAddInheritsParent(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("end-to-end env test uses cmd.exe")
+	}
+	t.Setenv("DRANG_PARENT_ONLY", "parent")
+	src := `say(capture("cmd", "/c", "echo %DRANG_PARENT_ONLY%:%DRANG_CHILD_ONLY%", {env_add: {DRANG_CHILD_ONLY: "child"}}))`
+	if got := run(t, src); got != "parent:child\n" {
+		t.Fatalf("env_add did not inherit/overlay:\n got %q\nwant %q", got, "parent:child\n")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -16,29 +17,54 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// execOpts holds the trailing {cwd, env, stdin, timeout} options for the process
-// builtins.
+// execOpts holds the trailing {cwd, env_exact, env_add, stdin, timeout}options for
+// the process builtins.
 type execOpts struct {
-	cwd       string
-	env       []string // nil = inherit the parent environment
-	stdin     string
-	hasStdin  bool
-	arg0      string // present a different argv[0] than the launched executable
-	hasArg0   bool
-	timeout   time.Duration // 0 = no limit
-	supervise bool          // tie the child's lifetime to ours via the reaper (see supervise.go)
+	cwd            string
+	env            []string // set when the child should not inherit implicitly
+	hasEnv         bool     // true even when env is intentionally empty
+	resolveWithEnv bool     // resolve bare commands against env's PATH
+	stdin          string
+	hasStdin       bool
+	arg0           string // present a different argv[0] than the launched executable
+	hasArg0        bool
+	timeout        time.Duration // 0 = no limit
+	supervise      bool          // tie the child's lifetime to ours via the reaper (see supervise.go)
 }
 
 // newCmd builds the command, wiring a deadline when a timeout is set. The returned
 // ctx is non-nil only when timed; callers compare ctx.Err() to detect a timeout.
-func newCmd(argv []string, o execOpts) (*exec.Cmd, context.Context, context.CancelFunc) {
+func newCmd(argv []string, o execOpts) (*exec.Cmd, context.Context, context.CancelFunc, error) {
+	exe, preserveArg0, err := resolveExecPath(argv[0], o)
+	if err != nil {
+		return nil, nil, func() {}, err
+	}
 	if o.timeout > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		cmd := exec.CommandContext(ctx, exe, argv[1:]...)
+		if preserveArg0 {
+			cmd.Args[0] = argv[0]
+		}
 		setTreeKill(cmd)
-		return cmd, ctx, cancel
+		return cmd, ctx, cancel, nil
 	}
-	return exec.Command(argv[0], argv[1:]...), nil, func() {}
+	cmd := exec.Command(exe, argv[1:]...)
+	if preserveArg0 {
+		cmd.Args[0] = argv[0]
+	}
+	return cmd, nil, func() {}, nil
+}
+
+func newUntimedCmd(argv []string, o execOpts) (*exec.Cmd, error) {
+	exe, preserveArg0, err := resolveExecPath(argv[0], o)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(exe, argv[1:]...)
+	if preserveArg0 {
+		cmd.Args[0] = argv[0]
+	}
+	return cmd, nil
 }
 
 // setTreeKill makes a timeout kill the whole process TREE, not just the direct
@@ -86,7 +112,10 @@ func builtinRun(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel := newCmd(argv, opts)
+	cmd, ctx, cancel, err := newCmd(argv, opts)
+	if err != nil {
+		return execError(argv[0], err, ""), nil
+	}
 	defer cancel()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
@@ -130,7 +159,10 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd, err := newUntimedCmd(argv, opts)
+	if err != nil {
+		return execError(argv[0], err, ""), nil
+	}
 	applyExecOpts(cmd, opts) // cwd + env; stdio stays detached
 	if opts.hasStdin {
 		cmd.Stdin = strings.NewReader(opts.stdin)
@@ -204,7 +236,10 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel := newCmd(argv, opts)
+	cmd, ctx, cancel, err := newCmd(argv, opts)
+	if err != nil {
+		return execError(argv[0], err, ""), nil
+	}
 	defer cancel()
 	cmd.WaitDelay = 3 * time.Second // backstop: a child holding the pipe can't hang Wait forever
 	cmd.Stderr = stderr
@@ -258,7 +293,10 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel := newCmd(argv, opts)
+	cmd, ctx, cancel, err := newCmd(argv, opts)
+	if err != nil {
+		return execError(argv[0], err, ""), nil
+	}
 	defer cancel()
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
@@ -283,7 +321,10 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel := newCmd(argv, opts)
+	cmd, ctx, cancel, err := newCmd(argv, opts)
+	if err != nil {
+		return execError(argv[0], err, ""), nil
+	}
 	defer cancel()
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
@@ -324,8 +365,8 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 // returns the LAST stage's trimmed stdout on success, or a catchable Err — code 127
 // if a stage can't start, 124 on timeout, else the last stage's exit code (bash's
 // default pipeline semantics; an intermediate non-zero exit is not itself an error).
-// A trailing {cwd, env, stdin, timeout} map applies to the whole pipeline (stdin
-// feeds the first stage).
+// A trailing {cwd, env_exact, env_add, stdin, timeout}map applies to the whole
+// pipeline (stdin feeds the first stage).
 func builtinPipe(args []value.Value) (value.Value, error) {
 	var opts execOpts
 	stages := args
@@ -368,11 +409,18 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 
 	cmds := make([]*exec.Cmd, n)
 	for i, av := range argvs {
+		exe, preserveArg0, err := resolveExecPath(av[0], o)
+		if err != nil {
+			return value.MakeErr(fmt.Sprintf("pipe: cannot start stage %d (%s): %v", i+1, av[0], err), 127)
+		}
 		if ctx != nil {
-			cmds[i] = exec.CommandContext(ctx, av[0], av[1:]...)
+			cmds[i] = exec.CommandContext(ctx, exe, av[1:]...)
 			setTreeKill(cmds[i])
 		} else {
-			cmds[i] = exec.Command(av[0], av[1:]...)
+			cmds[i] = exec.Command(exe, av[1:]...)
+		}
+		if preserveArg0 {
+			cmds[i].Args[0] = av[0]
 		}
 		applyExecOpts(cmds[i], o)
 		superviseBegin(cmds[i], o.supervise, true) // wired via pipes, not the tty
@@ -441,7 +489,7 @@ func applyExecOpts(cmd *exec.Cmd, o execOpts) {
 	if o.cwd != "" {
 		cmd.Dir = o.cwd
 	}
-	if o.env != nil {
+	if o.hasEnv {
 		cmd.Env = o.env
 	}
 	if o.hasArg0 && len(cmd.Args) > 0 {
@@ -501,6 +549,7 @@ func execArgStrings(name string, raw []value.Value) ([]string, error) {
 
 func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 	var o execOpts
+	var exactEnv, overlayEnv *value.OrderedMap
 	keys, vals := m.Keys(), m.Vals()
 	for i, k := range keys {
 		if k.Tag() != value.Str {
@@ -526,11 +575,18 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			if ms > 0 { // 0 = no limit
 				o.timeout = time.Duration(ms) * time.Millisecond
 			}
-		case "env":
+		case "env_exact":
 			if vals[i].Tag() != value.Map {
-				return o, fmt.Errorf("%s: env option must be a map", name)
+				return o, fmt.Errorf("%s: env_exact option must be a map", name)
 			}
-			o.env = mergeEnv(vals[i].Obj().(*value.OrderedMap))
+			exactEnv = vals[i].Obj().(*value.OrderedMap)
+		case "env":
+			return o, fmt.Errorf("%s: 'env' is not an option; use 'env_exact' for an exact replacement, or 'env_add' to overlay onto the inherited environment", name)
+		case "env_add":
+			if vals[i].Tag() != value.Map {
+				return o, fmt.Errorf("%s: env_add option must be a map", name)
+			}
+			overlayEnv = vals[i].Obj().(*value.OrderedMap)
 		case "supervise":
 			if vals[i].Tag() != value.Bool {
 				return o, fmt.Errorf("%s: supervise must be true or false", name)
@@ -540,30 +596,132 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			return o, fmt.Errorf("%s: unknown option %q", name, k.AsStr())
 		}
 	}
+	if exactEnv != nil && overlayEnv != nil {
+		return o, fmt.Errorf("%s: env_exact and env_add are mutually exclusive", name)
+	}
+	if exactEnv != nil {
+		o.env = buildEnv(exactEnv, false)
+		o.hasEnv = true
+		o.resolveWithEnv = true
+	} else if overlayEnv != nil {
+		o.env = buildEnv(overlayEnv, true)
+		o.hasEnv = true
+		o.resolveWithEnv = true
+	}
 	return o, nil
 }
 
-// mergeEnv overlays the given key/value map onto the inherited environment,
-// matching existing keys case-insensitively (Windows semantics).
+// mergeEnv overlays the given key/value map onto the inherited environment, matching existing
+// keys by the host's case rule (case-insensitive on Windows, case-sensitive on Unix; see
+// envKeyEqual).
 func mergeEnv(overlay *value.OrderedMap) []string {
-	result := append([]string(nil), os.Environ()...)
+	return buildEnv(overlay, true)
+}
+
+func buildEnv(overlay *value.OrderedMap, inherit bool) []string {
+	result := []string{}
+	if inherit {
+		result = append(result, os.Environ()...)
+	}
+	if overlay == nil {
+		return result
+	}
 	keys, vals := overlay.Keys(), overlay.Vals()
 	for i, k := range keys {
 		key := k.Display()
-		entry := key + "=" + vals[i].Display()
-		replaced := false
-		for j, e := range result {
-			if eq := strings.IndexByte(e, '='); eq >= 0 && strings.EqualFold(e[:eq], key) {
-				result[j] = entry
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			result = append(result, entry)
-		}
+		result = setEnvFold(result, key, vals[i].Display())
 	}
 	return result
+}
+
+// envKeyEqual reports whether two environment-variable names denote the same variable under
+// the host's case rule. Windows env names are case-insensitive; Unix is case-sensitive, so
+// folding there would wrongly collapse distinct vars (e.g. a `Path` overlay clobbering `PATH`,
+// or no longer adding a legitimately separate `Path`).
+func envKeyEqual(a, b string) bool { return envKeyMatch(a, b, runtime.GOOS == "windows") }
+
+func envKeyMatch(a, b string, fold bool) bool {
+	if fold {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func setEnvFold(env []string, key, val string) []string {
+	entry := key + "=" + val
+	for i, e := range env {
+		if eq := strings.IndexByte(e, '='); eq >= 0 && envKeyEqual(e[:eq], key) {
+			env[i] = entry
+			return env
+		}
+	}
+	return append(env, entry)
+}
+
+func envLookupFold(env []string, key string) (string, bool) {
+	for _, e := range env {
+		if eq := strings.IndexByte(e, '='); eq >= 0 && envKeyEqual(e[:eq], key) {
+			return e[eq+1:], true
+		}
+	}
+	return "", false
+}
+
+func resolveExecPath(name string, o execOpts) (string, bool, error) {
+	if !o.resolveWithEnv || hasPathSeparator(name) || filepath.IsAbs(name) {
+		return name, false, nil
+	}
+	path, _ := envLookupFold(o.env, "PATH")
+	if path == "" {
+		return "", false, fmt.Errorf("exec: %q: executable file not found in PATH", name)
+	}
+	if found, ok := lookPathInEnv(name, path, o.env); ok {
+		return found, true, nil
+	}
+	return "", false, fmt.Errorf("exec: %q: executable file not found in PATH", name)
+}
+
+func hasPathSeparator(s string) bool {
+	return strings.ContainsRune(s, os.PathSeparator) || (os.PathSeparator != '/' && strings.ContainsRune(s, '/'))
+}
+
+func lookPathInEnv(name, path string, env []string) (string, bool) {
+	exts := []string{""}
+	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+		pathext, ok := envLookupFold(env, "PATHEXT")
+		if !ok || strings.TrimSpace(pathext) == "" {
+			pathext = ".COM;.EXE;.BAT;.CMD"
+		}
+		exts = strings.Split(pathext, string(os.PathListSeparator))
+		for i, ext := range exts {
+			if ext != "" && !strings.HasPrefix(ext, ".") {
+				exts[i] = "." + ext
+			}
+		}
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		for _, ext := range exts {
+			cand := filepath.Join(dir, name+ext)
+			if isExecutableFile(cand) {
+				return cand, true
+			}
+		}
+	}
+	return "", false
+}
+
+func isExecutableFile(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return st.Mode()&0o111 != 0
 }
 
 // execError converts an os/exec failure into a catchable Err value: a child that
