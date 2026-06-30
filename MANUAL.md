@@ -2007,24 +2007,39 @@ pipe -> banana
 (For genuine shell features: globbing, `&&`, redirection, invoke `cmd /c "..."`
 yourself as a single stage.)
 
-### Options: `{cwd, env, stdin, timeout, supervise}`
+### Options: `{cwd, env_exact, env_add, stdin, timeout, supervise}`
 
 A trailing map sets per-command options on `run`, `capture`, `pipe`, `each_line`,
-and `start`. `env` is **overlaid** onto the inherited environment (matched
-case-insensitively, per Windows); `timeout` is in **milliseconds** and `0` means
-no limit.
+and `start`. `env_exact` sets the child's **exact** environment: nothing is inherited
+unless you put it in the map (on Windows that means even `SystemRoot` and `PATH` are
+dropped unless you add them, so most callers want `env_add` instead). `env_add` is the
+overlay form: it starts from the inherited environment and replaces/adds the given keys,
+matched by the host's case rule (case-insensitive on Windows, case-sensitive on Unix).
+When either form is present, bare command names are resolved against that child
+environment's `PATH`; exact environments that launch bare commands usually need to
+include `PATH`. `timeout` is in **milliseconds** and `0` means no limit.
 
 ```drang
 $dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
 say($"cwd -> $dir")
-$e := capture("cmd", "/c", "echo", "%GREETING%", {env: {GREETING: "hi there"}})
+$e := capture("cmd", "/c", "echo", "%GREETING%", {env_add: {GREETING: "hi there"}})
 say($"env -> $e")
+$forced := {
+  PATH: env("PATH"),
+  SystemRoot: env("SystemRoot"),
+  GREETING: "only this",
+}
+$f := capture("cmd", "/c",
+  "if defined USERNAME (echo inherited:%USERNAME%) else (echo forced:%GREETING%)",
+  {env_exact: $forced})
+say($"forced env -> $f")
 $s := capture("findstr", "world", {stdin: "hello\nworld\nfoo\n"})
 say($"stdin -> $s")
 ```
 ```
 cwd -> C:\Windows
 env -> hi there
+forced env -> forced:only this
 stdin -> world
 ```
 
@@ -2273,7 +2288,7 @@ is_err: true  msg: boom on 2
 ```
 
 Parallel subprocesses are just `pmap` over commands: each call gets its own
-`{timeout}`/`cwd`/`env` and runs lock-free:
+`{timeout}`/`cwd`/`env_exact` and runs lock-free:
 
 ```drang
 $versions := ["git", "go", "node"] |> pmap(|$tool| capture($tool, "--version") // "(missing)")
@@ -3175,9 +3190,10 @@ a bool; the rest signal real I/O failures as Err.
 ### Process & concurrency
 
 Process builtins take command words (arrays splice, scalars stringify) and an
-optional trailing options map `{cwd, env, stdin, timeout, arg0, supervise}` (`timeout`
-in ms; `arg0` presents a different argv[0] than the launched executable; `supervise:
-true` ties the child's lifetime to ours, see [Options](#options-cwd-env-stdin-timeout-supervise)).
+optional trailing options map `{cwd, env_exact, env_add, stdin, timeout, arg0, supervise}` (`env_exact`
+sets the exact child environment; `env_add` overlays inherited environment; `timeout`
+is in ms; `arg0` presents a different argv[0] than the launched executable; `supervise:
+true` ties the child's lifetime to ours, see [Options](#options-cwd-env_exact-env_add-stdin-timeout-supervise)).
 No shell is involved; args are passed verbatim. Channels and tasks are shared
 reference types; values are deep-copied on send and on `await`.
 
