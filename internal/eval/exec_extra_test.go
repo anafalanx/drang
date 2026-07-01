@@ -1,26 +1,27 @@
 package eval
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// TestExecArg0 verifies the {arg0} option changes the presented argv[0] without
-// changing the actually-launched binary (cmd.Path).
+// TestExecArg0 verifies the {arg0} option changes the presented argv[0] (what the child sees)
+// without changing the actually-launched executable.
 func TestExecArg0(t *testing.T) {
-	cmd := exec.Command("the-real-exe", "a", "b")
-	applyExecOpts(cmd, execOpts{arg0: "spoofed", hasArg0: true})
-	if cmd.Args[0] != "spoofed" {
-		t.Errorf("cmd.Args[0] = %q, want spoofed", cmd.Args[0])
+	c, err := newJobCmd([]string{"cmd", "a", "b"}, execOpts{arg0: "spoofed", hasArg0: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(cmd.Args) != 3 || cmd.Args[1] != "a" || cmd.Args[2] != "b" {
-		t.Errorf("arg0 disturbed the other args: %v", cmd.Args)
+	if c.argv[0] != "spoofed" {
+		t.Errorf("child argv[0] = %q, want spoofed", c.argv[0])
 	}
-	if cmd.Path == "spoofed" {
-		t.Errorf("arg0 must not change the launched binary (cmd.Path = %q)", cmd.Path)
+	if len(c.argv) != 3 || c.argv[1] != "a" || c.argv[2] != "b" {
+		t.Errorf("arg0 disturbed the other args: %v", c.argv)
+	}
+	if !strings.HasSuffix(strings.ToLower(c.exe), "cmd.exe") {
+		t.Errorf("arg0 changed the launched exe to %q (should still resolve cmd)", c.exe)
 	}
 }
 

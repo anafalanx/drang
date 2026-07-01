@@ -24,14 +24,15 @@ import (
 // child has exited is a no-op.
 type jobCmd struct {
 	// Inputs, set before start:
-	exe     string    // resolved executable path (see resolveExe)
-	argv    []string  // the argv the child sees (argv[0] is the presented program name)
-	dir     string    // working directory ("" inherits ours)
-	env     []string  // child environment (nil inherits ours)
-	stdin   io.Reader // nil => the null device
-	stdout  io.Writer // nil => the null device
-	stderr  io.Writer // nil => the null device
-	timeout time.Duration
+	exe         string    // resolved executable path (see resolveExe)
+	argv        []string  // the argv the child sees (argv[0] is the presented program name)
+	dir         string    // working directory ("" inherits ours)
+	env         []string  // child environment (nil inherits ours)
+	stdin       io.Reader // nil => the null device
+	stdout      io.Writer // nil => the null device
+	stderr      io.Writer // nil => the null device
+	timeout     time.Duration
+	killOnClose bool // whether the per-command job is KILL_ON_JOB_CLOSE (die-with-parent)
 
 	// Runtime state:
 	job         *winjob.Job
@@ -71,7 +72,7 @@ func (c *jobCmd) start() error {
 		return err
 	}
 
-	job, err := winjob.New(true) // KILL_ON_JOB_CLOSE
+	job, err := winjob.New(c.killOnClose)
 	if err != nil {
 		c.cleanupFiles()
 		return err
@@ -260,14 +261,15 @@ func newJobCmd(argv []string, o execOpts, defaultStdin io.Reader, stdout, stderr
 		stdin = strings.NewReader(o.stdin)
 	}
 	return &jobCmd{
-		exe:     exe,
-		argv:    childArgv,
-		dir:     o.cwd,
-		env:     env,
-		stdin:   stdin,
-		stdout:  stdout,
-		stderr:  stderr,
-		timeout: o.timeout,
+		exe:         exe,
+		argv:        childArgv,
+		dir:         o.cwd,
+		env:         env,
+		stdin:       stdin,
+		stdout:      stdout,
+		stderr:      stderr,
+		timeout:     o.timeout,
+		killOnClose: true, // synchronous forms die with drang; start overrides via {supervise}
 	}, nil
 }
 

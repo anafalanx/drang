@@ -12,8 +12,9 @@ import (
 )
 
 // These drive a real drang binary end to end: start a long-lived child, hard-kill the parent
-// (TerminateProcess — no graceful cleanup, simulating a crash/SIGKILL), and check what
-// happens to the child. They are the proof that the reaper side-car actually reaps.
+// (TerminateProcess — no graceful cleanup, simulating a crash/SIGKILL), and check what happens
+// to the child. They are the end-to-end proof that {supervise} die-with-parent works — now via
+// the Job Object's KILL_ON_JOB_CLOSE, not a reaper side-car.
 
 func buildDrang(t *testing.T) string {
 	t.Helper()
@@ -30,6 +31,11 @@ func buildDrang(t *testing.T) string {
 func pidAlive(pid int) bool {
 	out, _ := exec.Command("tasklist", "/FO", "CSV", "/NH", "/FI", "PID eq "+strconv.Itoa(pid)).CombinedOutput()
 	return strings.Contains(string(out), "\""+strconv.Itoa(pid)+"\"")
+}
+
+// killProcTree force-kills a PID and its descendants — test cleanup for orphans and failures.
+func killProcTree(pid int) {
+	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid)).Run()
 }
 
 // startChildUnder runs `drang -e <script>` (which must start a child and print its PID), and
@@ -82,14 +88,14 @@ func TestSupervisedChildDiesWithParent(t *testing.T) {
 say(pid($p))
 sleep(30)`)
 
-	// Hard-kill the parent (no cleanup runs). Only the reaper can now kill the child.
+	// Hard-kill the parent (no cleanup runs). Only the Job Object's die-with-parent can kill it now.
 	_ = cmd.Process.Kill()
 	_, _ = cmd.Process.Wait()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if !pidAlive(child) {
-			return // the reaper killed it — success
+			return // die-with-parent killed it — success
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -109,7 +115,7 @@ sleep(30)`)
 	_ = cmd.Process.Kill()
 	_, _ = cmd.Process.Wait()
 
-	// No supervision → no reaper → the orphaned child keeps running.
+	// No supervision → the child breaks free of drang's lifetime and keeps running.
 	time.Sleep(3 * time.Second)
 	alive := pidAlive(child)
 	killProcTree(child) // always clean up the orphan

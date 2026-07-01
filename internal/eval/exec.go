@@ -3,17 +3,17 @@ package eval
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anafalanx/drang/internal/value"
+	"github.com/anafalanx/drang/internal/winjob"
 )
 
 // execOpts holds the trailing {cwd, env_exact, env_add, stdin, timeout}options for
@@ -28,75 +28,7 @@ type execOpts struct {
 	arg0           string // present a different argv[0] than the launched executable
 	hasArg0        bool
 	timeout        time.Duration // 0 = no limit
-	supervise      bool          // tie the child's lifetime to ours via the reaper (see supervise.go)
-}
-
-// newCmd builds the command, wiring a deadline when a timeout is set. The returned
-// ctx is non-nil only when timed; callers compare ctx.Err() to detect a timeout.
-func newCmd(argv []string, o execOpts) (*exec.Cmd, context.Context, context.CancelFunc, error) {
-	exe, preserveArg0, err := resolveExecPath(argv[0], o)
-	if err != nil {
-		return nil, nil, func() {}, err
-	}
-	if o.timeout > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
-		cmd := exec.CommandContext(ctx, exe, argv[1:]...)
-		if preserveArg0 {
-			cmd.Args[0] = argv[0]
-		}
-		setTreeKill(cmd)
-		return cmd, ctx, cancel, nil
-	}
-	cmd := exec.Command(exe, argv[1:]...)
-	if preserveArg0 {
-		cmd.Args[0] = argv[0]
-	}
-	return cmd, nil, func() {}, nil
-}
-
-func newUntimedCmd(argv []string, o execOpts) (*exec.Cmd, error) {
-	exe, preserveArg0, err := resolveExecPath(argv[0], o)
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.Command(exe, argv[1:]...)
-	if preserveArg0 {
-		cmd.Args[0] = argv[0]
-	}
-	return cmd, nil
-}
-
-// setTreeKill makes a timeout kill the whole process TREE, not just the direct
-// child. Without it, a child that spawns its own children (e.g. `cmd /c foo`)
-// leaves a grandchild holding the stdout pipe, so Wait blocks until it finishes —
-// defeating the timeout. It cancels via taskkill /T; WaitDelay is a backstop so
-// Wait can't hang if the kill is ignored.
-func setTreeKill(cmd *exec.Cmd) {
-	cmd.WaitDelay = 3 * time.Second
-	cmd.Cancel = func() error { _ = killTree(cmd); return nil }
-}
-
-// killTree terminates cmd and its whole descendant tree, so a child that spawned
-// its own children (a grandchild holding a pipe) can't survive. It uses taskkill /T
-// (which walks the PID tree), falling back to killing the direct process if taskkill
-// is unavailable. Used by the timeout, each_line-abort, and kill() paths alike.
-func killTree(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return fmt.Errorf("process not started")
-	}
-	if err := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
-		return nil // tree terminated
-	}
-	return cmd.Process.Kill()
-}
-
-// finishErr turns a failed run into a catchable Err: a deadline hit is a timeout
-// (code 124, like GNU timeout); otherwise it carries the child's exit code.
-func finishErr(name string, runErr error, stderrText string, ctx context.Context, o execOpts) value.Value {
-	if ctx != nil && ctx.Err() == context.DeadlineExceeded {
-		return value.MakeErr(fmt.Sprintf("%s timed out after %s", name, o.timeout), 124)
-	}
-	return execError(name, runErr, stderrText)
+	supervise      bool          // start(): tie a detached child's lifetime to ours (KILL_ON_JOB_CLOSE)
 }
 
 // builtinRun spawns a command with inherited stdio, returning true on success or
@@ -130,19 +62,43 @@ func builtinRun(args []value.Value) (value.Value, error) {
 // It is an intentionally SHARED reference (DeepCopy returns itself); a goroutine
 // reaps the child and records its exit status, which await(proc) reads.
 type Proc struct {
-	cmd  *exec.Cmd
+	mu   sync.Mutex  // guards job: kill's Terminate vs. the reaping goroutine's Close
+	job  *winjob.Job // the command job — Terminate kills the tree, Close releases; nil once closed
+	pid  int
 	done chan struct{}
 	res  value.Value // exit status: true on 0, else a catchable Err carrying the code
 }
 
 func (p *Proc) TypeName() string                           { return "process" }
-func (p *Proc) Display() string                            { return fmt.Sprintf("<process %d>", p.cmd.Process.Pid) }
+func (p *Proc) Display() string                            { return fmt.Sprintf("<process %d>", p.pid) }
 func (p *Proc) Len() int                                   { return 0 }
 func (p *Proc) DeepCopy(map[value.Obj]value.Obj) value.Obj { return p }
 
 func (p *Proc) Equal(o value.Obj) bool {
 	other, ok := o.(*Proc)
 	return ok && other == p
+}
+
+// terminate kills the process and its whole tree via the command job — idempotent, and safe
+// against the reaping goroutine's closeJob.
+func (p *Proc) terminate() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.job != nil {
+		_ = p.job.Terminate(1)
+	}
+}
+
+// closeJob releases drang's handle to the command job once the child is reaped. For a
+// non-supervised (not KILL_ON_JOB_CLOSE) job this just drops our reference; a still-living child
+// outlives drang.
+func (p *Proc) closeJob() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.job != nil {
+		p.job.Close()
+		p.job = nil
+	}
 }
 
 // builtinStart launches a command WITHOUT waiting — a detached background/GUI child
@@ -155,24 +111,26 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, err := newUntimedCmd(argv, opts)
+	// Detached: stdio goes to the null device (not the terminal), like `exec cmd &`.
+	c, err := newJobCmd(argv, opts, nil, nil, nil)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
-	applyExecOpts(cmd, opts) // cwd + env; stdio stays detached
-	if opts.hasStdin {
-		cmd.Stdin = strings.NewReader(opts.stdin)
-	}
-	if startErr := cmd.Start(); startErr != nil {
+	c.timeout = 0                  // a detached process is not bounded by the {timeout} option
+	c.killOnClose = opts.supervise // supervise:true ties it to drang's life; else it outlives drang
+	if startErr := c.start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
 	}
-	dereg := superviseAfterStart(cmd, opts.supervise)
-	p := &Proc{cmd: cmd, done: make(chan struct{}), res: value.MakeBool(true)}
+	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true)}
 	go func() {
 		defer close(p.done)
-		defer dereg() // tell the reaper the child is gone once we've reaped it
-		if werr := cmd.Wait(); werr != nil {
-			p.res = execError(argv[0], werr, "") // exit code as a catchable Err
+		code, werr := c.proc.Wait() // reap the child; the NUL stdio needs no draining
+		p.closeJob()
+		switch {
+		case werr != nil:
+			p.res = value.MakeErr(fmt.Sprintf("%s: %v", argv[0], werr), 1)
+		case code != 0:
+			p.res = execErrCode(argv[0], code, "")
 		}
 	}()
 	return value.MakeObj(value.Proc, p), nil
@@ -194,9 +152,7 @@ func builtinKill(args []value.Value) (value.Value, error) {
 	if !ok {
 		return errv, nil
 	}
-	if err := killTree(p.cmd); err != nil { // whole tree, not just the direct child
-		return value.MakeErr(fmt.Sprintf("kill: %v", err), 1), nil
-	}
+	p.terminate() // whole tree, not just the direct child; idempotent if already gone
 	return value.MakeBool(true), nil
 }
 
@@ -209,7 +165,7 @@ func builtinPid(args []value.Value) (value.Value, error) {
 	if !ok {
 		return errv, nil
 	}
-	return value.MakeInt(int64(p.cmd.Process.Pid)), nil
+	return value.MakeInt(int64(p.pid)), nil
 }
 
 // builtinEachLine runs a command and invokes a callback with each line of its
@@ -250,8 +206,8 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 
 	scanner := bufio.NewScanner(pr)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long lines
-	var cbErr error          // a callback exit/die to propagate
-	var abortVal value.Value // a callback-returned Err to surface
+	var cbErr error                                       // a callback exit/die to propagate
+	var abortVal value.Value                              // a callback-returned Err to surface
 	aborted := false
 	for scanner.Scan() {
 		v, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())})
@@ -468,18 +424,6 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	return value.MakeStr(strings.TrimSpace(out.String()))
 }
 
-func applyExecOpts(cmd *exec.Cmd, o execOpts) {
-	if o.cwd != "" {
-		cmd.Dir = o.cwd
-	}
-	if o.hasEnv {
-		cmd.Env = o.env
-	}
-	if o.hasArg0 && len(cmd.Args) > 0 {
-		cmd.Args[0] = o.arg0 // child sees this as argv[0]; cmd.Path still launches the real exe
-	}
-}
-
 // splitExecArgs peels a trailing options map, then flattens the remaining args
 // one level (arrays splice; scalars stringify) into the command words. Zero
 // command words is an aborting (arity) error.
@@ -638,20 +582,6 @@ func envLookupFold(env []string, key string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func resolveExecPath(name string, o execOpts) (string, bool, error) {
-	if !o.resolveWithEnv || hasPathSeparator(name) || filepath.IsAbs(name) {
-		return name, false, nil
-	}
-	path, _ := envLookupFold(o.env, "PATH")
-	if path == "" {
-		return "", false, fmt.Errorf("exec: %q: executable file not found in PATH", name)
-	}
-	if found, ok := lookPathInEnv(name, path, o.env); ok {
-		return found, true, nil
-	}
-	return "", false, fmt.Errorf("exec: %q: executable file not found in PATH", name)
 }
 
 func hasPathSeparator(s string) bool {
