@@ -181,6 +181,18 @@ func TestNewerAndStale(t *testing.T) {
 	if v := callBuiltin(t, "stale", str(older), value.MakeArray([]value.Value{str(filepath.Join(dir, "gone"))})); !v.IsErr() {
 		t.Error("stale with a missing source should be an Err value")
 	}
+
+	// mtime returns float Unix seconds (same unit as now())
+	mt := callBuiltin(t, "mtime", str(newerF))
+	if mt.Tag() != value.Float {
+		t.Errorf("mtime should return a float, got %s", mt.TypeName())
+	}
+	if mt.AsFloat() != 2_000_000 {
+		t.Errorf("mtime(newerF) = %v, want 2000000", mt.AsFloat())
+	}
+	if v := callBuiltin(t, "mtime", str(filepath.Join(dir, "gone"))); !v.IsErr() {
+		t.Error("mtime on a missing file should be an Err value")
+	}
 }
 
 func TestExecArgFlatten(t *testing.T) {

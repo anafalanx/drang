@@ -176,7 +176,7 @@ func builtinToCSV(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	crlf, err := optBool(opts, "crlf", false)
+	crlf, err := optBool(opts, "crlf", true) // CRLF by default (RFC 4180 / Excel); {crlf: false} for \n
 	if err != nil {
 		return value.MakeNil(), err
 	}
