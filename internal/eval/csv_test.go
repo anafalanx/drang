@@ -25,23 +25,24 @@ func TestCSV(t *testing.T) {
 		{"ragged-lenient", `say(to_json(from_csv("a,b\n1,2,3", {lenient: true})))`, `[["a","b"],["1","2","3"]]` + "\n"},
 
 		// --- write ---
-		{"write-arrays", `say(to_csv([["a","b"],["1","2"]]) == "a,b\n1,2\n")`, "true\n"},
-		{"write-records", `say(to_csv([{"name": "x", "age": 9}]) == "name,age\nx,9\n")`, "true\n"},
-		{"cell-types", `say(to_csv([[1, 2.5, true]]) == "1,2.5,true\n")`, "true\n"},
+		{"write-arrays", `say(to_csv([["a","b"],["1","2"]]) == "a,b\r\n1,2\r\n")`, "true\n"},
+		{"write-records", `say(to_csv([{"name": "x", "age": 9}]) == "name,age\r\nx,9\r\n")`, "true\n"},
+		{"cell-types", `say(to_csv([[1, 2.5, true]]) == "1,2.5,true\r\n")`, "true\n"},
 		{"crlf-write", `say(to_csv([["a","b"]], {crlf: true}) == "a,b\r\n")`, "true\n"},
-		{"no-header-write", `say(to_csv([{"a": 1}], {header: false}) == "1\n")`, "true\n"},
+		{"lf-opt-out", `say(to_csv([["a","b"]], {crlf: false}) == "a,b\n")`, "true\n"},
+		{"no-header-write", `say(to_csv([{"a": 1}], {header: false}) == "1\r\n")`, "true\n"},
 
 		// --- error model: bad data is a catchable Err value ---
 		{"nonscalar-cell-errs", `say(is_err(to_csv([[ [1,2] ]])))`, "true\n"},
 		{"record-missing-field-strict", `say(is_err(to_csv([{"a": 1}, {"b": 2}])))`, "true\n"},
-		{"record-lenient-fills", `say(to_csv([{"a": 1, "b": 2}, {"a": 3}], {lenient: true}) == "a,b\n1,2\n3,\n")`, "true\n"},
+		{"record-lenient-fills", `say(to_csv([{"a": 1, "b": 2}, {"a": 3}], {lenient: true}) == "a,b\r\n1,2\r\n3,\r\n")`, "true\n"},
 		{"malformed-is-catchable", `say(is_err(from_csv("a \"b\" c")))`, "true\n"},
 
 		// --- strict guards against silent data loss (from adversarial review) ---
 		{"dup-header-errs", `say(is_err(from_csv("a,a\n1,2", {header: true})))`, "true\n"},
 		{"dup-header-lenient", `say(to_json(from_csv("a,a\n1,2", {header: true, lenient: true})))`, `[{"a":"2"}]` + "\n"},
 		{"ragged-array-write-errs", `say(is_err(to_csv([["a","b"],["c"]])))`, "true\n"},
-		{"ragged-array-write-lenient", `say(to_csv([["a","b"],["c"]], {lenient: true}) == "a,b\nc\n")`, "true\n"},
+		{"ragged-array-write-lenient", `say(to_csv([["a","b"],["c"]], {lenient: true}) == "a,b\r\nc\r\n")`, "true\n"},
 		{"divergent-keys-errs", `say(is_err(to_csv([{"a": 1, "b": 2}, {"c": 3, "d": 4}])))`, "true\n"},
 	}
 	for _, c := range cases {
@@ -108,7 +109,7 @@ func TestCSVNilCell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.AsStr() != "a,,c\n" {
-		t.Errorf("nil cell: got %q, want %q", v.AsStr(), "a,,c\n")
+	if v.AsStr() != "a,,c\r\n" {
+		t.Errorf("nil cell: got %q, want %q", v.AsStr(), "a,,c\r\n")
 	}
 }

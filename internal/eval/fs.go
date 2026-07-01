@@ -198,6 +198,8 @@ func builtinMkdir(args []value.Value) (value.Value, error) {
 	return value.MakeStr(p), nil
 }
 
+// builtinMtime returns a file's modification time as float Unix seconds (sub-second
+// precision, the same unit as now()), or a catchable Err if the file is missing.
 func builtinMtime(args []value.Value) (value.Value, error) {
 	p, err := oneString("mtime", args)
 	if err != nil {
@@ -207,7 +209,7 @@ func builtinMtime(args []value.Value) (value.Value, error) {
 	if e != nil {
 		return value.MakeErr("mtime "+p+": "+e.Error(), 1), nil
 	}
-	return value.MakeInt(fi.ModTime().Unix()), nil
+	return value.MakeFloat(float64(fi.ModTime().UnixNano()) / 1e9), nil
 }
 
 func builtinNewer(args []value.Value) (value.Value, error) {

@@ -2466,7 +2466,7 @@ when you want stable forward-slash output (e.g. for logging or comparison).
 
 These power the classic "rebuild only if stale" pattern.
 
-- `mtime(p)` → modification time as a Unix-seconds int, or `Err` if missing.
+- `mtime(p)` → modification time as float Unix seconds (sub-second, same unit as `now()`), or `Err` if missing.
 - `newer(a, b)` → bool: is `a` strictly newer than `b`? Both must exist (a
   missing operand is an `Err`).
 - `stale(target, sources)` → bool: does `target` need rebuilding? True if
@@ -2500,11 +2500,10 @@ if stale($obj, $srcs) {
 }
 ```
 
-**Timestamp granularity caveat:** `mtime` resolves to whole seconds, so two
-files written in the same instant compare equal. `newer` returns `false` in
-both directions for them. Freshness checks are reliable across a real time gap
-(an actual edit between builds), not for files created back-to-back in one
-script run.
+**Timestamp precision:** `mtime` returns sub-second float seconds (the same unit as
+`now()`), and `newer` / `stale` compare the full timestamps, so files written
+back-to-back are distinguished on NTFS (~100 ns resolution). Precision is ultimately
+bounded by the filesystem (e.g. FAT resolves to 2 s).
 
 ---
 
@@ -2594,7 +2593,7 @@ Options (an optional trailing map):
 | `comment` | read | skip lines whose first character is this |
 | `trim` | read | drop leading whitespace in each field |
 | `lazy_quotes` | read | tolerate stray quotes in malformed input |
-| `crlf` | write | end lines with `\r\n` (strict RFC) instead of the default `\n` |
+| `crlf` | write | line ending: `\r\n` (the default, RFC 4180) — set `false` for `\n` |
 
 As with JSON, option misuse (a bad type, a multi-character or invalid `sep`, an
 unknown option key) aborts; malformed CSV and unencodable rows are catchable `Err`
@@ -3093,7 +3092,7 @@ Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bign
 | `from_json` | `from_json(s)` | Parse JSON into drang values (object→map, array→array, number→int/float); malformed input → Err. |
 | `to_json` | `to_json(v, indent?)` | Render a value as JSON; `indent` (int spaces or whitespace string) pretty-prints, else compact. Non-encodable values → Err. |
 | `from_csv` | `from_csv(s, opts?)` | Parse RFC 4180 CSV into rows (arrays, or records with `{header: true}`); strict by default. Malformed input → Err. |
-| `to_csv` | `to_csv(rows, opts?)` | Render rows (arrays or records) as CSV; minimal quoting, `\n` lines (`{crlf: true}` for `\r\n`). Bad rows → Err. |
+| `to_csv` | `to_csv(rows, opts?)` | Render rows (arrays or records) as CSV; minimal quoting, `\r\n` lines (`{crlf: false}` for `\n`). Bad rows → Err. |
 
 ### Collections & higher-order
 
@@ -3173,7 +3172,7 @@ a bool; the rest signal real I/O failures as Err.
 | `glob` | `glob(pattern)` | Sorted matches (supports `**`); no match is `[]`, bad pattern → Err. |
 | `read_dir` | `read_dir(p)` | List a dir as `[{name, path, is_dir}]` (sorted by name); missing → Err. |
 | `mkdir` | `mkdir(p)` | Create the directory tree (like `mkdir -p`); returns `p`, failure → Err. |
-| `mtime` | `mtime(p)` | Modification time as a Unix timestamp; missing → Err. |
+| `mtime` | `mtime(p)` | Modification time as float Unix seconds (sub-second); missing → Err. |
 | `newer` | `newer(a, b)` | True if `a` is newer than `b`; a missing path → Err. |
 | `stale` | `stale(target, sources)` | True if `target` is missing or older than any source; missing source → Err. |
 | `read_file` | `read_file(p)` | Read the whole file as a string; failure → Err. |
