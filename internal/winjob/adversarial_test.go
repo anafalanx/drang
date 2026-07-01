@@ -2,6 +2,7 @@ package winjob
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -92,6 +93,25 @@ func TestLaunchDoesNotMutateCallerHandle(t *testing.T) {
 	_, _ = Launch([]string{`C:\nope\missing.exe`}, "", childEnv("exit"), []*Job{job}, Stdio{Stdin: f, Stdout: f, Stderr: f})
 	if after := handleFlags(t, windows.Handle(f.Fd())) & windows.HANDLE_FLAG_INHERIT; after != 0 {
 		t.Error("failed Launch left the caller's handle inheritable")
+	}
+}
+
+// Regression: a GC racing an in-flight Wait must not let the AddCleanup safety net close the
+// process handle out from under Wait (KeepAlive guards it).
+func TestProcessWaitSurvivesGC(t *testing.T) {
+	job := mustJob(t, false)
+	defer job.Close()
+	f := nul(t)
+	defer f.Close()
+	for i := 0; i < 30; i++ {
+		p, err := Launch([]string{selfExe(t), "0"}, "", childEnv("exit"), []*Job{job}, Stdio{Stdin: f, Stdout: f, Stderr: f})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go runtime.GC() // race a GC against Wait to try to trigger a premature cleanup
+		if code, err := p.Wait(); err != nil || code != 0 {
+			t.Fatalf("iter %d: Wait = (%d, %v) — GC closed the handle mid-Wait?", i, code, err)
+		}
 	}
 }
 
