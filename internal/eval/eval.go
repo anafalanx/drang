@@ -1700,6 +1700,34 @@ var stderr io.Writer = os.Stderr
 // can't be fully fenced — prefer capture() inside parallel callbacks.)
 var outMu sync.Mutex
 
+// lockedWriter serializes writes to a shared io.Writer through outMu, so the stdio-copier
+// goroutines that run/each_line/pipe spin up (one per child, and many at once under pmap) can't
+// race each other — or say — on a common sink. It is a value type on purpose: two independent
+// wraps of the same underlying writer compare == (via interfaceEqual), so childStderr's
+// "stderr==stdout => one descriptor" reuse still fires.
+type lockedWriter struct{ w io.Writer }
+
+func (lw lockedWriter) Write(p []byte) (int, error) {
+	outMu.Lock()
+	defer outMu.Unlock()
+	return lw.w.Write(p)
+}
+
+// lockedShared wraps w so concurrent stdio copiers serialize on outMu — UNLESS w is nil or a raw
+// *os.File. Those bypass the copier path entirely (writerDescriptor hands an *os.File to the child
+// as its own descriptor, and nil means the null device), so there is nothing to fence; this is why
+// production os.Stdout/os.Stderr keep their lock-free direct-descriptor path and only buffer or
+// embedding sinks pay for the mutex.
+func lockedShared(w io.Writer) io.Writer {
+	if w == nil {
+		return nil
+	}
+	if _, ok := w.(*os.File); ok {
+		return w
+	}
+	return lockedWriter{w}
+}
+
 // swapStdout replaces the stdout writer and returns the previous one, holding outMu so
 // the change is synchronized with concurrent say writes — output capture (the test
 // runner) must not race builtinSay's read of stdout from a still-running spawned task.
