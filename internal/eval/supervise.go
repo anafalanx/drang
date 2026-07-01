@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 )
 
 // supervisor ties supervised child processes to this process's lifetime via a portable
@@ -83,17 +84,16 @@ func (s *supervisor) send(op byte, pid int) {
 	}
 }
 
-// superviseBegin prepares a child for reaper supervision; call before Start. When ownGroup is
-// set, it puts the child in its own process group on Unix so the reaper can kill the whole
-// descendant tree with a single killpg. ownGroup MUST be false for a foreground child that
-// shares our controlling terminal (the inherited-stdio `run` form): a new process group there
-// would background the child off the tty and stall an interactive child on SIGTTIN/SIGTTOU.
-// The detached/piped forms (start/capture/pipe/each_line) pass ownGroup=true safely. On
-// Windows this is always a no-op — taskkill /T walks the PID tree directly, no group needed.
-func superviseBegin(cmd *exec.Cmd, on, ownGroup bool) {
-	if on && ownGroup {
-		setSuperviseAttr(cmd)
+// detachReaper gives the reaper its own process group so a Ctrl-C / console-close event aimed
+// at our group is not delivered to it before it can reap. (A plain kill of our PID leaves the
+// reaper alive as a separate process; a taskkill /T of our PID would kill the reaper too, but
+// in that case it also killed the workload children, so there is nothing left to reap.)
+func detachReaper(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
+	cmd.SysProcAttr.HideWindow = true
 }
 
 // superviseAfterStart registers a just-started supervised child with the reaper and returns
@@ -110,13 +110,11 @@ func superviseAfterStart(cmd *exec.Cmd, on bool) func() {
 
 // runCmd runs cmd to completion, registering it with the reaper for its lifetime when
 // supervised. It returns the same error cmd.Run would: the start error if it can't start,
-// otherwise the wait (exit) error. When not supervised it IS cmd.Run, byte-for-byte. ownGroup
-// follows superviseBegin's rule — false for the foreground `run` form, true for capture forms.
-func runCmd(cmd *exec.Cmd, supervise, ownGroup bool) error {
+// otherwise the wait (exit) error. When not supervised it IS cmd.Run, byte-for-byte.
+func runCmd(cmd *exec.Cmd, supervise bool) error {
 	if !supervise {
 		return cmd.Run()
 	}
-	superviseBegin(cmd, true, ownGroup)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

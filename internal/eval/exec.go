@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -70,27 +69,23 @@ func newUntimedCmd(argv []string, o execOpts) (*exec.Cmd, error) {
 // setTreeKill makes a timeout kill the whole process TREE, not just the direct
 // child. Without it, a child that spawns its own children (e.g. `cmd /c foo`)
 // leaves a grandchild holding the stdout pipe, so Wait blocks until it finishes —
-// defeating the timeout. On Windows that means `taskkill /T`; WaitDelay is a
-// backstop so Wait can't hang if the kill is ignored.
+// defeating the timeout. It cancels via taskkill /T; WaitDelay is a backstop so
+// Wait can't hang if the kill is ignored.
 func setTreeKill(cmd *exec.Cmd) {
 	cmd.WaitDelay = 3 * time.Second
-	if runtime.GOOS == "windows" {
-		cmd.Cancel = func() error { _ = killTree(cmd); return nil }
-	}
+	cmd.Cancel = func() error { _ = killTree(cmd); return nil }
 }
 
 // killTree terminates cmd and its whole descendant tree, so a child that spawned
-// its own children (a grandchild holding a pipe) can't survive. On Windows that is
-// taskkill /T; elsewhere the direct process. Used by the timeout, each_line-abort,
-// and kill() paths alike.
+// its own children (a grandchild holding a pipe) can't survive. It uses taskkill /T
+// (which walks the PID tree), falling back to killing the direct process if taskkill
+// is unavailable. Used by the timeout, each_line-abort, and kill() paths alike.
 func killTree(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return fmt.Errorf("process not started")
 	}
-	if runtime.GOOS == "windows" {
-		if err := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
-			return nil // tree terminated
-		}
+	if err := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
+		return nil // tree terminated
 	}
 	return cmd.Process.Kill()
 }
@@ -124,7 +119,7 @@ func builtinRun(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
-	if runErr := runCmd(cmd, opts.supervise, false); runErr != nil { // run inherits the tty: no own group
+	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
 		return finishErr(argv[0], runErr, "", ctx, opts), nil
 	}
 	return value.MakeBool(true), nil // truthy success, composes with // and if
@@ -167,7 +162,6 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if opts.hasStdin {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
-	superviseBegin(cmd, opts.supervise, true) // detached stdio: safe to own its process group
 	if startErr := cmd.Start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
 	}
@@ -247,7 +241,6 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
-	superviseBegin(cmd, opts.supervise, true) // stdout is a pipe, stdin a reader: not the tty
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return value.MakeErr(fmt.Sprintf("each_line: %v", err), 1), nil
@@ -305,7 +298,7 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 		cmd.Stdin = strings.NewReader(opts.stdin)
 	}
 	applyExecOpts(cmd, opts)
-	if runErr := runCmd(cmd, opts.supervise, true); runErr != nil { // captured stdio, not the tty
+	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
 		return finishErr(argv[0], runErr, errBuf.String(), ctx, opts), nil
 	}
 	return value.MakeStr(strings.TrimSpace(out.String())), nil
@@ -335,7 +328,7 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	applyExecOpts(cmd, opts)
 
 	code := 0
-	if runErr := runCmd(cmd, opts.supervise, true); runErr != nil { // captured stdio, not the tty
+	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
 		switch {
 		case ctx != nil && ctx.Err() == context.DeadlineExceeded:
 			code = 124
@@ -423,8 +416,7 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 			cmds[i].Args[0] = av[0]
 		}
 		applyExecOpts(cmds[i], o)
-		superviseBegin(cmds[i], o.supervise, true) // wired via pipes, not the tty
-		cmds[i].Stderr = stderr                    // intermediate diagnostics stay visible
+		cmds[i].Stderr = stderr // intermediate diagnostics stay visible
 	}
 	if o.hasStdin {
 		cmds[0].Stdin = strings.NewReader(o.stdin)
@@ -612,8 +604,7 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 }
 
 // mergeEnv overlays the given key/value map onto the inherited environment, matching existing
-// keys by the host's case rule (case-insensitive on Windows, case-sensitive on Unix; see
-// envKeyEqual).
+// keys case-insensitively (Windows env-var names; see envKeyEqual).
 func mergeEnv(overlay *value.OrderedMap) []string {
 	return buildEnv(overlay, true)
 }
@@ -634,18 +625,9 @@ func buildEnv(overlay *value.OrderedMap, inherit bool) []string {
 	return result
 }
 
-// envKeyEqual reports whether two environment-variable names denote the same variable under
-// the host's case rule. Windows env names are case-insensitive; Unix is case-sensitive, so
-// folding there would wrongly collapse distinct vars (e.g. a `Path` overlay clobbering `PATH`,
-// or no longer adding a legitimately separate `Path`).
-func envKeyEqual(a, b string) bool { return envKeyMatch(a, b, runtime.GOOS == "windows") }
-
-func envKeyMatch(a, b string, fold bool) bool {
-	if fold {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
+// envKeyEqual reports whether two environment-variable names denote the same variable. Windows
+// env-var names are case-insensitive, so names are compared case-folded.
+func envKeyEqual(a, b string) bool { return strings.EqualFold(a, b) }
 
 func setEnvFold(env []string, key, val string) []string {
 	entry := key + "=" + val
@@ -682,12 +664,12 @@ func resolveExecPath(name string, o execOpts) (string, bool, error) {
 }
 
 func hasPathSeparator(s string) bool {
-	return strings.ContainsRune(s, os.PathSeparator) || (os.PathSeparator != '/' && strings.ContainsRune(s, '/'))
+	return strings.ContainsAny(s, `\/`)
 }
 
 func lookPathInEnv(name, path string, env []string) (string, bool) {
 	exts := []string{""}
-	if runtime.GOOS == "windows" && filepath.Ext(name) == "" {
+	if filepath.Ext(name) == "" {
 		pathext, ok := envLookupFold(env, "PATHEXT")
 		if !ok || strings.TrimSpace(pathext) == "" {
 			pathext = ".COM;.EXE;.BAT;.CMD"
@@ -715,13 +697,7 @@ func lookPathInEnv(name, path string, env []string) (string, bool) {
 
 func isExecutableFile(path string) bool {
 	st, err := os.Stat(path)
-	if err != nil || st.IsDir() {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return st.Mode()&0o111 != 0
+	return err == nil && !st.IsDir()
 }
 
 // execError converts an os/exec failure into a catchable Err value: a child that

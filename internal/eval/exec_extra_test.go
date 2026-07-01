@@ -2,7 +2,6 @@ package eval
 
 import (
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -28,9 +27,6 @@ func TestExecArg0(t *testing.T) {
 // TestCaptureAll: capture_all always returns a {out,err,code,ok} record; a
 // non-zero exit is data, never a thrown Err.
 func TestCaptureAll(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("capture_all end-to-end test uses cmd.exe")
-	}
 	cases := []struct{ name, src, want string }{
 		{"ok", `$r := capture_all(["cmd", "/c", "echo hi"]); say($r.out, $r.code, $r.ok)`, "hi 0 true\n"},
 		{"fail-code", `$r := capture_all(["cmd", "/c", "exit 3"]); say($r.code, $r.ok)`, "3 false\n"},
@@ -112,9 +108,6 @@ func TestExecEnvRenameHint(t *testing.T) {
 }
 
 func TestCaptureExactEnvDoesNotInheritParent(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("end-to-end env test uses cmd.exe")
-	}
 	t.Setenv("DRANG_PARENT_ONLY", "parent")
 	src := `$e := {
 	PATH: env("PATH"),
@@ -128,9 +121,6 @@ say(capture("cmd", "/c", "if defined DRANG_PARENT_ONLY (echo inherited:%DRANG_PA
 }
 
 func TestCaptureEnvAddInheritsParent(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("end-to-end env test uses cmd.exe")
-	}
 	t.Setenv("DRANG_PARENT_ONLY", "parent")
 	src := `say(capture("cmd", "/c", "echo %DRANG_PARENT_ONLY%:%DRANG_CHILD_ONLY%", {env_add: {DRANG_CHILD_ONLY: "child"}}))`
 	if got := run(t, src); got != "parent:child\n" {

@@ -1,10 +1,9 @@
 package main
 
-// Standalone executables. `drang build script.dr -o app.exe` copies a drang binary
-// (this one by default, or a target-OS/arch one via --runtime for cross-platform
-// builds) and appends the gzip-compressed source followed by a fixed trailer. At
-// startup drang inspects its own tail: if the trailer is present it runs the
-// embedded program (standalone mode); otherwise it behaves as the normal CLI.
+// Standalone executables. `drang build script.dr -o app.exe` copies this drang binary
+// and appends the gzip-compressed source followed by a fixed trailer. At startup drang
+// inspects its own tail: if the trailer is present it runs the embedded program
+// (standalone mode); otherwise it behaves as the normal CLI.
 //
 // Trailer layout (20 bytes, at the very end of the file):
 //   [ payloadLen : uint64 LE ][ version : uint32 LE ][ magic : 8 bytes ]
@@ -21,9 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 
 	"github.com/anafalanx/drang/internal/parser"
 )
@@ -118,7 +115,7 @@ func standaloneOrigin() string {
 
 // buildStandalone implements `drang build <script.dr> [-o <output>]`.
 func buildStandalone(args []string) {
-	var srcPath, outPath, runtimePath string
+	var srcPath, outPath string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-o", "--output":
@@ -127,13 +124,6 @@ func buildStandalone(args []string) {
 				os.Exit(2)
 			}
 			outPath = args[i+1]
-			i++
-		case "--runtime":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "drang build: --runtime needs a path to a drang binary")
-				os.Exit(2)
-			}
-			runtimePath = args[i+1]
 			i++
 		default:
 			if srcPath != "" {
@@ -162,16 +152,11 @@ func buildStandalone(args []string) {
 	if outPath == "" {
 		outPath = defaultOutput(srcPath)
 	}
-	// The base binary is this drang by default, or a supplied target-OS/arch drang
-	// (--runtime) for cross-platform builds — the appended payload is platform-agnostic.
-	exe := runtimePath
-	if exe == "" {
-		self, err := os.Executable()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "drang: cannot locate the drang binary:", err)
-			os.Exit(1)
-		}
-		exe = self
+	// The base binary is always this running drang — the appended payload is just data.
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "drang: cannot locate the drang binary:", err)
+		os.Exit(1)
 	}
 	if real, e := filepath.EvalSymlinks(exe); e == nil {
 		exe = real
@@ -191,9 +176,6 @@ func buildStandalone(args []string) {
 		fmt.Fprintln(os.Stderr, "drang build:", err)
 		os.Exit(1)
 	}
-	if runtimePath == "" {
-		signIfDarwin(outPath) // host-built only; a cross-built macOS exe must be signed on a Mac
-	}
 	fmt.Printf("built %s (%d bytes) from %s\n", outPath, n, srcPath)
 }
 
@@ -211,29 +193,13 @@ func sameFile(a, b string) bool {
 	return ea == nil && eb == nil && os.SameFile(fa, fb)
 }
 
-// signIfDarwin best-effort ad-hoc-signs the output on macOS, where appending the
-// payload invalidates the Mach-O signature and an unsigned binary is killed on
-// Apple Silicon. On failure it prints the manual command rather than failing the
-// build. A no-op on other platforms.
-func signIfDarwin(outPath string) {
-	if runtime.GOOS != "darwin" {
-		return
-	}
-	if out, err := exec.Command("codesign", "--force", "--sign", "-", outPath).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "drang build: warning: could not ad-hoc sign %s (%v) — run: codesign -s - %q\n%s", outPath, err, outPath, out)
-	}
-}
-
 func defaultOutput(srcPath string) string {
 	base := filepath.Base(srcPath)
 	base = base[:len(base)-len(filepath.Ext(base))]
 	if base == "" {
 		base = "app"
 	}
-	if runtime.GOOS == "windows" {
-		return base + ".exe"
-	}
-	return base
+	return base + ".exe"
 }
 
 // writeStandalone copies the runtime binary, appends the packed payload

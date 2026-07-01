@@ -10,7 +10,7 @@
 - `[PROPOSED]` — strawman, awaiting ratification
 - `[OPEN]` — not yet decided
 
-Last updated: 2026-06-25.
+Last updated: 2026-07-01.
 
 ---
 
@@ -29,6 +29,7 @@ drang is a small scripting language for **text processing and system glue** — 
 - **Not** Perl-compatible — no CPAN, no `$/`, no context.
 - **Not** a general-purpose application language — no class hierarchies, no metaobject protocol.
 - **Not** hermetic/sandboxed (the deliberate opposite of Starlark) — it's a glue language; it touches the world.
+- **Not** cross-platform — **Windows-only** (Windows 11 23H2+ / Windows Server 2025+); see §3.0.
 
 ---
 
@@ -53,6 +54,13 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 ---
 
 ## 3. Decision record
+
+### 3.0 Platform & portability
+- **Windows-only.** drang targets **Windows 11 23H2 and later**, plus **Windows Server releases that shipped with or after client 23H2** (in practice, Windows Server 2025 and later). Non-Windows builds are dropped. `[LOCKED 2026-07-01]`
+  - **Negotiable floor, one direction.** The 23H2 baseline may be *raised* to **25H2 or later** if a technical boundary is cleanly solved only by requiring it; it is never lowered.
+  - **Why.** drang's headline ambition is best-in-class process orchestration — supervision, resource limits, tight single-command steering, and the future *sturm* supervision tree. Those are the most platform-divergent features in the language, and a portable abstraction forces a lowest-common-denominator: the `{supervise}` reaper side-car exists *only* as a portable stand-in for die-with-parent. Cross-platform was therefore a hard quality ceiling on exactly the features drang most wants to excel at. And with no Linux box in the continuous validation loop, the non-Windows binaries were shipped unvalidated — an integrity problem. Committing to modern Windows lets drang use the right native mechanisms at full, validated quality: **Job Objects** (die-with-parent + whole-tree kill + resource limits + *nested* jobs, a native home for the sturm tree), **ConPTY**, and the full Win32 process API.
+  - **Consequences.** The `_unix` build-tagged code is retired; releases ship Windows binaries only; positioning becomes "first-class Windows orchestration" — an underserved niche, since bash / make / Python-subprocess all treat Windows as second-class.
+  - **Future Linux.** Not maintained continuously. If it ever happens, a Linux port is a *separate, dedicated, clean-room platform layer* validated on real hardware — never a revival of today's dropped stubs (which cost a proper port nothing). It may never happen; that is acceptable.
 
 ### 3.1 Variables & scope
 - **One sigil `$`** on every variable; type comes from the value, not the name. Unifies regular vars with the already-`$` magic vars; keeps `$"$x"` interpolation trivial. `[LOCKED]` *(revised from an earlier "three invariant sigils" choice.)*
@@ -376,7 +384,7 @@ The orchestration re-centering is combed end to end.
 ### Subprocess
 - `run(...)` streams stdio through (status result); `capture(...)` returns stdout; a process is **iterable as lazy lines** (`for $l in stream(...)`). `run` flattens list args. All fallible → `?`. `[LOCKED]`
 - Pipelines: native **`pipe(run(...), run(...))`** (os/exec wiring, no shell) + explicit **`sh("a | b")`** escape for real shell features. `[LOCKED]`
-- **Per-command `{cwd, env}` options** (os/exec `Cmd.Dir`/`Env`) — no global `cd` (goroutines share process cwd; a global chdir would race). `[LOCKED]`
+- **Per-command `{cwd, env, env_add}` options** (os/exec `Cmd.Dir`/`Env`) — `env` is the exact child environment, `env_add` overlays the inherited environment, and there is no global `cd` (goroutines share process cwd; a global chdir would race). `[LOCKED]`
 - Parallel processes = `pmap(items, |x| run(...)?)` (free; each gets a `CommandContext` timeout). Prefer `|>` + builtins over shelling out for text (grep/wc/sort → native, in-process).
 
 ### Stdlib API style
@@ -577,8 +585,9 @@ gate is **`newer`/`mtime` plus a `stale` helper**.
   code; `run(...) or`/`//` recover.
 - **`capture`** — buffers stdout, returns the **trimmed string** on success, an
   `Err` (child stderr folded into the message) on failure.
-- Both: top-level array args **flatten one level**; trailing **`{cwd, env, stdin}`**
-  options map; `env` overlays the environment **case-insensitively** (Windows).
+- Both: top-level array args **flatten one level**; trailing **`{cwd, env, env_add, stdin}`**
+  options map; `env` is exact, while `env_add` overlays the environment
+  **case-insensitively** (Windows).
 - **Filesystem (20 builtins):** `join dirname basename ext stem abs slash`
   (pure), `exists isdir` (bool guards), `glob` (sorted, empty-on-no-match,
   `**` recursive), `mkdir mtime newer stale`, `read_file write_file`, and the
@@ -1576,13 +1585,10 @@ Choices, against the `lana` prototype this was modeled on:
   caught the original truncate-before-copy: `build x.dr -o x.dr` destroyed the
   source; on POSIX, `-o <the running drang>` would have corrupted the install.)
 
-Cross-platform: trailing bytes after the image are ignored by the Windows and
-Linux loaders, so standalones run there natively. macOS — especially Apple
-Silicon — requires a valid (even ad-hoc) signature that appending invalidates, so
-on darwin `drang build` best-effort ad-hoc-signs the output
-(`codesign --force --sign -`) and, if that fails, prints the exact command to run.
-`drang build` produces an executable for the OS it runs on (it copies the running
-binary).
+Trailing bytes after the PE image are ignored by the Windows loader, so a standalone
+runs natively. `drang build` produces a Windows executable by copying the running binary.
+(The darwin ad-hoc-signing and Linux-loader paths were removed with the Windows-only
+pivot; see §3.0.)
 
 Verified by payload round-trip and atomic-write unit tests
 (`TestStandalonePayloadRoundTrip`: valid / plain / corrupt / version-mismatch;
@@ -1767,11 +1773,9 @@ each through an adversarial review:
   is data, not a thrown Err).
 - **Standalone** — `build -o` creates the output's parent dir; payload bumped to v2,
   framing the source basename so errors name the script (`pos.dr:2:5`) not the exe.
-- **Cross-build** — `drang build --runtime <base>` uses a supplied target-OS/arch
-  drang as the base, so a Linux/macOS standalone builds from any host (the payload is
-  platform-agnostic). Chosen over `--target os/arch` because a standalone needs an
-  actual target base binary, and supplying one (from the release) is the toolchain-
-  free, in-grain mechanism. Verified by producing a Linux ELF standalone on Windows.
+- **Cross-build** — `drang build --runtime <base>` (a supplied target-OS/arch base for
+  cross-platform standalones) shipped here, but was **removed with the Windows-only pivot**
+  (§3.0): builds now always copy the running Windows binary.
 
 Deferred from the decision poll: stringy coercion and a dropped-Err lint (both kept
 as locked-tension items, not pursued); `struct`/record (maps suffice for now). The
@@ -2389,6 +2393,13 @@ behavior-dependent migration site was in the Go test corpus; zero shipping `.dr`
 `{supervise: true}` on the exec builtins ties a child's lifetime to the drang process,
 portably, *without* OS job objects / `PR_SET_PDEATHSIG` / a per-OS guarantee.
 
+> **Superseded (2026-07-01).** This section documents the *portable* reaper, built specifically
+> to avoid a per-OS mechanism. The Windows-only decision (§3.0) reverses its central premise —
+> portability is no longer a constraint — so supervision migrates to **Job Objects**
+> (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`): a cleaner native die-with-parent that additionally
+> gives whole-tree kill, resource limits, and *nested* trees for the sturm layer. The reaper
+> design below is retained as record and remains the shipping mechanism until that migration lands.
+
 We rejected the Windows Job Object: its guarantee doesn't port (Windows is clean; Linux needs
 PID namespaces or cgroups; macOS has nothing equivalent), it would be the first `unsafe`/
 syscall-DLL code in the tree, and a guarantee that forks by OS is against the "runs identically
@@ -2426,10 +2437,10 @@ pre-killed reaper). All green. The two residuals are inherent, not bugs: a ~micr
 in-process start→register window (the same race the Job Object approach accepts) and a PID-reuse
 sliver (closed by deregister-on-reap in the normal case).
 
-**Unix is NOT yet validated at runtime — this needs exhaustive testing before it is trusted
-there.** The Unix path (supervise_unix.go, reap_unix.go) builds and vets cleanly on linux/darwin
-(amd64 + arm64) and is a direct translation of the proven Windows logic, but it has never been
-*run* on a real Unix host. The Windows battery must be ported (only the `pidAlive`/`taskkill`
-helpers are Windows-specific) and run on Linux and macOS, verifying the Setsid detach, Setpgid +
-`kill(-pid)` whole-tree reap, pipe-EOF on every death mode, fd close-on-exec hygiene, and the
-foreground-`run` SIGTTIN exclusion. Tracked in ROADMAP.md and flagged in supervise_unix.go.
+**Unix path — dropped (2026-07-01).** Per the Windows-only decision (§3.0) the Unix reaper
+(supervise_unix.go, reap_unix.go) is retired rather than validated: it was never *run* on a real
+host, and a future Linux port would be a clean-room rebuild, not a revival of it. On Windows-only
+the reaper side-car itself becomes replaceable — **Job Objects**
+(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) give die-with-parent, whole-tree kill, resource limits,
+and *nested* supervision trees natively, and are the planned substrate for supervision,
+`{restart}`, and the sturm tree. Migration tracked in ROADMAP.md.

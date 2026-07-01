@@ -19,7 +19,7 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
   top-level bindings are frozen and there are no mutable globals, so data-parallel code is lock-free.
 - **Perl's soul, not its warts**: one `$` sigil on every variable, string interpolation and heredocs,
   `qr//` regex literals, `q//`/`qq//`/`qw//` quotes, and `|>` pipelines.
-- **Glue built in**: `run`/`capture`/`pipe`/`start` with `{cwd, env, stdin, timeout}` options and
+- **Glue built in**: `run`/`capture`/`pipe`/`start` with `{cwd, env, env_add, stdin, timeout}` options and
   process-tree kill on timeout, `each_line` streaming, plus channels and tasks.
 - **Batteries, curated**: modules (`use`) with frozen exports, a standard library of ~120 builtins
   plus a drang-written prelude, JSON & CSV, `qr//` regexes, date/time, hashing/encoding, and a minimal
@@ -35,10 +35,9 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
 
 ## Install
 
-Grab a prebuilt binary from the [latest release](https://github.com/anafalanx/drang/releases/latest)
-(0.4 ships `drang_0.4_darwin_amd64`, `drang_0.4_darwin_arm64`, `drang_0.4_linux_amd64`, and
-`drang_0.4_windows_amd64.exe`), put it on your `PATH`, and `chmod +x` it on Linux/macOS, or build from
-source below.
+drang is **Windows-only** (Windows 11 23H2+ / Windows Server 2025+). Grab the prebuilt
+`drang_*_windows_amd64.exe` from the [latest release](https://github.com/anafalanx/drang/releases/latest),
+put it on your `PATH`, or build from source below.
 
 ## Build & run
 
@@ -68,9 +67,7 @@ drang build app.dr -o app   # -> ./app  (app.exe on Windows)
 ```
 
 `drang build` validates that the script parses, refuses to overwrite the source or the running
-interpreter, and writes atomically. It produces an executable for the platform it runs on: Windows and
-Linux work natively, and on macOS the build best-effort ad-hoc re-signs the result (appending the
-payload invalidates the Mach-O signature), printing the one `codesign -s -` command to run if it can't.
+interpreter, and writes atomically. It produces a standalone Windows executable (`app.exe`).
 
 ## Documentation
 

@@ -28,7 +28,7 @@ like Ruby, thinks like Perl, runs like Go").*
     See DESIGN.md → *Pre-0.4 core hardening*.
 - **0.5 (2026-06-29).** Opt-in string interpolation (`$"..."`; `''`/`""` no longer
   interpolate — a breaking change), `exe()` + `is_terminal()`, portable process supervision
-  (`{supervise: true}`, Windows-validated / Unix pending), and a self-documenting `format`
+  (`{supervise: true}`, Windows-validated; the Unix path was later dropped — see Direction), and a self-documenting `format`
   error for the printf habit. Plus a `gen_manual` table-renderer fix (a pipe inside a
   `code span` no longer over-splits a row).
 - **0.6 candidates (triaged 2026-06-29 — build on real daily-driver need, not speculatively).**
@@ -37,6 +37,13 @@ like Ruby, thinks like Perl, runs like Go").*
   `parse_url`, `hmac`/`sha512`, `indent`, array `reverse`, `title`, `chmod`. Also parked:
   one-liner in-place `-i`, char/string ranges, `match`/`switch`. **Decision (2026-06-29):
   stringy-numeric coercion is rejected** — `"5" + 3` stays a type error.
+- **Direction (2026-07-01): drang is Windows-only.** Targets **Windows 11 23H2+** and **Windows
+  Server 2025+** (baseline may rise to 25H2 if a technical boundary requires it, never lower).
+  Non-Windows builds are dropped; future releases ship Windows binaries only. The cross-platform
+  abstractions that capped the process-control features come out, replaced by native mechanisms —
+  **Job Objects** for supervision / resource limits / the *sturm* tree, **ConPTY**, and the full
+  Win32 process API. A Linux port, if it ever happens, is a separate clean-room effort. Full
+  rationale in DESIGN.md §3.0.
 
 ## State of the language
 
@@ -123,7 +130,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | Startup benchmark + prelude precompile (go:generate bytecode) | reserved optimization; gate behind a real benchmark first | S / M | DEFERRED-BY-DESIGN |
 | `--profile` pprof output | called a freebie in §11; `sys_gc` exists, no flag | S | NOT-STARTED |
 | Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
-| **Exhaustively test process supervision (`{supervise: true}`) on Unix** | the reaper side-car is hard-tested on Windows (15 funcs) but the Unix path (Setsid / Setpgid / `kill(-pid)`) has only been built+vetted, never *run*. Port the `cmd/drang/supervise_*_test.go` battery (only `pidAlive`/`taskkill` are Windows-specific) to Linux + macOS and run it before trusting supervision there. See the note in `internal/eval/supervise_unix.go` and DESIGN.md | M | **NOT-STARTED — blocks trusting supervise on Unix** |
+| ~~Exhaustively test process supervision (`{supervise: true}`) on Unix~~ | **DROPPED (2026-07-01)** — superseded by the Windows-only decision (DESIGN §3.0). The Unix reaper (`supervise_unix.go` / `reap_unix.go`) is retired, not validated. On Windows-only, supervision migrates from the reaper side-car to **Job Objects** (`KILL_ON_JOB_CLOSE` → die-with-parent + tree-kill + resource limits + nested trees). | — | DROPPED |
 | `is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check, not a real isatty | mintty / Git-Bash / MSYS2 (named-pipe ptys) report FALSE for a genuine interactive terminal, so `drang` run bare in Git Bash may not start a REPL and `is_terminal()` underreports there; `NUL` (Windows) and `/dev/null` (Unix) report TRUE but are harmless discard sinks; the default stream is stdin (gate any output styling on `is_terminal("stdout")`). Mostly fails safe toward plain text. Proper fix: `GetConsoleMode` + the Cygwin pipe-name heuristic on Windows, `TCGETS`/`TIOCGETA` ioctl on Unix. Surfaced by the 2026-06-30 console-UI brittleness study | S–M | KNOWN, mostly benign; fix optional |
 
 ## (e) Polish / recent-feature follow-ups

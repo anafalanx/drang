@@ -84,7 +84,7 @@ drang> $x * 2
 drang> exit
 ```
 
-Finally, **a standalone executable**: `drang build app.dr -o app` compiles a script into a single self-contained binary (the drang runtime with your program embedded) that needs no separate interpreter. Running it executes the embedded program, with arguments exposed as `$ARGV`. The build validates that the script parses and refuses to overwrite the source or the running interpreter; Windows and Linux are supported natively, and on macOS it best-effort ad-hoc re-signs the result.
+Finally, **a standalone executable**: `drang build app.dr -o app` compiles a script into a single self-contained binary (the drang runtime with your program embedded) that needs no separate interpreter. Running it executes the embedded program, with arguments exposed as `$ARGV`. The build validates that the script parses and refuses to overwrite the source or the running interpreter, producing a standalone Windows executable (`app.exe`; drang is Windows-only).
 
 ### Flags
 
@@ -1946,10 +1946,8 @@ expansion). Failures are values: a failed command returns a catchable `Err`
 carrying the child's exit code, which you propagate with `?`, recover with `//`,
 or inspect with `is_err`/`err_code`/`err_msg`.
 
-> All examples below were run on Windows, so they shell out to `cmd /c`,
-> `findstr`, `ping`, etc. The drang surface is identical on any platform; only
-> the command names differ. Examples deliberately use short, non-destructive
-> commands.
+> All examples below shell out to `cmd /c`, `findstr`, `ping`, etc. — drang is
+> Windows-only. Examples deliberately use short, non-destructive commands.
 
 ### `run`: execute and stream stdio
 
@@ -2011,10 +2009,10 @@ yourself as a single stage.)
 
 A trailing map sets per-command options on `run`, `capture`, `pipe`, `each_line`,
 and `start`. `env_exact` sets the child's **exact** environment: nothing is inherited
-unless you put it in the map (on Windows that means even `SystemRoot` and `PATH` are
-dropped unless you add them, so most callers want `env_add` instead). `env_add` is the
-overlay form: it starts from the inherited environment and replaces/adds the given keys,
-matched by the host's case rule (case-insensitive on Windows, case-sensitive on Unix).
+unless you put it in the map (even `SystemRoot` and `PATH` are dropped unless you add
+them, so most callers want `env_add` instead). `env_add` is the overlay form: it starts
+from the inherited environment and replaces/adds the given keys, matched case-insensitively
+(Windows env-var names).
 When either form is present, bare command names are resolved against that child
 environment's `PATH`; exact environments that launch bare commands usually need to
 include `PATH`. `timeout` is in **milliseconds** and `0` means no limit.
@@ -3169,7 +3167,7 @@ a bool; the rest signal real I/O failures as Err.
 | `clean` | `clean(p)` | Lexically simplify a path (resolve `.`/`..`). |
 | `rel` | `rel(base, p)` | Relative path from `base` to `p`; uncomparable → Err. |
 | `within` | `within(base, p)` | True if `p` is inside (or equal to) `base`. |
-| `path_list_sep` | `path_list_sep()` | OS PATH-list separator (`;` Windows / `:` Unix). |
+| `path_list_sep` | `path_list_sep()` | PATH-list separator (`;`). |
 | `exists` | `exists(p)` | True if the path exists. |
 | `is_dir` | `is_dir(p)` | True if the path exists and is a directory. |
 | `glob` | `glob(pattern)` | Sorted matches (supports `**`); no match is `[]`, bad pattern → Err. |
@@ -3230,8 +3228,8 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 |---|---|---|
 | `sys_gc` | `sys_gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
-| `env` | `env(name, default?)` | Process env var (case-insensitive on Windows); `default` or nil if unset. |
-| `os` | `os()` | Operating system name (`windows`/`darwin`/`linux`/…). |
+| `env` | `env(name, default?)` | Process env var (case-insensitive); `default` or nil if unset. |
+| `os` | `os()` | Operating system name — always `windows` (drang is Windows-only). |
 | `arch` | `arch()` | CPU architecture (`amd64`/`arm64`/…). |
 | `home` | `home()` | Current user's home directory; failure → Err. |
 | `exe` | `exe()` | Path of the running drang executable (find your own install location); failure → Err. |
