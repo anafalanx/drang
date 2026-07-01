@@ -68,6 +68,7 @@ var errWaitDone = errors.New("winjob: Wait already called")
 // Wait blocks until the child exits, returns its exit code, and releases the process handle. Call
 // it at most once; a second call returns an error rather than touching a closed handle.
 func (p *Process) Wait() (int, error) {
+	defer runtime.KeepAlive(p) // keep p reachable so its GC cleanup can't close the handle mid-Wait
 	h := p.ph.get()
 	if h == 0 {
 		return -1, errWaitDone
