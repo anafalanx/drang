@@ -88,31 +88,45 @@ func (p *Process) Wait() (int, error) {
 	return int(code), nil
 }
 
-// Launch starts argv as a child born into jobs (root-first order) at CreateProcess time — before
-// its first thread runs — so nothing the child spawns can escape those jobs (race-free). argv[0]
-// must be a resolved executable path (Launch does NOT search PATH), and must be absolute when dir
-// is set. dir is the working directory ("" inherits ours); env is the child environment (nil
-// inherits ours). Exactly the three stdio handles are inherited (as private duplicates); no other
-// handle leaks to the child, and the caller's own handles are never mutated.
+// Launch starts argv as a child born into jobs, taking the executable from argv[0]. See LaunchExe
+// for the full contract; use LaunchExe when the child's presented argv[0] must differ from the
+// executable (e.g. an arg0 override).
 func Launch(argv []string, dir string, env []string, jobs []*Job, io Stdio) (*Process, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("winjob.Launch: empty argv")
 	}
+	return LaunchExe(argv[0], argv, dir, env, jobs, io)
+}
+
+// LaunchExe starts exe as a child born into jobs (root-first order) at CreateProcess time — before
+// its first thread runs — so nothing the child spawns can escape those jobs (race-free). exe must be
+// a resolved executable path (no PATH search) and absolute when dir is set; argv is what the child
+// sees (argv[0] is the presented program name, which may differ from exe). dir is the working
+// directory ("" inherits ours); env is the child environment (nil inherits ours). Exactly the three
+// stdio handles are inherited (as private duplicates); no other handle leaks to the child, and the
+// caller's own handles are never mutated.
+func LaunchExe(exe string, argv []string, dir string, env []string, jobs []*Job, io Stdio) (*Process, error) {
+	if exe == "" {
+		return nil, fmt.Errorf("winjob.LaunchExe: empty exe")
+	}
+	if len(argv) == 0 {
+		argv = []string{exe}
+	}
 	if io.Stdin == nil || io.Stdout == nil || io.Stderr == nil {
-		return nil, fmt.Errorf("winjob.Launch: all three stdio handles must be non-nil")
+		return nil, fmt.Errorf("winjob.LaunchExe: all three stdio handles must be non-nil")
 	}
 	if len(jobs) == 0 {
-		return nil, fmt.Errorf("winjob.Launch: at least one job is required")
+		return nil, fmt.Errorf("winjob.LaunchExe: at least one job is required")
 	}
-	if dir != "" && !filepath.IsAbs(argv[0]) {
+	if dir != "" && !filepath.IsAbs(exe) {
 		// CreateProcess resolves a relative lpApplicationName against OUR cwd, not dir; refuse the
 		// ambiguity rather than silently launch the wrong binary (or none).
-		return nil, fmt.Errorf("winjob.Launch: argv[0] %q must be an absolute path when dir is set", argv[0])
+		return nil, fmt.Errorf("winjob.LaunchExe: exe %q must be an absolute path when dir is set", exe)
 	}
 
-	appName, err := windows.UTF16PtrFromString(argv[0])
+	appName, err := windows.UTF16PtrFromString(exe)
 	if err != nil {
-		return nil, fmt.Errorf("winjob.Launch: bad executable path %q: %w", argv[0], err)
+		return nil, fmt.Errorf("winjob.LaunchExe: bad executable path %q: %w", exe, err)
 	}
 	cmdLine, err := windows.UTF16PtrFromString(makeCmdLine(argv))
 	if err != nil {
