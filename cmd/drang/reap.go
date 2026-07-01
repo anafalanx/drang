@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // runReap is the hidden `drang --reap` side-car. A parent drang process spawns it, hands it
@@ -48,4 +50,13 @@ func reapTargets(r io.Reader) []int {
 		out = append(out, pid)
 	}
 	return out
+}
+
+// killProcTree kills the child and all its descendants with taskkill /T, which walks the PID
+// tree. Best-effort: an already-dead pid just yields a non-zero exit we ignore. The taskkill
+// helper runs with no window.
+func killProcTree(pid int) {
+	cmd := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = cmd.Run()
 }

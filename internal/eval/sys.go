@@ -44,8 +44,8 @@ func builtinEnv(args []value.Value) (value.Value, error) {
 	return value.MakeNil(), nil
 }
 
-// builtinOS returns the operating system name ("windows", "darwin", "linux", ...) so a
-// cross-platform script can branch.
+// builtinOS returns the operating system name — always "windows" (drang is Windows-only). Kept
+// for scripts that want to record or display the platform.
 func builtinOS(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {
 		return value.MakeNil(), fmt.Errorf("os expects 0 arguments, got %d", len(args))

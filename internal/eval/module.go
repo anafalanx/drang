@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -205,9 +204,6 @@ func resolvePath(pathArg, baseDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving %q: %v", pathArg, err)
 	}
-	canon := filepath.Clean(abs)
-	if runtime.GOOS == "windows" {
-		canon = strings.ToLower(canon)
-	}
+	canon := strings.ToLower(filepath.Clean(abs)) // Windows paths are case-insensitive
 	return canon, nil
 }
