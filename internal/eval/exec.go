@@ -39,7 +39,10 @@ func builtinRun(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	c, err := newJobCmd(argv, opts, os.Stdin, stdout, stderr)
+	// stdout/stderr are process-wide shared writers; serialize their copiers (see lockedShared) so
+	// concurrent pmap workers running run() can't race the common sink. os.Stdout/os.Stderr are
+	// *os.File and pass through unwrapped to the lock-free direct-descriptor path.
+	c, err := newJobCmd(argv, opts, os.Stdin, lockedShared(stdout), lockedShared(stderr))
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
@@ -191,7 +194,7 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeErr(fmt.Sprintf("each_line: %v", err), 1), nil
 	}
-	c, err := newJobCmd(argv, opts, nil, pw, stderr) // stdout -> a pipe we scan; stderr stays on the terminal
+	c, err := newJobCmd(argv, opts, nil, pw, lockedShared(stderr)) // stdout -> a pipe we scan; stderr stays on the terminal (serialized)
 	if err != nil {
 		pr.Close()
 		pw.Close()
@@ -357,9 +360,9 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	var out, lastErr bytes.Buffer
 
 	for i, av := range argvs {
-		stderrW := stderr // intermediate diagnostics stay visible
+		stderrW := lockedShared(stderr) // intermediate diagnostics stay visible; serialize the shared sink
 		if i == n-1 {
-			stderrW = &lastErr // the last stage's stderr folds into its Err, like capture
+			stderrW = &lastErr // the last stage's stderr folds into its Err, like capture (a private buffer)
 		}
 		c, err := newJobCmd(av, o, nil, nil, stderrW)
 		if err != nil {
@@ -404,22 +407,34 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	}
 	closePipes() // drop the parent's inter-stage copies so EOF propagates between children
 
-	var code int
-	var timedOut bool
+	// Wait every stage (each must be reaped and its job closed). A timeout or system error in ANY
+	// stage governs the pipeline — an intermediate stage that is tree-killed on timeout would let a
+	// downstream stage see a clean EOF and exit 0, so keying only off the last stage (bash's exit
+	// semantics) would silently swallow the timeout. Absent those, the last stage's exit code is the
+	// pipeline's status, per bash.
+	lastCode := 0
+	timedOutStage := -1
 	var werr error
+	werrStage := -1
 	for i := range stages {
 		cd, to, we := stages[i].wait()
+		if to && timedOutStage < 0 {
+			timedOutStage = i
+		}
+		if we != nil && werr == nil {
+			werr, werrStage = we, i
+		}
 		if i == n-1 { // bash pipeline semantics: the last stage's status is the pipeline's
-			code, timedOut, werr = cd, to, we
+			lastCode = cd
 		}
 	}
 	switch {
-	case timedOut:
-		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argvs[n-1][0], o.timeout), 124)
+	case timedOutStage >= 0:
+		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argvs[timedOutStage][0], o.timeout), 124)
 	case werr != nil:
-		return value.MakeErr(fmt.Sprintf("pipe: %v", werr), 1)
-	case code != 0:
-		return execErrCode(argvs[n-1][0], code, lastErr.String())
+		return value.MakeErr(fmt.Sprintf("pipe: stage %d (%s): %v", werrStage+1, argvs[werrStage][0], werr), 1)
+	case lastCode != 0:
+		return execErrCode(argvs[n-1][0], lastCode, lastErr.String())
 	}
 	return value.MakeStr(strings.TrimSpace(out.String()))
 }
