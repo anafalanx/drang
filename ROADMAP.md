@@ -106,7 +106,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits) | Go | 0.6 CANDIDATE |
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
 | ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
-| TOML / INI config parsing | no Go-stdlib parser → conflicts with stdlib-only pillar | Go | GATED (decision-record first) |
+| TOML / INI config parsing | no Go-stdlib parser → would need a third-party library (against the dependency-light pillar) | Go | GATED (decision-record first) |
 | ~~First-class builtin values (`map($xs, basename)`)~~ | the long-standing HOF wart — **DONE**: a bare builtin name is a function value on both backends | (language) | ✅ DONE |
 | `sh()` shell-escape; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency batteries; build on demand | mixed | DEFERRED-BY-DESIGN |
 
@@ -131,7 +131,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | `--profile` pprof output | called a freebie in §11; `sys_gc` exists, no flag | S | NOT-STARTED |
 | Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
 | ~~Exhaustively test process supervision (`{supervise: true}`) on Unix~~ | **DROPPED (2026-07-01)** — superseded by the Windows-only decision (DESIGN §3.0). The Unix reaper (`supervise_unix.go` / `reap_unix.go`) is retired, not validated. On Windows-only, supervision migrates from the reaper side-car to **Job Objects** (`KILL_ON_JOB_CLOSE` → die-with-parent + tree-kill + resource limits + nested trees). | — | DROPPED |
-| `is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check, not a real isatty | mintty / Git-Bash / MSYS2 (named-pipe ptys) report FALSE for a genuine interactive terminal, so `drang` run bare in Git Bash may not start a REPL and `is_terminal()` underreports there; `NUL` (Windows) and `/dev/null` (Unix) report TRUE but are harmless discard sinks; the default stream is stdin (gate any output styling on `is_terminal("stdout")`). Mostly fails safe toward plain text. Proper fix: `GetConsoleMode` + the Cygwin pipe-name heuristic on Windows, `TCGETS`/`TIOCGETA` ioctl on Unix. Surfaced by the 2026-06-30 console-UI brittleness study | S–M | KNOWN, mostly benign; fix optional |
+| ~~`is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check~~ | **FIXED (2026-07-01):** replaced with a real Windows isatty — `GetConsoleMode` plus the MSYS2/Cygwin pty-name heuristic (`internal/eval/terminal.go`, shared by `is_terminal()` and the REPL), so mintty / Git Bash now start the REPL and `is_terminal()` reports correctly there. Also added `SetConsoleOutputCP(CP_UTF8)` at startup so non-ASCII output isn't mojibake on a stock console. | S–M | ✅ DONE |
 
 ## (e) Polish / recent-feature follow-ups
 
@@ -169,8 +169,8 @@ declined. The attractive parts (16-color styling, tables, cooked prompts) are ch
 value-add (color under Git Bash/mintty, hidden password input) forces ownership of an
 undocumented MSYS pipe-name heuristic and per-arch termios that cannot be tested from a Windows
 dev box, and the facility would be invisibly degraded in the maintainer's own shell. A
-stdlib-only, Windows-first language should not take that on; do not re-propose without new
-information. (The pre-existing `is_terminal` brittleness this surfaced is tracked in §(d).)
+dependency-light, Windows-first language should not take that on; do not re-propose without new
+information. (The `is_terminal` brittleness this surfaced is now FIXED — see §(d).)
 
 ## Recommended next 3–5
 
