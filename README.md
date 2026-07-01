@@ -1,7 +1,7 @@
 # drang
 
 A small, parallel, **Perl-inspired** scripting language for text processing, system glue, and
-orchestration, implemented in Go (standard library only). *Reads like Ruby, thinks like Perl, runs
+orchestration, implemented in Go (standard library, plus `golang.org/x/sys/windows` for the Win32 APIs). *Reads like Ruby, thinks like Perl, runs
 like Go.*
 
 *(drang is Dutch/German for drive, urge, momentum.)*

@@ -20,7 +20,7 @@ drang is a small scripting language for **text processing and system glue** — 
 
 - **Simpler than Perl.** Keep Perl's *soul* (first-class regex, terse one-liners, sigils, interpolation, autovivification) without its warts (scalar/list context, `bless`, typeglobs, the punctuation-variable zoo, string `eval`).
 - **Fast.** A register bytecode VM over an unboxed value representation, with variables resolved to slots at compile time.
-- **Complete via Go's stdlib.** The standard library is a *curated binding* over Go's — text, files, `os/exec`, encoding, net — not a from-scratch reimplementation.
+- **Complete via Go's stdlib.** The standard library is a *curated binding* over Go's — text, files, `os/exec`, encoding, net — not a from-scratch reimplementation. The one non-stdlib dependency is `golang.org/x/sys/windows` (the Go team's Win32 binding, for the console and Job-Object APIs).
 - **Genuinely parallel.** Real multi-core execution (no GIL), made *safe by construction* rather than by locks.
 - **Ships as a single exe.** `build` turns a source file into a standalone Windows executable.
 
@@ -405,7 +405,7 @@ Truthiness rule · implicit return · integer-overflow policy · operator set ·
 
 ## 14. Build progress (2026-06-25) — the walking skeleton runs
 
-Implementation underway in Go: stdlib-only, `module github.com/anafalanx/drang`,
+Implementation underway in Go: near-stdlib (Go stdlib + `golang.org/x/sys/windows`), `module github.com/anafalanx/drang`,
 `go 1.26`, vendored toolchain (`r/go/1.26.4`). Layout mirrors `_kuu`:
 `cmd/drang` + `internal/{token,lexer,ast,parser,value,eval}`.
 

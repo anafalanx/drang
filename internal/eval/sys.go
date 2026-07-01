@@ -92,9 +92,9 @@ func builtinExe(args []value.Value) (value.Value, error) {
 // builtinIsTerminal reports whether a standard stream is connected to a terminal rather
 // than a pipe or file — the test a tool uses to decide whether to colorize output or drop
 // into an interactive prompt. The optional argument picks the stream: "stdin" (default),
-// "stdout", or "stderr"; an unknown name is a catchable Err, and a stat failure reports
-// false. It is the same os.ModeCharDevice check drang's own REPL uses to detect an
-// interactive session.
+// "stdout", or "stderr"; an unknown name is a catchable Err. It uses the real Windows console
+// check (GetConsoleMode + the MSYS2/Cygwin pty heuristic; see IsTerminal), so it reports true
+// under mintty / Git Bash. The REPL uses the same check.
 func builtinIsTerminal(args []value.Value) (value.Value, error) {
 	stream := "stdin"
 	switch len(args) {
@@ -118,11 +118,7 @@ func builtinIsTerminal(args []value.Value) (value.Value, error) {
 	default:
 		return value.MakeErr(fmt.Sprintf("is_terminal: unknown stream %q (use stdin, stdout, or stderr)", stream), 1), nil
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return value.MakeBool(false), nil
-	}
-	return value.MakeBool(fi.Mode()&os.ModeCharDevice != 0), nil
+	return value.MakeBool(IsTerminal(f)), nil
 }
 
 // gcPresets map friendly mode words to a GC target percent (Go's GOGC knob):

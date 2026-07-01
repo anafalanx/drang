@@ -37,6 +37,9 @@ func main() {
 		runReap()
 		return
 	}
+	// Make the console render drang's UTF-8 output correctly (no-op when output is
+	// redirected or not a console). Skipped for the reaper above, which has no console I/O.
+	eval.EnableUTF8Console()
 	// A standalone executable (made by `drang build`) carries its program appended
 	// to this binary; run it directly, with every argument going to the script as
 	// $ARGV. A plain drang binary has no such payload and continues to the CLI.
@@ -335,14 +338,11 @@ func sourceLine(src string, line int) string {
 	return strings.TrimRight(lines[line-1], "\r")
 }
 
-// interactive reports whether stdin is a terminal (vs a pipe or file), which is
-// how we tell an interactive session (-> REPL) from `cat foo.dr | drang` (-> run).
+// interactive reports whether stdin is a terminal (vs a pipe or file), which is how we tell an
+// interactive session (-> REPL) from `cat foo.dr | drang` (-> run). It uses the real Windows
+// console check (see eval.IsTerminal), so mintty / Git Bash are detected correctly.
 func interactive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return eval.IsTerminal(os.Stdin)
 }
 
 // repl runs the interactive read-eval-print loop on the standard streams.
