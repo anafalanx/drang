@@ -231,50 +231,63 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel, err := newCmd(argv, opts)
-	if err != nil {
-		return execError(argv[0], err, ""), nil
-	}
-	defer cancel()
-	cmd.WaitDelay = 3 * time.Second // backstop: a child holding the pipe can't hang Wait forever
-	cmd.Stderr = stderr
-	if opts.hasStdin {
-		cmd.Stdin = strings.NewReader(opts.stdin)
-	}
-	applyExecOpts(cmd, opts)
-	out, err := cmd.StdoutPipe()
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		return value.MakeErr(fmt.Sprintf("each_line: %v", err), 1), nil
 	}
-	if startErr := cmd.Start(); startErr != nil {
+	c, err := newJobCmd(argv, opts, nil, pw, stderr) // stdout -> a pipe we scan; stderr stays on the terminal
+	if err != nil {
+		pr.Close()
+		pw.Close()
+		return execError(argv[0], err, ""), nil
+	}
+	if startErr := c.start(); startErr != nil {
+		pr.Close()
+		pw.Close()
 		return execError(argv[0], startErr, ""), nil
 	}
-	defer superviseAfterStart(cmd, opts.supervise)() // deregister once we return (child reaped)
-	scanner := bufio.NewScanner(out)
+	pw.Close() // the parent's copy; the child has its own, so pr EOFs when the child exits
+
+	scanner := bufio.NewScanner(pr)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long lines
+	var cbErr error          // a callback exit/die to propagate
+	var abortVal value.Value // a callback-returned Err to surface
+	aborted := false
 	for scanner.Scan() {
 		v, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())})
 		if cerr != nil {
-			_ = killTree(cmd) // callback aborted (exit/die) — stop the child (and its tree)
-			_ = cmd.Wait()
-			return value.MakeNil(), cerr
+			c.killTree() // callback aborted (exit/die) — stop the child and its tree
+			cbErr = cerr
+			break
 		}
 		if v.IsErr() {
-			_ = killTree(cmd) // callback returned/propagated an Err — stop the child, surface it
-			_ = cmd.Wait()
-			return v, nil
+			c.killTree() // callback returned/propagated an Err — stop the child, surface it
+			abortVal, aborted = v, true
+			break
 		}
 	}
-	if serr := scanner.Err(); serr != nil {
-		// e.g. a line beyond the 4MB cap: the child is still writing into an
-		// undrained pipe, so kill it (else Wait would block forever) and report the
-		// scan error distinctly rather than as a bogus timeout or silent success.
-		_ = killTree(cmd)
-		_ = cmd.Wait()
-		return value.MakeErr(fmt.Sprintf("each_line: %v", serr), 1), nil
+	scanErr := scanner.Err()
+	if scanErr != nil && cbErr == nil && !aborted {
+		// e.g. a line beyond the 4MB cap: the child is still writing into an undrained pipe, so kill
+		// it (else wait would block) and report the scan error distinctly.
+		c.killTree()
 	}
-	if waitErr := cmd.Wait(); waitErr != nil {
-		return finishErr(argv[0], waitErr, "", ctx, opts), nil
+	pr.Close()
+	code, timedOut, werr := c.wait()
+
+	switch {
+	case cbErr != nil:
+		return value.MakeNil(), cbErr
+	case aborted:
+		return abortVal, nil
+	case scanErr != nil:
+		return value.MakeErr(fmt.Sprintf("each_line: %v", scanErr), 1), nil
+	case timedOut:
+		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case werr != nil:
+		return value.MakeErr(fmt.Sprintf("each_line: %v", werr), 1), nil
+	case code != 0:
+		return execErrCode(argv[0], code, ""), nil
 	}
 	return value.MakeBool(true), nil
 }
@@ -384,35 +397,26 @@ func builtinPipe(args []value.Value) (value.Value, error) {
 
 func runPipeline(argvs [][]string, o execOpts) value.Value {
 	n := len(argvs)
-	var ctx context.Context
-	cancel := func() {}
-	if o.timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), o.timeout)
-	}
-	defer cancel()
+	stages := make([]*jobCmd, n)
+	var out, lastErr bytes.Buffer
 
-	cmds := make([]*exec.Cmd, n)
 	for i, av := range argvs {
-		exe, preserveArg0, err := resolveExecPath(av[0], o)
+		stderrW := stderr // intermediate diagnostics stay visible
+		if i == n-1 {
+			stderrW = &lastErr // the last stage's stderr folds into its Err, like capture
+		}
+		c, err := newJobCmd(av, o, nil, nil, stderrW)
 		if err != nil {
 			return value.MakeErr(fmt.Sprintf("pipe: cannot start stage %d (%s): %v", i+1, av[0], err), 127)
 		}
-		if ctx != nil {
-			cmds[i] = exec.CommandContext(ctx, exe, av[1:]...)
-			setTreeKill(cmds[i])
-		} else {
-			cmds[i] = exec.Command(exe, av[1:]...)
-		}
-		if preserveArg0 {
-			cmds[i].Args[0] = av[0]
-		}
-		applyExecOpts(cmds[i], o)
-		cmds[i].Stderr = stderr // intermediate diagnostics stay visible
+		stages[i] = c
 	}
 	if o.hasStdin {
-		cmds[0].Stdin = strings.NewReader(o.stdin)
+		stages[0].stdin = strings.NewReader(o.stdin)
 	}
+	stages[n-1].stdout = &out
 
+	// Inter-stage pipes: stage[i].stdout -> stage[i+1].stdin, wired as raw files (used directly).
 	var pipes []*os.File
 	closePipes := func() {
 		for _, f := range pipes {
@@ -420,50 +424,46 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 		}
 	}
 	for i := 0; i < n-1; i++ {
-		r, w, err := os.Pipe()
+		pr, pw, err := os.Pipe()
 		if err != nil {
 			closePipes()
 			return value.MakeErr(fmt.Sprintf("pipe: %v", err), 1)
 		}
-		cmds[i].Stdout = w
-		cmds[i+1].Stdin = r
-		pipes = append(pipes, r, w)
+		stages[i].stdout = pw
+		stages[i+1].stdin = pr
+		pipes = append(pipes, pr, pw)
 	}
-	var out, lastErr bytes.Buffer
-	cmds[n-1].Stdout = &out
-	cmds[n-1].Stderr = &lastErr // the last stage's stderr folds into its Err, like capture
 
 	started := 0
-	for i := range cmds {
-		if err := cmds[i].Start(); err != nil {
+	for i := range stages {
+		if err := stages[i].start(); err != nil {
 			closePipes()
 			for j := 0; j < started; j++ {
-				_ = cmds[j].Process.Kill()
-				_ = cmds[j].Wait()
+				stages[j].killTree()
+				stages[j].wait()
 			}
 			return value.MakeErr(fmt.Sprintf("pipe: cannot start stage %d (%s): %v", i+1, argvs[i][0], err), 127)
 		}
 		started++
 	}
-	// All stages started: register each for supervision (no-op when off). Registering only
-	// after a full successful start means the start-failure cleanup above has nothing to undo.
-	var deregs []func()
-	for i := range cmds {
-		deregs = append(deregs, superviseAfterStart(cmds[i], o.supervise))
-	}
-	closePipes() // drop the parent's copies so EOF propagates between children
+	closePipes() // drop the parent's inter-stage copies so EOF propagates between children
 
-	var lastWaitErr error
-	for i := range cmds {
-		if werr := cmds[i].Wait(); i == n-1 {
-			lastWaitErr = werr
+	var code int
+	var timedOut bool
+	var werr error
+	for i := range stages {
+		cd, to, we := stages[i].wait()
+		if i == n-1 { // bash pipeline semantics: the last stage's status is the pipeline's
+			code, timedOut, werr = cd, to, we
 		}
 	}
-	for _, d := range deregs {
-		d() // children reaped — clear them from the supervisor
-	}
-	if lastWaitErr != nil {
-		return finishErr(argvs[n-1][0], lastWaitErr, lastErr.String(), ctx, o)
+	switch {
+	case timedOut:
+		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argvs[n-1][0], o.timeout), 124)
+	case werr != nil:
+		return value.MakeErr(fmt.Sprintf("pipe: %v", werr), 1)
+	case code != 0:
+		return execErrCode(argvs[n-1][0], code, lastErr.String())
 	}
 	return value.MakeStr(strings.TrimSpace(out.String()))
 }
