@@ -107,20 +107,21 @@ func builtinRun(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel, err := newCmd(argv, opts)
+	c, err := newJobCmd(argv, opts, os.Stdin, stdout, stderr)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
-	defer cancel()
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if opts.hasStdin {
-		cmd.Stdin = strings.NewReader(opts.stdin)
+	if startErr := c.start(); startErr != nil {
+		return execError(argv[0], startErr, ""), nil
 	}
-	applyExecOpts(cmd, opts)
-	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
-		return finishErr(argv[0], runErr, "", ctx, opts), nil
+	code, timedOut, werr := c.wait()
+	switch {
+	case timedOut:
+		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case werr != nil:
+		return value.MakeErr(fmt.Sprintf("run: %v", werr), 1), nil
+	case code != 0:
+		return execErrCode(argv[0], code, ""), nil
 	}
 	return value.MakeBool(true), nil // truthy success, composes with // and if
 }
@@ -286,20 +287,22 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel, err := newCmd(argv, opts)
+	var out, errBuf bytes.Buffer
+	c, err := newJobCmd(argv, opts, nil, &out, &errBuf)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
-	defer cancel()
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if opts.hasStdin {
-		cmd.Stdin = strings.NewReader(opts.stdin)
+	if startErr := c.start(); startErr != nil {
+		return execError(argv[0], startErr, ""), nil
 	}
-	applyExecOpts(cmd, opts)
-	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
-		return finishErr(argv[0], runErr, errBuf.String(), ctx, opts), nil
+	code, timedOut, werr := c.wait()
+	switch {
+	case timedOut:
+		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case werr != nil:
+		return value.MakeErr(fmt.Sprintf("capture: %v", werr), 1), nil
+	case code != 0:
+		return execErrCode(argv[0], code, errBuf.String()), nil
 	}
 	return value.MakeStr(strings.TrimSpace(out.String())), nil
 }
@@ -314,34 +317,22 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	cmd, ctx, cancel, err := newCmd(argv, opts)
-	if err != nil {
-		return execError(argv[0], err, ""), nil
-	}
-	defer cancel()
 	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if opts.hasStdin {
-		cmd.Stdin = strings.NewReader(opts.stdin)
-	}
-	applyExecOpts(cmd, opts)
-
 	code := 0
-	if runErr := runCmd(cmd, opts.supervise); runErr != nil {
+	c, cerr := newJobCmd(argv, opts, nil, &out, &errBuf)
+	if cerr != nil {
+		code = 127 // could not resolve the command
+	} else if startErr := c.start(); startErr != nil {
+		code = 127 // could not start
+	} else {
+		ec, timedOut, werr := c.wait()
 		switch {
-		case ctx != nil && ctx.Err() == context.DeadlineExceeded:
+		case timedOut:
 			code = 124
+		case werr != nil:
+			code = 127 // a wait/system failure
 		default:
-			var ee *exec.ExitError
-			if errors.As(runErr, &ee) {
-				code = ee.ExitCode()
-				if code < 1 { // signal kill reports -1 (Unix); never report a failure as <=0
-					code = 1
-				}
-			} else {
-				code = 127 // could not start
-			}
+			code = ec // Windows exit codes are non-negative
 		}
 	}
 	rec := value.MakeMap()
