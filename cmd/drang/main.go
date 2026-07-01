@@ -30,15 +30,8 @@ import (
 var version = "0.5"
 
 func main() {
-	// `drang --reap` is the hidden process-supervision side-car (see reap.go). It must be
-	// intercepted before everything else — including the standalone-payload path — so that a
-	// `drang build` binary can spawn ITSELF as the reaper for its supervised children.
-	if len(os.Args) > 1 && os.Args[1] == "--reap" {
-		runReap()
-		return
-	}
 	// Make the console render drang's UTF-8 output correctly (no-op when output is
-	// redirected or not a console). Skipped for the reaper above, which has no console I/O.
+	// redirected or not a console).
 	eval.EnableUTF8Console()
 	// A standalone executable (made by `drang build`) carries its program appended
 	// to this binary; run it directly, with every argument going to the script as

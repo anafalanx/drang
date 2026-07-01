@@ -2041,11 +2041,14 @@ forced env -> forced:only this
 stdin -> world
 ```
 
-**`{supervise: true}`** ties a child's lifetime to the drang process: if drang exits or dies
-for *any* reason (a clean finish, a crash, or an outright kill), the child and its whole
-process tree are terminated too. It is opt-in (default off) and works on every OS via a tiny
-reaper side-car, with no platform job-object or signal machinery. Use it for launchers and
-supervisors that must not leave orphans behind:
+**Die-with-parent.** A running child is tied to drang's lifetime by a Windows Job Object: if
+drang exits or dies for *any* reason — a clean finish, a crash, or an outright kill — the child
+and its whole process tree are terminated too, **kernel-enforced** (`KILL_ON_JOB_CLOSE`), not
+best-effort. For the synchronous forms (`run`, `capture`, `each_line`, `pipe`) this is always on:
+while drang is waiting on a child, it never leaves an orphan behind.
+
+**`{supervise: true}`** applies that same tie to a *detached* `start`, which otherwise outlives
+drang. Use it for background launchers that must not leave orphans:
 
 ```drang
 # a background server that must not outlive us, even if we crash
@@ -2053,12 +2056,9 @@ $srv := start("my-server", "--port", "8080", {supervise: true})
 # ...do work... whether we return cleanly or are killed, my-server goes down with us
 ```
 
-A *clean* exit kills supervised children too: that is the point of `supervise`. For a child
-that should outlive drang, use a plain `start` with no `supervise`. (Implementation: on Unix
-a supervised child runs in its own process group so its whole tree is reaped; the foreground
-`run` form is the exception, where only the direct child is, since `run` shares your
-terminal. On Windows the tree is reaped with `taskkill /T`. The guarantee is best-effort, not
-kernel-enforced.)
+A *clean* exit kills a supervised `start` child too: that is the point. For a background child
+that should outlive drang, use a plain `start` with no `supervise`. Whole-tree termination
+(grandchildren included) is intrinsic to the job — a child cannot escape by forking.
 
 There is no global `cd`; per-command `{cwd}` is the only way to change the working
 directory (a process-wide chdir would race across goroutines).

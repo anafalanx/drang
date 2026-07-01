@@ -2397,8 +2397,10 @@ portably, *without* OS job objects / `PR_SET_PDEATHSIG` / a per-OS guarantee.
 > to avoid a per-OS mechanism. The Windows-only decision (§3.0) reverses its central premise —
 > portability is no longer a constraint — so supervision migrates to **Job Objects**
 > (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`): a cleaner native die-with-parent that additionally
-> gives whole-tree kill, resource limits, and *nested* trees for the sturm layer. The reaper
-> design below is retained as record and remains the shipping mechanism until that migration lands.
+> gives whole-tree kill, resource limits, and *nested* trees for the sturm layer. **That migration
+> has landed (M3):** supervision now runs on `internal/winjob` (a born-in-job `CreateProcess`
+> launcher + an IOCP job-event monitor), and all the reaper code (`reap*.go`, `supervise.go`, the
+> `--reap` subcommand) is deleted. The reaper design below is retained only as historical record.
 
 We rejected the Windows Job Object: its guarantee doesn't port (Windows is clean; Linux needs
 PID namespaces or cgroups; macOS has nothing equivalent), it would be the first `unsafe`/
