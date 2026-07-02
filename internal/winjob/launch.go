@@ -124,11 +124,30 @@ func LaunchExe(exe string, argv []string, dir string, env []string, jobs []*Job,
 		return nil, fmt.Errorf("winjob.LaunchExe: exe %q must be an absolute path when dir is set", exe)
 	}
 
-	appName, err := windows.UTF16PtrFromString(exe)
-	if err != nil {
-		return nil, fmt.Errorf("winjob.LaunchExe: bad executable path %q: %w", exe, err)
+	// A batch script (.bat/.cmd) is not a PE image: CreateProcess runs it by handing the command
+	// line to cmd.exe, whose parsing differs from CommandLineToArgvW, so an EscapeArg command line
+	// is exploitable (CVE-2024-24576). Launch batch targets through an explicitly, defensively
+	// quoted cmd.exe instead of handing the .bat straight to CreateProcess.
+	appExe, cmdText := exe, ""
+	if IsBatchTarget(exe) {
+		cs, err := comspecPath()
+		if err != nil {
+			return nil, err
+		}
+		line, err := makeBatchCmdLine(exe, argv[1:])
+		if err != nil {
+			return nil, err
+		}
+		appExe, cmdText = cs, line
+	} else {
+		cmdText = makeCmdLine(argv)
 	}
-	cmdLine, err := windows.UTF16PtrFromString(makeCmdLine(argv))
+
+	appName, err := windows.UTF16PtrFromString(appExe)
+	if err != nil {
+		return nil, fmt.Errorf("winjob.LaunchExe: bad executable path %q: %w", appExe, err)
+	}
+	cmdLine, err := windows.UTF16PtrFromString(cmdText)
 	if err != nil {
 		return nil, fmt.Errorf("winjob.Launch: bad command line: %w", err)
 	}
