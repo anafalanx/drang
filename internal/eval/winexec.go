@@ -29,10 +29,13 @@ type jobCmd struct {
 	dir         string    // working directory ("" inherits ours)
 	env         []string  // child environment (nil inherits ours)
 	stdin       io.Reader // nil => the null device
+	ownedStdin  *os.File  // a file drang opened for {stdin_file}; passed to the child, closed after start
 	stdout      io.Writer // nil => the null device
 	stderr      io.Writer // nil => the null device
 	timeout     time.Duration
-	killOnClose bool // whether the per-command job is KILL_ON_JOB_CLOSE (die-with-parent)
+	killOnClose bool          // whether the per-command job is KILL_ON_JOB_CLOSE (die-with-parent)
+	limits      winjob.Limits // kernel-enforced resource caps applied to the per-command job (zero = none)
+	mergeStderr bool          // route the child's stderr to its stdout descriptor (2>&1)
 
 	// Runtime state:
 	job         *winjob.Job
@@ -43,6 +46,48 @@ type jobCmd struct {
 	copyDone    chan error
 	timer       *time.Timer
 	timedOut    atomic.Bool
+	monitor     *winjob.Monitor // non-nil when limits are set: watches for breach events
+	monDone     chan struct{}   // closed when drainLimitEvents returns
+	limitHit    atomic.Pointer[string]
+}
+
+// drainLimitEvents records the first resource-limit breach the monitor reports (which cap fired),
+// so wait()/start can name it. It runs until the monitor is closed in wait()/the start reaper.
+func (c *jobCmd) drainLimitEvents() {
+	defer close(c.monDone)
+	for ev := range c.monitor.Events() {
+		var which string
+		switch ev.Kind {
+		case winjob.EventProcessMemoryLimit, winjob.EventJobMemoryLimit:
+			which = "memory"
+		case winjob.EventProcessTimeLimit, winjob.EventJobTimeLimit:
+			which = "CPU-time"
+		default:
+			continue
+		}
+		if c.limitHit.Load() == nil {
+			w := which
+			c.limitHit.CompareAndSwap(nil, &w)
+		}
+	}
+}
+
+// stopMonitor closes the breach monitor (if any) and waits for its drain goroutine, so limitHit is
+// final before the caller reads it. Idempotent enough for the single call sites (wait / start reaper).
+func (c *jobCmd) stopMonitor() {
+	if c.monitor != nil {
+		c.monitor.Close()
+		<-c.monDone
+	}
+}
+
+// breachErr returns a catchable limit-breach Err (code 137) if a resource cap fired, else the zero
+// Value. Call stopMonitor first so limitHit is final.
+func (c *jobCmd) breachErr(name string) (value.Value, bool) {
+	if w := c.limitHit.Load(); w != nil {
+		return value.MakeErr(fmt.Sprintf("%s exceeded its %s limit", name, *w), 137), true
+	}
+	return value.Value{}, false
 }
 
 // killTree terminates the command's whole job (the process and every descendant) — the tree-kill
@@ -78,6 +123,29 @@ func (c *jobCmd) start() error {
 		return err
 	}
 	c.job = job
+
+	// Apply kernel-enforced resource caps and start watching for a breach BEFORE the child is
+	// born, so it starts already limited and no breach event is missed. A memory/CPU breach has no
+	// reliable exit code (the kernel fails allocations or terminates without a sentinel), so the
+	// Monitor is how we detect and name it — best-effort: if the monitor can't be set up, the caps
+	// are still enforced by the kernel, we just can't attribute the breach.
+	if !c.limits.IsZero() {
+		if lerr := job.SetLimits(c.limits); lerr != nil {
+			job.Close()
+			c.job = nil
+			c.cleanupFiles()
+			return lerr
+		}
+		if mon, merr := winjob.NewMonitor(); merr == nil {
+			if _, werr := mon.Watch(job); werr == nil {
+				c.monitor = mon
+				c.monDone = make(chan struct{})
+				go c.drainLimitEvents()
+			} else {
+				mon.Close()
+			}
+		}
+	}
 
 	proc, err := winjob.LaunchExe(c.exe, c.argv, c.dir, c.env, []*winjob.Job{job}, winjob.Stdio{Stdin: stdinF, Stdout: stdoutF, Stderr: stderrF})
 	if err != nil {
@@ -120,6 +188,7 @@ func (c *jobCmd) wait() (code int, timedOut bool, err error) {
 	if c.timer != nil {
 		c.timer.Stop()
 	}
+	c.stopMonitor() // finalize limitHit before any caller reads breachErr
 	var copyErr error
 	for i := 0; i < len(c.copiers); i++ {
 		if e := <-c.copyDone; e != nil && copyErr == nil {
@@ -152,6 +221,12 @@ func (c *jobCmd) cleanupFiles() {
 // --- stdio descriptors, mirroring os/exec's childStdin / writerDescriptor ---
 
 func (c *jobCmd) childStdin() (*os.File, error) {
+	if c.ownedStdin != nil {
+		// {stdin_file}: hand the file straight to the child (zero-copy). It is drang's to close,
+		// so it joins childFiles and is closed after the spawn (the child inherited its own dup).
+		c.childFiles = append(c.childFiles, c.ownedStdin)
+		return c.ownedStdin, nil
+	}
 	if c.stdin == nil {
 		f, err := os.Open(os.DevNull)
 		if err != nil {
@@ -203,7 +278,10 @@ func (c *jobCmd) writerDescriptor(w io.Writer) (*os.File, error) {
 }
 
 func (c *jobCmd) childStderr(stdoutFile *os.File) (*os.File, error) {
-	if c.stderr != nil && interfaceEqual(c.stderr, c.stdout) {
+	// {merge_stderr}: route stderr to the same descriptor as stdout so the child's output is
+	// interleaved in original order (like a shell's 2>&1) — also the path when the two sinks are
+	// literally the same writer.
+	if c.mergeStderr || (c.stderr != nil && interfaceEqual(c.stderr, c.stdout)) {
 		return stdoutFile, nil // both streams to one descriptor, avoiding concurrent writes to one Writer
 	}
 	return c.writerDescriptor(c.stderr)
@@ -259,12 +337,30 @@ func newJobCmd(argv []string, o execOpts, defaultStdin io.Reader, stdout, stderr
 		}
 		childArgv[0] = o.arg0
 	}
+	// Validate {cwd} early with a clean message, instead of letting CreateProcess fail deep in the
+	// launcher and leak an internal "winjob.Launch: CreateProcess ..." string.
+	if o.cwd != "" {
+		if info, serr := os.Stat(o.cwd); serr != nil || !info.IsDir() {
+			return nil, fmt.Errorf("cwd %q is not an existing directory", o.cwd)
+		}
+	}
 	var env []string
 	if o.hasEnv {
 		env = o.env
 	}
+	if o.hasStdin && o.hasStdinFile {
+		return nil, fmt.Errorf("stdin and stdin_file are mutually exclusive")
+	}
 	stdin := defaultStdin
-	if o.hasStdin {
+	var owned *os.File
+	switch {
+	case o.hasStdinFile:
+		f, oerr := os.Open(o.stdinFile)
+		if oerr != nil {
+			return nil, fmt.Errorf("stdin_file %q: %v", o.stdinFile, oerr)
+		}
+		owned = f // childStdin hands it to the child zero-copy and closes it after the spawn
+	case o.hasStdin:
 		stdin = strings.NewReader(o.stdin)
 	}
 	return &jobCmd{
@@ -273,9 +369,12 @@ func newJobCmd(argv []string, o execOpts, defaultStdin io.Reader, stdout, stderr
 		dir:         o.cwd,
 		env:         env,
 		stdin:       stdin,
+		ownedStdin:  owned,
 		stdout:      stdout,
 		stderr:      stderr,
 		timeout:     o.timeout,
+		limits:      o.limits,
+		mergeStderr: o.mergeStderr,
 		killOnClose: true, // synchronous forms die with drang; start overrides via {supervise}
 	}, nil
 }

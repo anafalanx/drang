@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -25,10 +26,27 @@ type execOpts struct {
 	resolveWithEnv bool     // resolve bare commands against env's PATH
 	stdin          string
 	hasStdin       bool
+	stdinFile      string // feed the child's stdin from this file (zero-copy), instead of {stdin}
+	hasStdinFile   bool
+	stdinPipe      bool   // start() only: keep a writable stdin so send_stdin/close_stdin can drive the child
+	mergeStderr    bool   // route the child's stderr to its stdout (2>&1)
 	arg0           string // present a different argv[0] than the launched executable
 	hasArg0        bool
-	timeout        time.Duration // 0 = no limit
+	timeout        time.Duration // 0 = no wall-clock limit
 	supervise      bool          // start(): tie a detached child's lifetime to ours (KILL_ON_JOB_CLOSE)
+	limits         winjob.Limits // kernel-enforced resource caps (memory/CPU/process-count); zero = uncapped
+}
+
+// limitInt parses a resource-limit option: a non-negative int (0 = uncapped, like timeout).
+func limitInt(name, key string, v value.Value) (int64, error) {
+	if v.Tag() != value.Int {
+		return 0, fmt.Errorf("%s: %s must be an int", name, key)
+	}
+	n := v.AsInt()
+	if n < 0 {
+		return 0, fmt.Errorf("%s: %s must be >= 0", name, key)
+	}
+	return n, nil
 }
 
 // builtinRun spawns a command with inherited stdio, returning true on success or
@@ -53,6 +71,9 @@ func builtinRun(args []value.Value) (value.Value, error) {
 	switch {
 	case timedOut:
 		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case c.limitHit.Load() != nil:
+		b, _ := c.breachErr(argv[0])
+		return b, nil
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("run: %v", werr), 1), nil
 	case code != 0:
@@ -65,11 +86,42 @@ func builtinRun(args []value.Value) (value.Value, error) {
 // It is an intentionally SHARED reference (DeepCopy returns itself); a goroutine
 // reaps the child and records its exit status, which await(proc) reads.
 type Proc struct {
-	mu   sync.Mutex  // guards job: kill's Terminate vs. the reaping goroutine's Close
-	job  *winjob.Job // the command job — Terminate kills the tree, Close releases; nil once closed
-	pid  int
-	done chan struct{}
-	res  value.Value // exit status: true on 0, else a catchable Err carrying the code
+	mu     sync.Mutex  // guards job: kill's Terminate vs. the reaping goroutine's Close
+	job    *winjob.Job // the command job — Terminate kills the tree, Close releases; nil once closed
+	pid    int
+	done   chan struct{}
+	res    value.Value // exit status: true on 0, else a catchable Err carrying the code
+	killed atomic.Bool // set by kill() so the reaper reports "was killed", not a bare exit code
+
+	stdinMu     sync.Mutex // guards the writable-stdin handle below
+	stdinW      *os.File   // writable stdin, set when started with {stdin_pipe: true}; nil otherwise
+	stdinClosed bool
+}
+
+// writeStdin feeds s to a process started with {stdin_pipe: true}. It errors if the process has no
+// writable stdin or its stdin was already closed (or the child closed its read end).
+func (p *Proc) writeStdin(s string) error {
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+	if p.stdinW == nil {
+		return fmt.Errorf("process was not started with {stdin_pipe: true}")
+	}
+	if p.stdinClosed {
+		return fmt.Errorf("stdin is already closed")
+	}
+	_, err := p.stdinW.WriteString(s)
+	return err
+}
+
+// closeStdin closes the writable stdin (EOF for the child). Idempotent, and a no-op when the
+// process has no writable stdin.
+func (p *Proc) closeStdin() {
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+	if p.stdinW != nil && !p.stdinClosed {
+		p.stdinClosed = true
+		p.stdinW.Close()
+	}
 }
 
 func (p *Proc) TypeName() string                           { return "process" }
@@ -85,6 +137,7 @@ func (p *Proc) Equal(o value.Obj) bool {
 // terminate kills the process and its whole tree via the command job — idempotent, and safe
 // against the reaping goroutine's closeJob.
 func (p *Proc) terminate() {
+	p.killed.Store(true) // so the reaper can distinguish "I killed it" from a natural exit
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.job != nil {
@@ -124,16 +177,37 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
+	// {stdin_pipe}: keep a writable pipe to the child's stdin so send_stdin/close_stdin can drive
+	// it. The child reads the read end (closed after launch); drang holds the write end.
+	var stdinW *os.File
+	if opts.stdinPipe {
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			return execError(argv[0], perr, ""), nil
+		}
+		c.ownedStdin = pr
+		stdinW = pw
+	}
 	c.killOnClose = opts.supervise // supervise:true ties it to drang's life; else it outlives drang
 	if startErr := c.start(); startErr != nil {
+		if stdinW != nil {
+			stdinW.Close()
+		}
 		return execError(argv[0], startErr, ""), nil
 	}
-	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true)}
+	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW}
 	go func() {
 		defer close(p.done)
 		code, werr := c.proc.Wait() // reap the child; the NUL stdio needs no draining
+		c.stopMonitor()             // finalize limitHit before reading breachErr
+		p.closeStdin()              // release the write end once the child is gone
 		p.closeJob()
 		switch {
+		case p.killed.Load():
+			p.res = value.MakeErr(fmt.Sprintf("%s was killed", argv[0]), 137)
+		case c.limitHit.Load() != nil:
+			b, _ := c.breachErr(argv[0])
+			p.res = b
 		case werr != nil:
 			p.res = value.MakeErr(fmt.Sprintf("%s: %v", argv[0], werr), 1)
 		case code != 0:
@@ -160,6 +234,67 @@ func builtinKill(args []value.Value) (value.Value, error) {
 		return errv, nil
 	}
 	p.terminate() // whole tree, not just the direct child; idempotent if already gone
+	return value.MakeBool(true), nil
+}
+
+// builtinStatus polls a started process WITHOUT blocking (unlike await): it returns
+// {running: true} while the child is alive, else {running: false, ok, code} — the same
+// ok/code shape as capture_all (code 0 on success, else the exit/breach/killed code). This is
+// how you supervise a background child without committing to a blocking wait.
+func builtinStatus(args []value.Value) (value.Value, error) {
+	if len(args) != 1 {
+		return value.MakeNil(), fmt.Errorf("status expects 1 argument (a process), got %d", len(args))
+	}
+	p, errv, ok := procArg("status", args[0])
+	if !ok {
+		return errv, nil
+	}
+	m := value.MakeMap()
+	om := m.Obj().(*value.OrderedMap)
+	select {
+	case <-p.done: // reaped: p.res is final (set before close(p.done))
+		om.Set(value.MakeStr("running"), value.MakeBool(false))
+		if p.res.IsErr() {
+			om.Set(value.MakeStr("ok"), value.MakeBool(false))
+			om.Set(value.MakeStr("code"), value.MakeInt(p.res.ErrCode()))
+		} else {
+			om.Set(value.MakeStr("ok"), value.MakeBool(true))
+			om.Set(value.MakeStr("code"), value.MakeInt(0))
+		}
+	default:
+		om.Set(value.MakeStr("running"), value.MakeBool(true))
+	}
+	return m, nil
+}
+
+// builtinSendStdin writes to the stdin of a process started with {stdin_pipe: true} — the way to
+// drive a live child after launch (a prompt answer, a stream of commands). Returns true, or a
+// catchable Err if the process has no writable stdin or the child closed its read end.
+func builtinSendStdin(args []value.Value) (value.Value, error) {
+	if len(args) != 2 {
+		return value.MakeNil(), fmt.Errorf("send_stdin expects 2 arguments (process, string), got %d", len(args))
+	}
+	p, errv, ok := procArg("send_stdin", args[0])
+	if !ok {
+		return errv, nil
+	}
+	if err := p.writeStdin(args[1].Display()); err != nil {
+		return value.MakeErr(fmt.Sprintf("send_stdin: %v", err), 1), nil
+	}
+	return value.MakeBool(true), nil
+}
+
+// builtinCloseStdin closes a started process's writable stdin (sends EOF), so a child that reads
+// until EOF can finish. Idempotent; a no-op for a process without a writable stdin.
+func builtinCloseStdin(args []value.Value) (value.Value, error) {
+	if len(args) != 1 {
+		return value.MakeNil(), fmt.Errorf("close_stdin expects 1 argument (a process), got %d", len(args))
+	}
+	p, errv, ok := procArg("close_stdin", args[0])
+	if !ok {
+		return errv, nil
+	}
+	p.closeStdin()
 	return value.MakeBool(true), nil
 }
 
@@ -247,6 +382,9 @@ func evalEachLine(args []value.Value, depth int) (value.Value, error) {
 		return value.MakeErr(fmt.Sprintf("each_line: %v", scanErr), 1), nil
 	case timedOut:
 		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case c.limitHit.Load() != nil:
+		b, _ := c.breachErr(argv[0])
+		return b, nil
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("each_line: %v", werr), 1), nil
 	case code != 0:
@@ -275,6 +413,9 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	switch {
 	case timedOut:
 		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
+	case c.limitHit.Load() != nil:
+		b, _ := c.breachErr(argv[0])
+		return b, nil
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("capture: %v", werr), 1), nil
 	case code != 0:
@@ -305,6 +446,8 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 		switch {
 		case timedOut:
 			code = 124
+		case c.limitHit.Load() != nil:
+			code = 137 // a resource cap was breached
 		case werr != nil:
 			code = 127 // a wait/system failure
 		default:
@@ -418,12 +561,16 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	// pipeline's status, per bash.
 	lastCode := 0
 	timedOutStage := -1
+	breachStage := -1
 	var werr error
 	werrStage := -1
 	for i := range stages {
 		cd, to, we := stages[i].wait()
 		if to && timedOutStage < 0 {
 			timedOutStage = i
+		}
+		if stages[i].limitHit.Load() != nil && breachStage < 0 {
+			breachStage = i
 		}
 		if we != nil && werr == nil {
 			werr, werrStage = we, i
@@ -435,6 +582,9 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	switch {
 	case timedOutStage >= 0:
 		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argvs[timedOutStage][0], o.timeout), 124)
+	case breachStage >= 0:
+		b, _ := stages[breachStage].breachErr(argvs[breachStage][0])
+		return b
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("pipe: stage %d (%s): %v", werrStage+1, argvs[werrStage][0], werr), 1)
 	case lastCode != 0:
@@ -507,6 +657,25 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 		case "stdin":
 			o.stdin = vals[i].Display()
 			o.hasStdin = true
+		case "stdin_file":
+			if vals[i].Tag() != value.Str {
+				return o, fmt.Errorf("%s: stdin_file must be a string path", name)
+			}
+			o.stdinFile = vals[i].AsStr()
+			o.hasStdinFile = true
+		case "merge_stderr":
+			if vals[i].Tag() != value.Bool {
+				return o, fmt.Errorf("%s: merge_stderr must be true or false", name)
+			}
+			o.mergeStderr = vals[i].Truthy()
+		case "stdin_pipe":
+			if name != "start" {
+				return o, fmt.Errorf("%s: stdin_pipe is only for start() (send_stdin/close_stdin drive a started process)", name)
+			}
+			if vals[i].Tag() != value.Bool {
+				return o, fmt.Errorf("%s: stdin_pipe must be true or false", name)
+			}
+			o.stdinPipe = vals[i].Truthy()
 		case "arg0":
 			o.arg0 = vals[i].Display()
 			o.hasArg0 = true
@@ -538,9 +707,42 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 				return o, fmt.Errorf("%s: supervise must be true or false", name)
 			}
 			o.supervise = vals[i].Truthy()
+		case "max_memory": // per-process commit cap, BYTES
+			n, err := limitInt(name, "max_memory", vals[i])
+			if err != nil {
+				return o, err
+			}
+			o.limits.ProcessMemoryBytes = uint64(n)
+		case "max_job_memory": // whole-tree commit cap, BYTES
+			n, err := limitInt(name, "max_job_memory", vals[i])
+			if err != nil {
+				return o, err
+			}
+			o.limits.JobMemoryBytes = uint64(n)
+		case "max_cpu": // per-process user CPU time, MILLISECONDS (like timeout's unit)
+			n, err := limitInt(name, "max_cpu", vals[i])
+			if err != nil {
+				return o, err
+			}
+			o.limits.ProcessCPUTime = time.Duration(n) * time.Millisecond
+		case "max_job_cpu": // whole-job user CPU time, MILLISECONDS
+			n, err := limitInt(name, "max_job_cpu", vals[i])
+			if err != nil {
+				return o, err
+			}
+			o.limits.JobCPUTime = time.Duration(n) * time.Millisecond
+		case "max_procs": // max concurrent processes in the job (count)
+			n, err := limitInt(name, "max_procs", vals[i])
+			if err != nil {
+				return o, err
+			}
+			o.limits.ActiveProcessCap = uint32(n)
 		default:
 			return o, fmt.Errorf("%s: unknown option %q", name, k.AsStr())
 		}
+	}
+	if o.stdinPipe && (o.hasStdin || o.hasStdinFile) {
+		return o, fmt.Errorf("%s: stdin_pipe cannot combine with stdin/stdin_file (it IS the stdin)", name)
 	}
 	if exactEnv != nil && overlayEnv != nil {
 		return o, fmt.Errorf("%s: env_exact and env_add are mutually exclusive", name)

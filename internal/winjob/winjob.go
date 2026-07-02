@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -26,9 +27,10 @@ const procThreadAttributeJobList = 0x0002000D
 // timeout/kill Terminate cannot race the reaping path's Close on the same (possibly recycled)
 // handle; handle itself is immutable after New.
 type Job struct {
-	mu     sync.Mutex
-	handle windows.Handle // immutable after New
-	closed bool
+	mu          sync.Mutex
+	handle      windows.Handle // immutable after New
+	closed      bool
+	killOnClose bool // immutable after New; re-applied by SetLimits so a limit write never drops it
 }
 
 var errClosedJob = errors.New("winjob: job is closed")
@@ -51,7 +53,67 @@ func New(killOnClose bool) (*Job, error) {
 			return nil, fmt.Errorf("SetInformationJobObject(KILL_ON_JOB_CLOSE): %w", err)
 		}
 	}
-	return &Job{handle: h}, nil
+	return &Job{handle: h, killOnClose: killOnClose}, nil
+}
+
+// Limits are optional per-job resource caps, enforced by the kernel for the job's whole lifetime.
+// A zero field means "no cap for that resource". When any cap is breached the kernel terminates
+// the entire job (die-with-parent still applies), which the caller observes as the child being
+// killed; the winjob Monitor can additionally report WHICH cap fired. Memory caps are commit
+// bytes; CPU caps are USER cpu time (not wall-clock — {timeout} covers wall-clock).
+type Limits struct {
+	ProcessMemoryBytes uint64        // per-process commit cap  (JOB_OBJECT_LIMIT_PROCESS_MEMORY)
+	JobMemoryBytes     uint64        // total commit cap, whole job tree (JOB_OBJECT_LIMIT_JOB_MEMORY)
+	ProcessCPUTime     time.Duration // per-process user cpu time (JOB_OBJECT_LIMIT_PROCESS_TIME)
+	JobCPUTime         time.Duration // total user cpu time, whole job (JOB_OBJECT_LIMIT_JOB_TIME)
+	ActiveProcessCap   uint32        // max concurrent processes in the job (JOB_OBJECT_LIMIT_ACTIVE_PROCESS)
+}
+
+// IsZero reports whether no cap is set.
+func (l Limits) IsZero() bool { return l == Limits{} }
+
+// SetLimits applies l to the job in a SINGLE extended-limit write that also re-asserts the job's
+// die-with-parent flag, so KILL_ON_JOB_CLOSE is never dropped (a second write would otherwise
+// overwrite LimitFlags wholesale). Call it once, after New and before the child is launched, so
+// the child is born into an already-capped job. Serialized with Terminate/Close; a no-op limit set
+// (all-zero) still writes, harmlessly re-asserting the base flags.
+func (j *Job) SetLimits(l Limits) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return errClosedJob
+	}
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	flags := uint32(0)
+	if j.killOnClose {
+		flags |= windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	}
+	if l.ProcessMemoryBytes > 0 {
+		flags |= windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+		info.ProcessMemoryLimit = uintptr(l.ProcessMemoryBytes)
+	}
+	if l.JobMemoryBytes > 0 {
+		flags |= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+		info.JobMemoryLimit = uintptr(l.JobMemoryBytes)
+	}
+	if l.ProcessCPUTime > 0 {
+		flags |= windows.JOB_OBJECT_LIMIT_PROCESS_TIME
+		info.BasicLimitInformation.PerProcessUserTimeLimit = l.ProcessCPUTime.Nanoseconds() / 100 // 100ns ticks
+	}
+	if l.JobCPUTime > 0 {
+		flags |= windows.JOB_OBJECT_LIMIT_JOB_TIME
+		info.BasicLimitInformation.PerJobUserTimeLimit = l.JobCPUTime.Nanoseconds() / 100
+	}
+	if l.ActiveProcessCap > 0 {
+		flags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+		info.BasicLimitInformation.ActiveProcessLimit = l.ActiveProcessCap
+	}
+	info.BasicLimitInformation.LimitFlags = flags
+	if _, err := windows.SetInformationJobObject(j.handle, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		return fmt.Errorf("SetInformationJobObject(limits): %w", err)
+	}
+	return nil
 }
 
 // Handle returns the raw job handle, for the born-in-job launcher's attribute list.
