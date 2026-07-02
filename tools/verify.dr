@@ -1,0 +1,98 @@
+# verify.dr — drang's local preflight. The one command to run before cutting a
+# release or after major work. There is no hosted CI: this IS the gate, run on
+# demand, on your own machine. drang verifying drang.
+#
+#   drang tools/verify.dr           # full suite + 20s fuzz on each target
+#   drang tools/verify.dr 60s       # longer fuzz burst per target
+#   drang tools/verify.dr none      # skip fuzzing (build + vet + -race only)
+#
+# Run from the repo root (the go commands use ./... paths). Exits non-zero if any
+# stage fails, so it composes in a shell or another script.
+$ft := $ARGV[0] // "20s"
+$fuzz := $ft != "none"
+say("")
+say("=== drang preflight ===")
+if $fuzz {
+	say("full build + vet + -race suite, then a " ~ $ft ~ " fuzz burst per target")
+} else {
+	say("full build + vet + -race suite (fuzzing skipped)")
+}
+say("")
+
+# --- stages ---------------------------------------------------------------
+# Each stage is {name, cmd, args}. The gate stages (build/vet/race) run first and
+# stop the run on the first failure — no point fuzzing a broken tree. The fuzz
+# stages then all run even if one fails, so a single pass surfaces every parse,
+# format, and backend-parity regression at once.
+fn .stage($name, $cmd, $args) {
+	say("--- " ~ $name ~ " ---")
+	$r := run($cmd, $args)
+	$ok := !is_err($r)
+	if $ok {
+		say("  ok: " ~ $name)
+	} else {
+		say("  FAIL: " ~ $name ~ " (exit " ~ str(err_code($r)) ~ ")")
+	}
+	say("")
+	$ok
+}
+
+$results := []
+
+fn .record($results, $name, $ok) {
+	push($results, {name: $name, ok: $ok})
+	$results
+}
+
+# Gate: build, vet, then the full race-enabled suite. Stop at the first failure.
+$gate := [
+	{name: "go build ./...", cmd: "go", args: ["build", "./..."]},
+	{name: "go vet ./...", cmd: "go", args: ["vet", "./..."]},
+	{name: "go test -race ./...", cmd: "go", args: ["test", "-race", "./..."]}
+]
+$broke := false
+for $s in $gate {
+	$ok := .stage($s.name, $s.cmd, $s.args)
+	$results = .record($results, $s.name, $ok)
+	if !$ok {
+		$broke = true
+		break
+	}
+}
+# Fuzz sweep: parser totality, formatter fixed-point, and VM/walker parity. Only if
+# the gate passed and fuzzing wasn't skipped. A finding writes a reproducer under the
+# package's testdata/fuzz/ — re-run it with `go test -run=<Target>/<hash> ./<pkg>`.
+if $fuzz and !$broke {
+	$targets := [
+		{name: "fuzz FuzzParse (parser)", pkg: "./internal/parser", func: "FuzzParse"},
+		{name: "fuzz FuzzFmtRoundTrip (printer)", pkg: "./internal/printer", func: "FuzzFmtRoundTrip"},
+		{name: "fuzz FuzzBackendParity (eval)", pkg: "./internal/eval", func: "FuzzBackendParity"}
+	]
+	for $t in $targets {
+		$args := ["test", "-run=^$", "-fuzz=^" ~ $t.func ~ "$", "-fuzztime=" ~ $ft, $t.pkg]
+		$ok := .stage($t.name, "go", $args)
+		$results = .record($results, $t.name, $ok)
+	}
+} else if $fuzz and $broke {
+	say("(skipping fuzz sweep — a gate stage failed)")
+	say("")
+}
+# --- summary --------------------------------------------------------------
+say("=== summary ===")
+$failed := 0
+for $r in $results {
+	if $r.ok {
+		say("  ok    " ~ $r.name)
+	} else {
+		say("  FAIL  " ~ $r.name)
+		$failed = $failed + 1
+	}
+}
+say("")
+if $failed == 0 {
+	say("preflight PASSED — " ~ str(len($results)) ~ " stages green.")
+	exit(0)
+} else {
+	say("preflight FAILED — " ~ str($failed) ~ " of " ~ str(len($results)) ~ " stages red.")
+	exit(1)
+}

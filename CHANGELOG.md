@@ -3,7 +3,19 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
 
-## [0.6] — Unreleased
+## [Unreleased]
+
+### Testing & tooling
+- **Local preflight** ([tools/verify.dr](tools/verify.dr), `z verify`): one on-demand command —
+  `go build` + `go vet` + the full `go test -race ./...` suite + a bounded fuzz burst on each
+  target — that is the release gate. drang verifying drang. There is deliberately **no hosted CI
+  and no scheduled fuzzing**; the preflight is run locally before a release and after major work.
+- **Three fuzz targets**, seeded so they also run as ordinary regression tests: `FuzzParse` (the
+  parser never panics/hangs on any input), `FuzzFmtRoundTrip` (`drang fmt` stays a fixed point), and
+  `FuzzBackendParity` (the register VM and the tree-walking oracle agree on every pure, deterministic,
+  terminating program). See [TESTING.md](TESTING.md).
+
+## [0.6] — 2026-07-02
 
 The Windows-native release: drang commits to modern Windows and rebuilds its process layer on Job
 Objects, closes a security hole in that layer, and hardens the interpreter and the errors-as-values

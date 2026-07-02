@@ -74,6 +74,8 @@ interpreter, and writes atomically. It produces a standalone Windows executable 
 - **[MANUAL.md](MANUAL.md)**: the full language manual. Every example in it was executed against the
   interpreter, so the shown output is real.
 - **[DESIGN.md](DESIGN.md)**: the design and build log.
+- **[TESTING.md](TESTING.md)**: how drang is verified — the local preflight (`drang tools/verify.dr`),
+  the `-race` suite, and the three fuzzers. There is no hosted CI; the preflight is the release gate.
 
 ## Status
 

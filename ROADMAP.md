@@ -1,6 +1,6 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-02 — **drang 0.5 released; 0.6 in preparation** (see CHANGELOG.md).
+*Inventory refreshed 2026-07-02 — **drang 0.6 released** (see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -31,7 +31,7 @@ Ruby, thinks like Perl, runs like Go").*
   (`{supervise: true}`, Windows-validated; the Unix path was later dropped — see Direction), and a self-documenting `format`
   error for the printf habit. Plus a `gen_manual` table-renderer fix (a pipe inside a
   `code span` no longer over-splits a row).
-- **0.6 (2026-07-02 — IN PREPARATION).** The Windows-native release (full log in CHANGELOG.md).
+- **0.6 (2026-07-02) — RELEASED: the Windows-native release.** Full log in CHANGELOG.md.
   Landed since 0.5: the **Windows-only** commitment (DESIGN §3.0); the **Job-Object process
   substrate** (`internal/winjob` — born-in-job launch, native die-with-parent + race-free tree-kill;
   the portable reaper is deleted); real Windows **isatty + UTF-8 console**; the **`env` → `env_exact`**
@@ -40,9 +40,10 @@ Ruby, thinks like Perl, runs like Go").*
   equality); and a **quality/consistency pass** on the errors-as-values model (Err-operand
   short-circuit, catchable string/fs/encoding/json type errors, source positions on `?`-propagation
   and one-liner errors, rejected-not-ignored exec options, dup-map-key rejection). All `-race` clean.
-  Still open before cutting: the 0.6-candidate stdlib powers below (`walk`, named-capture `match`,
-  etc.) are optional; the release can ship without them. **Remaining papercuts not yet done:**
-  CI + fuzz targets, and the `sturm`/ConPTY/resource-limit *decision record* (deferred, not built).
+  Deferred past 0.6: the candidate stdlib powers below (`walk`, named-capture `match`, etc.) remain
+  optional. **Remaining papercuts:** the `sturm`/ConPTY/resource-limit *decision record* (deferred, not
+  built). *(Testing infra — the three fuzz targets and a local on-demand preflight — landed in 0.7; see
+  below. Hosted CI is deliberately not adopted; the preflight is the release gate. See TESTING.md.)*
 - **0.6 candidates (triaged 2026-06-29 — build on real daily-driver need, not speculatively).**
   Ordered by likely use: **`walk`** (recursive dir traversal) and **named-capture `match` →
   map** are the two most likely to be hit and are genuine *powers*; then `replace_first`,
