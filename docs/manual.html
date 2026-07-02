@@ -17,7 +17,7 @@
 <main id="main" class="wrap"><div class="prose">
 <h1 id="drang-language-manual">drang: Language Manual</h1>
 <p><em>A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration, implemented in Go.</em></p>
-<p><em>Covers drang 0.5.</em></p>
+<p><em>Covers drang 0.6.</em></p>
 <blockquote>Every code example in this manual was executed against the interpreter; the shown output is real.</blockquote>
 <h2 id="contents">Contents</h2>
 <ul><li><a href="#introduction">Introduction</a></li><li><a href="#lexical-structure-declarations-types-and-operators">Lexical Structure, Declarations, Types, and Operators</a></li><li><a href="#strings">Strings</a></li><li><a href="#control-flow">Control flow</a></li><li><a href="#functions-lambdas-closures-and-pipelines">Functions, Lambdas, Closures, and Pipelines</a></li><li><a href="#arrays-maps-and-the-collection-toolkit">Arrays, Maps, and the Collection Toolkit</a></li><li><a href="#errors-as-values">Errors as Values</a></li><li><a href="#regular-expressions">Regular expressions</a></li><li><a href="#external-commands-and-concurrency">External Commands and Concurrency</a></li><li><a href="#in-language-concurrency">In-language concurrency</a></li><li><a href="#files-and-paths">Files and Paths</a></li><li><a href="#json">JSON</a></li><li><a href="#csv">CSV</a></li><li><a href="#date-and-time">Date and time</a></li><li><a href="#hashing-encoding-and-randomness">Hashing, encoding, and randomness</a></li><li><a href="#http-client">HTTP client</a></li><li><a href="#one-liner-mode">One-liner mode</a></li><li><a href="#modules-use">Modules: <code>use</code></a></li><li><a href="#testing-drang-test">Testing: <code>drang test</code></a></li><li><a href="#formatting-drang-fmt">Formatting: <code>drang fmt</code></a></li><li><a href="#quick-reference-builtins">Quick reference: builtins</a></li><li><a href="#not-yet-known-gaps-and-surprises">Not Yet: Known Gaps and Surprises</a></li></ul>
@@ -1455,6 +1455,6 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <h3 id="also-absent-from-designmd-not-yet-built">Also absent (from DESIGN.md, not yet built)</h3>
 <p><code>sh()</code> shell escape, string ranges (<code>'a'..'z'</code>: single-rune <strong>string</strong> ranges; drang has no char type, so <code>'a'..'z'</code> is a range of one-character strings, not chars), and the cross-machine/distribution growth paths. These are tracked in DESIGN.md and ROADMAP.md as deferred or planned, not shipped. (First-class builtin values, <code>map($xs, basename)</code>, now <em>do</em> work; see "Functions and builtins are first-class values".)</p>
 </div></main>
-<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.5 · built by drang</div></footer>
+<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.6 · built by drang</div></footer>
 <script src="site.js"></script>
 </body></html>
