@@ -133,6 +133,15 @@ func vmCallFunction(fn *Function, args []value.Value, bodyDepth int) (value.Valu
 	return v, err
 }
 
+// posAt returns the source position (line, col) of the instruction at ip, or (0,0) if ip is
+// out of range or the instruction carries no position.
+func (p *Proto) posAt(ip int) (line, col int) {
+	if ip >= 0 && ip < len(p.Positions) {
+		return p.Positions[ip].Line, p.Positions[ip].Col
+	}
+	return 0, 0
+}
+
 // vmRun executes a Proto against env. Named variables resolve through env (v1,
 // Env-backed); registers hold expression temporaries. The env pointer moves as
 // OpPushScope/OpPopScope enter and leave block scopes, mirroring the walker's
@@ -536,7 +545,8 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 		case OpIterNew:
 			if src := regs[in.B]; src.IsErr() {
 				// Match the walker: an unhandled Err iterable propagates (message preserved).
-				return value.MakeNil(), errSignal{e: src}
+				l, c := p.posAt(ip - 1)
+				return value.MakeNil(), errSignal{e: src, line: l, col: c}
 			}
 			it, err := newForIter(regs[in.B])
 			if err != nil {
@@ -563,7 +573,8 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			// the function's result; RunProgramVM lets it abort the program). A
 			// non-error value simply passes through in regs[A].
 			if regs[in.A].IsErr() {
-				return value.MakeNil(), errSignal{e: regs[in.A]}
+				l, c := p.posAt(ip - 1)
+				return value.MakeNil(), errSignal{e: regs[in.A], line: l, col: c}
 			}
 		case OpReturn:
 			return regs[in.A], nil
