@@ -7,6 +7,65 @@ import (
 	"testing"
 )
 
+// TestErrPropagationHasPosition: a `?` that propagates an Err to the top level (and a for-in over
+// an unhandled Err) now carries a source position, on both backends.
+func TestErrPropagationHasPosition(t *testing.T) {
+	cases := []string{
+		"$e := fail(\"boom\")\n$e?",
+		"$e := fail(\"boom\")\nfor $x in $e { }",
+	}
+	for _, src := range cases {
+		for _, vm := range []bool{false, true} {
+			_, err := runBackend(t, src, vm)
+			if err == nil {
+				t.Fatalf("vm=%v: expected a top-level abort for %q", vm, src)
+			}
+			if line, _, ok := ErrorPos(err); !ok || line == 0 {
+				t.Errorf("vm=%v: propagated error lacks a source position (%q): %v", vm, src, err)
+			}
+		}
+	}
+}
+
+// TestWalkerRuntimeErrorHasPosition: an ordinary aborting runtime error on the tree-walker path
+// (one-liner mode, VM fallback) now carries a source position, like the VM already did.
+func TestWalkerRuntimeErrorHasPosition(t *testing.T) {
+	_, err := runBackend(t, `say("a" + 5)`, false) // false => tree-walker
+	if err == nil {
+		t.Fatal("expected an abort")
+	}
+	if line, _, ok := ErrorPos(err); !ok || line == 0 {
+		t.Errorf("walker runtime error lacks a position: %v", err)
+	}
+}
+
+// TestErrorPositionParity: both backends locate an error on the same LINE with a caret. The exact
+// column within the line can differ for a general expression abort (the VM stamps per-instruction,
+// the walker per-node) — invisible in practice since a program runs on one backend and the error
+// message is identical. Control-flow propagation (?) is stamped from the same node on both, so it
+// matches exactly.
+func TestErrorPositionParity(t *testing.T) {
+	exact := map[string]bool{"$e := fail(\"x\")\n$e?": true} // ?-propagation matches column too
+	for _, src := range []string{`say("a" + 5)`, "$e := fail(\"x\")\n$e?"} {
+		_, wErr := runBackend(t, src, false)
+		_, vErr := runBackend(t, src, true)
+		wl, wc, wok := ErrorPos(wErr)
+		vl, vc, vok := ErrorPos(vErr)
+		if !wok || !vok {
+			t.Fatalf("%q: missing position: walker ok=%v vm ok=%v", src, wok, vok)
+		}
+		if wl != vl {
+			t.Errorf("line mismatch for %q: walker=%d vm=%d", src, wl, vl)
+		}
+		if wc < 1 || vc < 1 {
+			t.Errorf("%q: a caret column is missing: walker=%d vm=%d", src, wc, vc)
+		}
+		if exact[src] && wc != vc {
+			t.Errorf("column mismatch for %q: walker=%d vm=%d", src, wc, vc)
+		}
+	}
+}
+
 // TestStringFamilyTypeErrorsCatchable: wrong-TYPE arguments to string/fs/encoding/json builtins
 // are catchable Err values (composing with // and ?), matching math/array/csv — not hard aborts.
 func TestStringFamilyTypeErrorsCatchable(t *testing.T) {

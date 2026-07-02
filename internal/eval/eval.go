@@ -238,9 +238,14 @@ type nextSignal struct{}
 
 func (nextSignal) Error() string { return "next outside a loop" }
 
-// errSignal carries a propagated error (from ?) up to the call boundary, where
-// it becomes the enclosing function's error result, or aborts at the top level.
-type errSignal struct{ e value.Value }
+// errSignal carries a propagated error (from ? or an unhandled Err iterated by for-in) up to
+// the call boundary, where it becomes the enclosing function's error result, or aborts at the
+// top level. line/col record where it was raised, so a top-level abort points at the source
+// (they are 0 when unknown).
+type errSignal struct {
+	e         value.Value
+	line, col int
+}
 
 func (s errSignal) Error() string { return s.e.ErrMsg() }
 
@@ -263,10 +268,37 @@ type posError struct {
 
 func (e *posError) Error() string { return e.msg }
 
+// nodeLoc returns an AST node's source position (0,0 if it carries none), via the same Loc()
+// interface the compiler uses to stamp instructions.
+func nodeLoc(n any) (line, col int) {
+	if l, ok := n.(interface{ Loc() (int, int) }); ok {
+		return l.Loc()
+	}
+	return 0, 0
+}
+
+// stampPos wraps a plain aborting error with a node's source position, so the tree-walker's
+// runtime errors carry a file:line:col like the VM's. Control-flow signals and already-positioned
+// errors pass through unchanged; the innermost node wins (outer evalExpr/evalStmt see a *posError
+// and skip). Only real aborts are wrapped — errors-as-values flow as Values, not Go errors.
+func stampPos(err error, n any) error {
+	switch err.(type) {
+	case nil, *posError, errSignal, returnSignal, exitSignal, breakSignal, nextSignal:
+		return err
+	}
+	if line, col := nodeLoc(n); line != 0 {
+		return &posError{line: line, col: col, msg: err.Error()}
+	}
+	return err
+}
+
 // ErrorPos reports a runtime error's source position, if it carries one.
 func ErrorPos(err error) (line, col int, ok bool) {
 	if pe, ok := err.(*posError); ok {
 		return pe.line, pe.col, true
+	}
+	if es, ok := err.(errSignal); ok && es.line != 0 {
+		return es.line, es.col, true
 	}
 	return 0, 0, false
 }
@@ -385,6 +417,14 @@ func ExitRequested(err error) (code int, ok bool) {
 }
 
 func evalStmt(s ast.Stmt, env *Env) (value.Value, error) {
+	v, err := evalStmtInner(s, env)
+	if err != nil {
+		return v, stampPos(err, s)
+	}
+	return v, nil
+}
+
+func evalStmtInner(s ast.Stmt, env *Env) (value.Value, error) {
 	switch n := s.(type) {
 	case *ast.DeclStmt:
 		v, err := evalExpr(n.Value, env)
@@ -498,7 +538,8 @@ func evalFor(n *ast.ForStmt, env *Env) (value.Value, error) {
 		// `for` is a statement (no value slot to hold the Err), so an unhandled Err iterable
 		// propagates like `?` — it surfaces with its original message and the caller's // can
 		// recover it — rather than aborting with a generic "cannot iterate" error.
-		return value.MakeNil(), errSignal{e: iter}
+		line, col := nodeLoc(n.Iter)
+		return value.MakeNil(), errSignal{e: iter, line: line, col: col}
 	}
 	two := len(n.Vars) == 2
 	// bind runs one iteration; stop is true when the loop should end (break, or a
@@ -998,7 +1039,17 @@ func fieldRead(c value.Value, name string) value.Value {
 	return value.MakeErr(fmt.Sprintf("cannot access field .%s of %s", name, c.TypeName()), 1)
 }
 
+// evalExpr evaluates an expression, stamping a bare aborting error with the node's source
+// position so the tree-walker (one-liner mode, VM fallback) reports file:line:col like the VM.
 func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
+	v, err := evalExprInner(e, env)
+	if err != nil {
+		return v, stampPos(err, e)
+	}
+	return v, nil
+}
+
+func evalExprInner(e ast.Expr, env *Env) (value.Value, error) {
 	switch n := e.(type) {
 	case *ast.IntLit:
 		return value.MakeInt(n.Value), nil
@@ -1052,7 +1103,8 @@ func evalExpr(e ast.Expr, env *Env) (value.Value, error) {
 			return value.MakeNil(), err
 		}
 		if v.IsErr() {
-			return value.MakeNil(), errSignal{e: v}
+			line, col := nodeLoc(n.X) // point at the propagated expression, matching the VM
+			return value.MakeNil(), errSignal{e: v, line: line, col: col}
 		}
 		return v, nil
 	case *ast.Logical:
