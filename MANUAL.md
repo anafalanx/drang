@@ -2437,9 +2437,9 @@ C:/Users/anafa/AppData/Local/Temp/drang_fs_demo4/top.go
 
 ### Pure path helpers
 
-These are string transforms. They never touch the disk and never return an
-`Err` (a non-string argument is a hard error). On Windows they use the native
-separator unless noted.
+These are string transforms. They never touch the disk. A non-string argument is a
+catchable `Err`, like every other builtin's wrong-type check (a wrong argument *count*
+is still a hard abort). On Windows they use the native separator unless noted.
 
 | Builtin | Input | Result |
 |---|---|---|
@@ -3191,7 +3191,12 @@ optional trailing options map `{cwd, env_exact, env_add, stdin, timeout, arg0, s
 sets the exact child environment; `env_add` overlays inherited environment; `timeout`
 is in ms; `arg0` presents a different argv[0] than the launched executable; `supervise:
 true` ties the child's lifetime to ours, see [Options](#options-cwd-env_exact-env_add-stdin-timeout-supervise)).
-No shell is involved; args are passed verbatim. Channels and tasks are shared
+No shell is involved; args are passed verbatim. A few caveats, each a catchable Err rather than a
+silent surprise: `arg0` is rejected for a `.bat`/`.cmd` target (it is launched via `cmd.exe`, which
+owns argv[0]); `start` rejects `{timeout}` (a started process is detached and runs unbounded — use
+`run`/`capture` for a bounded command); and `supervise` is only meaningful for `start` — the
+synchronous forms (`run`/`capture`/`capture_all`/`pipe`/`each_line`) always die with drang while it
+waits for them, so it is a no-op there. Channels and tasks are shared
 reference types; values are deep-copied on send and on `await`.
 
 | Builtin | Signature | Description |
@@ -3296,7 +3301,7 @@ Trig (`sin`, `cos`, `tan`, …) is planned as a thin binding over Go's `math`, n
   ```
 
 - **The exponent operator `**` is absent**: `2 ** 8` is a parse error (`unexpected STAR`).
-- **No ternary**: `1 > 0 ? 1 : 2` does not parse. `if` is a statement, not an expression, so there is no inline conditional. Use `and`/`or` short-circuit value-returning logic (`$cond and $a or $b`) as the workaround.
+- **No ternary**: `1 > 0 ? 1 : 2` does not parse. `if` is a statement, not an expression, so there is no inline conditional; assign inside an `if`/`else` body instead. The Perl `$cond and $a or $b` trick is **not** a safe substitute — it returns `$b` whenever the true-branch value `$a` is itself falsy (`0`, `""`, `[]`, `false`). For example `(true and 0) or 99` yields `99`, not `0`.
 - **No bitwise operators**: `&`, `|` (as bitwise), `<<`, `>>` all fail to parse (`&` lexes as `ILLEGAL`; `<<` is read as a heredoc start). `|` is the lambda delimiter, not bitwise-or.
 - **No `++` / `--`**: `$x++` is a parse error. Use compound assignment: `$x += 1`.
 
@@ -3339,6 +3344,16 @@ Several features are specified in DESIGN.md but do not work in the binary yet. D
   ```
 
   There is no `sprintf` (`unknown function`); `format` is the only string-formatting builtin.
+
+- **Runaway recursion becomes a catchable error, not a crash.** Nested function calls are bounded (currently 4000 deep); past the limit the call returns an ordinary Err value — `//` recovers it and `is_err` detects it — instead of overflowing the stack and aborting the process. Ordinary deep recursion (well within the limit) is unaffected:
+
+  ```drang
+  fn .f($n) { .f($n + 1) }        # runaway
+  say(.f(0) // "stopped safely")  # stopped safely
+  say(err_msg(.f(0)))             # call depth exceeded 4000 (infinite recursion?)
+  ```
+
+- **Running a `.bat` / `.cmd` is safe from argument injection.** `run`/`capture`/`pipe`/`each_line`/`start` launch batch files through `cmd.exe` with defensive quoting, so an argument containing `"`, `&`, `|`, `<`, `>`, or `%VAR%` is passed as inert data, never interpreted as a command (the "BatBadBut" / CVE-2024-24576 class of hole). A batch argument may not contain a NUL or a raw newline; those are rejected with a catchable Err.
 
 ### Also absent (from DESIGN.md, not yet built)
 

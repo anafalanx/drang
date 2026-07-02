@@ -40,7 +40,7 @@ func builtinFromJSON(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("from_json expects 1 argument (string), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("from_json expects a string, got %s", args[0].TypeName())
+		return value.MakeNil(), typeErrf("from_json expects a string, got %s", args[0].TypeName())
 	}
 	dec := json.NewDecoder(strings.NewReader(args[0].AsStr()))
 	dec.UseNumber() // keep int/float distinction and large-int precision
@@ -153,7 +153,7 @@ func builtinToJSON(args []value.Value) (value.Value, error) {
 				}
 			}
 		default:
-			return value.MakeNil(), fmt.Errorf("to_json indent must be an int or string, got %s", args[1].TypeName())
+			return value.MakeNil(), typeErrf("to_json indent must be an int or string, got %s", args[1].TypeName())
 		}
 	}
 	var b strings.Builder
@@ -230,6 +230,18 @@ func encodeJSONMap(b *strings.Builder, m *value.OrderedMap, indent string, depth
 		return nil
 	}
 	keys, vals := m.Keys(), m.Vals()
+	// Distinct map keys can stringify to the same JSON key (int 1 vs string "1"); emitting both
+	// would produce invalid, lossy JSON, so reject the collision instead.
+	if len(keys) > 1 {
+		seen := make(map[string]bool, len(keys))
+		for _, k := range keys {
+			d := k.Display()
+			if seen[d] {
+				return fmt.Errorf("keys collide as JSON strings: %q comes from more than one distinct map key", d)
+			}
+			seen[d] = true
+		}
+	}
 	b.WriteByte('{')
 	for i := range keys {
 		if i > 0 {

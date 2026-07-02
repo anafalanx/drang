@@ -45,12 +45,26 @@ type Env struct {
 	parent       *Env
 	moduleDir    string          // base directory for relative `use` paths (set on the top env per run/module)
 	loadingChain map[string]bool // canonical paths being loaded up the import chain (cycle detection)
+	callDepth    int             // dynamic user-function call depth at this env; the recursion guard (see callFunction)
 }
+
+// maxCallDepth bounds nested user-function calls. Each drang call recurses the Go
+// stack (walker: callFunction->evalBlock->...; VM: vmCallFunction->vmRun->...), and
+// Go's stack overflow is a FATAL, unrecoverable crash — not a catchable panic. So
+// past this depth callFunction returns a catchable Err instead of recursing further.
+// The bound is well below where the Go stack actually overflows, with margin for the
+// several Go frames each drang call adds, yet far above any real recursion.
+const maxCallDepth = 4000
 
 // NewEnv returns a fresh top-level scope.
 func NewEnv() *Env { return &Env{vars: map[string]binding{}} }
 
-func (e *Env) child() *Env { return &Env{vars: map[string]binding{}, parent: e} }
+// child returns a nested scope. It inherits callDepth so the recursion guard tracks
+// depth across block scopes (if/for bodies) within one call; a function body's local
+// scope has its callDepth set explicitly by callFunction/vmCallFunction. snapshot
+// deliberately does NOT copy callDepth: a spawned/pmap goroutine runs on a fresh Go
+// stack and so starts counting from zero.
+func (e *Env) child() *Env { return &Env{vars: map[string]binding{}, parent: e, callDepth: e.callDepth} }
 
 // SetModuleDir sets the base directory for resolving relative `use` paths. The CLI
 // sets it on the top env: the importing file's directory, or cwd for -e/stdin/REPL.
@@ -126,6 +140,9 @@ func (e *Env) define(name string, v value.Value, frozen bool) error {
 	}
 	if frozen {
 		value.Freeze(v) // a constant's value is deeply immutable, not just its binding
+	}
+	if e.vars == nil {
+		e.vars = map[string]binding{} // lazily created: a register-mode scope starts map-free (see childDepth)
 	}
 	e.vars[name] = binding{v: v, frozen: frozen}
 	return nil
@@ -476,6 +493,12 @@ func evalFor(n *ast.ForStmt, env *Env) (value.Value, error) {
 	iter, err := evalExpr(n.Iter, env)
 	if err != nil {
 		return value.MakeNil(), err
+	}
+	if iter.IsErr() {
+		// `for` is a statement (no value slot to hold the Err), so an unhandled Err iterable
+		// propagates like `?` — it surfaces with its original message and the caller's // can
+		// recover it — rather than aborting with a generic "cannot iterate" error.
+		return value.MakeNil(), errSignal{e: iter}
 	}
 	two := len(n.Vars) == 2
 	// bind runs one iteration; stop is true when the loop should end (break, or a
@@ -1143,6 +1166,8 @@ func evalUnary(n *ast.Unary, env *Env) (value.Value, error) {
 			return value.MakeInt(-x.AsInt()), nil
 		case value.Float:
 			return value.MakeFloat(-x.AsFloat()), nil
+		case value.Err:
+			return x, nil // errors flow as values
 		}
 		return value.MakeNil(), fmt.Errorf("cannot negate %s", x.TypeName())
 	case token.BANG:
@@ -1172,6 +1197,12 @@ func evalBinary(n *ast.Binary, env *Env) (value.Value, error) {
 	case token.LT, token.LE, token.GT, token.GE:
 		return compare(n.Op, l, r)
 	case token.SPACESHIP:
+		if l.IsErr() {
+			return l, nil
+		}
+		if r.IsErr() {
+			return r, nil
+		}
 		cmp, err := threeway(l, r)
 		if err != nil {
 			return value.MakeNil(), err
@@ -1204,6 +1235,12 @@ func mulOverflows(a, b int64) bool {
 }
 
 func arith(op token.Kind, l, r value.Value) (value.Value, error) {
+	if l.IsErr() {
+		return l, nil // errors flow as values: an unhandled Err operand passes through, not a hard abort
+	}
+	if r.IsErr() {
+		return r, nil
+	}
 	if !l.IsNumber() || !r.IsNumber() {
 		return value.MakeNil(), fmt.Errorf("cannot use %s and %s with '%s' (no automatic coercion: convert with int()/float()/str(), or ~ to join strings)",
 			l.TypeName(), r.TypeName(), opSym(op))
@@ -1260,6 +1297,17 @@ func equal(l, r value.Value) bool { return value.Equal(l, r) }
 // It is the shared core of compare, the <=> operator, and the ordering builtins.
 func threeway(l, r value.Value) (int, error) {
 	switch {
+	case l.Tag() == value.Int && r.Tag() == value.Int:
+		// Compare as int64: routing two ints through float64 collapses values above 2^53
+		// (e.g. adjacent nanosecond timestamps or large ids would order as equal).
+		a, b := l.AsInt(), r.AsInt()
+		switch {
+		case a < b:
+			return -1, nil
+		case a > b:
+			return 1, nil
+		}
+		return 0, nil
 	case l.IsNumber() && r.IsNumber():
 		a, b := l.Num(), r.Num()
 		switch {
@@ -1276,6 +1324,12 @@ func threeway(l, r value.Value) (int, error) {
 }
 
 func compare(op token.Kind, l, r value.Value) (value.Value, error) {
+	if l.IsErr() {
+		return l, nil // errors flow as values (matches index/field reads), rather than a hard abort
+	}
+	if r.IsErr() {
+		return r, nil
+	}
 	cmp, err := threeway(l, r)
 	if err != nil {
 		return value.MakeNil(), err
@@ -1303,14 +1357,14 @@ func evalCall(n *ast.Call, env *Env) (value.Value, error) {
 		args[i] = v
 	}
 	if id, ok := n.Callee.(*ast.Ident); ok {
-		return resolveAndCall(id.Name, args, env)
+		return resolveAndCall(id.Name, args, env, env.callDepth)
 	}
 	cv, err := evalExpr(n.Callee, env)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	if fn, ok := asFunction(cv); ok {
-		return callFunction(fn, args)
+		return callFunction(fn, args, env.callDepth)
 	}
 	return value.MakeNil(), fmt.Errorf("cannot call a %s", cv.TypeName())
 }
@@ -1334,14 +1388,14 @@ func evalPipe(n *ast.Pipe, env *Env) (value.Value, error) {
 		args[i+1] = v
 	}
 	if id, ok := c.Callee.(*ast.Ident); ok {
-		return resolveAndCall(id.Name, args, env)
+		return resolveAndCall(id.Name, args, env, env.callDepth)
 	}
 	cv, err := evalExpr(c.Callee, env)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	if fn, ok := asFunction(cv); ok {
-		return callFunction(fn, args)
+		return callFunction(fn, args, env.callDepth)
 	}
 	return value.MakeNil(), fmt.Errorf("cannot call a %s", cv.TypeName())
 }
@@ -1350,21 +1404,22 @@ func evalPipe(n *ast.Pipe, env *Env) (value.Value, error) {
 // binding (which shadows builtins) first, then dispatch/spawn/HOFs, then a
 // builtin, else unknown. It is the single call seam shared by the tree-walker
 // and the bytecode VM, so a call resolves identically from either backend.
-func resolveAndCall(name string, args []value.Value, env *Env) (value.Value, error) {
+func resolveAndCall(name string, args []value.Value, env *Env, depth int) (value.Value, error) {
 	if cv, found := env.get(name); found {
 		if fn, ok := asFunction(cv); ok {
-			return callFunction(fn, args)
+			return callFunction(fn, args, depth)
 		}
 		return value.MakeNil(), fmt.Errorf("%s is not a function (it is a %s)", name, cv.TypeName())
 	}
-	return dispatchNonUser(name, args, env)
+	return dispatchNonUser(name, args, env, depth)
 }
 
 // dispatchNonUser resolves a call to a non-user target — dispatch/spawn/HOFs/
 // builtins — skipping the env lookup. The VM emits a direct call to this (via
 // OpCallBuiltin) only when whole-program analysis proves the name is never bound by
-// the user, so env.get would always miss anyway.
-func dispatchNonUser(name string, args []value.Value, env *Env) (value.Value, error) {
+// the user, so env.get would always miss anyway. depth is the caller's user-call
+// depth, forwarded so a callback (HOF/each_line) is bounded by the recursion guard.
+func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (value.Value, error) {
 	if name == "dispatch" {
 		return evalDispatch(args, env)
 	}
@@ -1372,13 +1427,13 @@ func dispatchNonUser(name string, args []value.Value, env *Env) (value.Value, er
 		return evalSpawn(args)
 	}
 	if name == "each_line" {
-		return evalEachLine(args)
+		return evalEachLine(args, depth)
 	}
 	if name == "use" {
 		return evalUse(args, env)
 	}
 	if hofNames[name] {
-		return evalHOF(name, args, env)
+		return evalHOF(name, args, depth)
 	}
 	if b, ok := builtins[name]; ok {
 		return safeBuiltin(name, b, args)
@@ -1458,21 +1513,35 @@ func arityError(fn *Function, got int) error {
 	return fmt.Errorf("%s expects %d to %d arguments, got %d", name, required, np, got)
 }
 
-func callFunction(fn *Function, args []value.Value) (value.Value, error) {
+// callFunction invokes fn with args. depth is the caller's current user-call depth; the
+// callee's body runs one level deeper. Past maxCallDepth it returns a catchable Err rather
+// than recurse into a fatal Go stack overflow. depth is passed explicitly (not read from a
+// shared env), so the capture env is never mutated and pmap/spawn workers — on their own
+// goroutines and Go stacks — count from zero. The tree-walker carries depth on Env.callDepth
+// (set on the local scope below) and reads it back at each call site; the VM threads it
+// through vmRun.
+func callFunction(fn *Function, args []value.Value, depth int) (value.Value, error) {
 	if fn.Builtin != nil {
 		// route through safeBuiltin so a panicking builtin yields a catchable Err, exactly
 		// like by-name dispatch (this is the serial path; pmap has its own recover). The
 		// builtin still does its own arity/type checks.
 		return safeBuiltin(fn.Name, fn.Builtin, args)
 	}
+	bodyDepth := depth + 1
+	if bodyDepth > maxCallDepth {
+		// Deep enough to risk a fatal Go stack overflow: fail loud with a catchable Err
+		// rather than crash the interpreter.
+		return value.MakeErr(fmt.Sprintf("call depth exceeded %d (infinite recursion?)", maxCallDepth), 1), nil
+	}
 	args, err := bindArgs(fn, args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	if fn.Proto != nil {
-		return vmCallFunction(fn, args)
+		return vmCallFunction(fn, args, bodyDepth)
 	}
 	local := fn.Env.child()
+	local.callDepth = bodyDepth
 	for i, p := range fn.Params {
 		_ = local.define(p, args[i], false)
 	}
@@ -1513,9 +1582,22 @@ func opSym(op token.Kind) string {
 
 type builtin func(args []value.Value) (value.Value, error)
 
+// typeErr marks a wrong-ARGUMENT-TYPE failure from a builtin. safeBuiltin converts it to a
+// catchable Err value, so a bad-type argument composes with // / ? like every other stdlib
+// error, while a wrong-argument-COUNT failure (a plain error) stays a program abort. This keeps
+// the "wrong type is a catchable Err" convention uniform across the whole builtin surface
+// (strings/fs/encoding/json included) without threading MakeErr through every call site.
+type typeErr struct{ msg string }
+
+func (e typeErr) Error() string { return e.msg }
+
+// typeErrf builds a typeErr from a format string.
+func typeErrf(format string, a ...any) error { return typeErr{msg: fmt.Sprintf(format, a...)} }
+
 // safeBuiltin invokes a builtin, converting any panic (e.g. an oversized
 // allocation deep in the Go stdlib) into a catchable Err value, so a script can
-// never crash the interpreter with ordinary input.
+// never crash the interpreter with ordinary input. A typeErr the builtin returns
+// is likewise surfaced as a catchable Err value rather than a program abort.
 func safeBuiltin(name string, b builtin, args []value.Value) (v value.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1523,7 +1605,11 @@ func safeBuiltin(name string, b builtin, args []value.Value) (v value.Value, err
 			err = nil
 		}
 	}()
-	return b(args)
+	v, err = b(args)
+	if te, ok := err.(typeErr); ok {
+		return value.MakeErr(te.msg, 1), nil
+	}
+	return v, err
 }
 
 var builtins = map[string]builtin{
@@ -1789,6 +1875,9 @@ func builtinLen(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("len expects 1 argument, got %d", len(args))
 	}
 	a := args[0]
+	if a.IsErr() {
+		return a, nil // errors flow as values: preserve the original Err, not a fresh "cannot take len" one
+	}
 	switch a.Tag() {
 	case value.Arr, value.Map, value.Range:
 		return value.MakeInt(int64(a.Obj().Len())), nil

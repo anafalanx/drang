@@ -375,6 +375,11 @@ say(.nest(.nest($d, "a", "x"), "a", "x").a.x)`,
 // partially fall back (e.g. a call through a variable is a non-Ident callee), but
 // the called function/lambda itself still runs on the VM. Parity only.
 var vmParityExtra = []string{
+	// A map literal with an unhashable key must fail BEFORE the entry's value side effect (and
+	// any later entries) run — identically on both backends (fail-fast, byte-identical parity).
+	`$log := []
+$m := {[1]: push($log, "x")} // "caught"
+say($m ~ " " ~ str(len($log)))`,
 	`fn .counter() {
   $n := 0
   |$inc| {

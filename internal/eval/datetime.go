@@ -50,13 +50,25 @@ func epochZone(epoch float64, utc bool) time.Time {
 	return t.Local()
 }
 
-// wantUTC reports whether a trailing opts map carries {utc: true}.
-func wantUTC(opts value.Value) bool {
-	if opts.Tag() != value.Map {
-		return false
+// utcOpt reads the optional trailing {utc: bool} options map (at args[idx], if present) for
+// the datetime family. Like csvOpts it rejects a non-map opts argument and any key other than
+// "utc", so a misspelled {UTC: true} can't silently fall back to local time.
+func utcOpt(name string, args []value.Value, idx int) (bool, error) {
+	if idx >= len(args) {
+		return false, nil
 	}
-	v, ok := opts.Obj().(*value.OrderedMap).Get(value.MakeStr("utc"))
-	return ok && v.Truthy()
+	opts := args[idx]
+	if opts.Tag() != value.Map {
+		return false, fmt.Errorf("%s options must be a map, got %s", name, opts.TypeName())
+	}
+	m := opts.Obj().(*value.OrderedMap)
+	for _, k := range m.Keys() {
+		if k.Display() != "utc" {
+			return false, fmt.Errorf("%s: unknown option %q", name, k.Display())
+		}
+	}
+	v, ok := m.Get(value.MakeStr("utc"))
+	return ok && v.Truthy(), nil
 }
 
 func builtinStrftime(args []value.Value) (value.Value, error) {
@@ -69,7 +81,10 @@ func builtinStrftime(args []value.Value) (value.Value, error) {
 	if args[1].Tag() != value.Str {
 		return value.MakeErr(fmt.Sprintf("strftime expects a format string, got %s", args[1].TypeName()), 1), nil
 	}
-	utc := len(args) == 3 && wantUTC(args[2])
+	utc, err := utcOpt("strftime", args, 2)
+	if err != nil {
+		return value.MakeErr(err.Error(), 1), nil
+	}
 	return value.MakeStr(strftimeFormat(epochZone(args[0].Num(), utc), args[1].AsStr())), nil
 }
 
@@ -84,8 +99,12 @@ func builtinParseTime(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeErr(err.Error(), 1), nil
 	}
+	utc, uerr := utcOpt("parse_time", args, 2)
+	if uerr != nil {
+		return value.MakeErr(uerr.Error(), 1), nil
+	}
 	loc := time.Local
-	if len(args) == 3 && wantUTC(args[2]) {
+	if utc {
 		loc = time.UTC
 	}
 	t, perr := time.ParseInLocation(layout, args[0].AsStr(), loc)
@@ -102,7 +121,10 @@ func builtinDateParts(args []value.Value) (value.Value, error) {
 	if !args[0].IsNumber() {
 		return value.MakeErr(fmt.Sprintf("date_parts expects a number epoch, got %s", args[0].TypeName()), 1), nil
 	}
-	utc := len(args) == 2 && wantUTC(args[1])
+	utc, err := utcOpt("date_parts", args, 1)
+	if err != nil {
+		return value.MakeErr(err.Error(), 1), nil
+	}
 	t := epochZone(args[0].Num(), utc)
 	m := value.MakeMap()
 	om := m.Obj().(*value.OrderedMap)

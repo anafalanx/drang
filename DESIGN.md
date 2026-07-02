@@ -55,6 +55,21 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 
 ## 3. Decision record
 
+> **Some `[LOCKED]` entries below were superseded by later decisions (2026-06 build-out) — the
+> tag means "was decided," not "is current." A few Perl-flavored strawmen were dropped once the
+> language found its own shape; read this before treating any §3 line as ground truth:**
+> - **`let $x`** (§3.1) → declaration is `$x := …` (mutable) and `$x ::= …` (frozen constant). No `let`.
+> - **`sub f($a, $b)`** (§3.5) → named functions are `fn .name($a, $b)`; lambdas are `|$a, $b| …`.
+> - **`try`/`catch`** (§3.6) → **errors are values**: `?` propagates, `//` recovers. No exceptions, no `$@`.
+> - **Perl regex operators `=~` `!~` `m//` `s///` `tr//` and `$1..$n`** (§3.2/§3.3) → **rejected 2026-06-28**
+>   (see "Decision: reject Perl's regex operators"). drang keeps `qr//` literals plus the `match`/`gsub`/
+>   `matches` builtins and pipelines; named-capture→map is the ergonomics path.
+> - **Multi-index slices `$a[1,3,5]` / `$h["x","y"]`** (§3.2) → shipped as inclusive **range** slices
+>   `$a[1..3]` (a single index or one range; comma-list slices were not built).
+>
+> Still-`[LOCKED]`-but-not-yet-built (not superseded, just pending): lightweight structs/records, and
+> single-rune string ranges `'a'..'z'`. The MANUAL's "Not Yet" section is the honest live inventory.
+
 ### 3.0 Platform & portability
 - **Windows-only.** drang targets **Windows 11 23H2 and later**, plus **Windows Server releases that shipped with or after client 23H2** (in practice, Windows Server 2025 and later). Non-Windows builds are dropped. `[LOCKED 2026-07-01]`
   - **Negotiable floor, one direction.** The 23H2 baseline may be *raised* to **25H2 or later** if a technical boundary is cleanly solved only by requiring it; it is never lowered.
@@ -2446,3 +2461,48 @@ the reaper side-car itself becomes replaceable — **Job Objects**
 (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) give die-with-parent, whole-tree kill, resource limits,
 and *nested* supervision trees natively, and are the planned substrate for supervision,
 `{restart}`, and the sturm tree. Migration tracked in ROADMAP.md.
+
+## Security + correctness fixes (2026-07-02)
+
+A deep multi-agent study of the codebase surfaced one live security bug and three interpreter
+correctness bugs at shared VM/tree-walker seams. All four are fixed, with regression tests, and
+the suite is `-race` clean.
+
+- **BatBadBut / CVE-2024-24576 — argument injection when running a `.bat`/`.cmd` (CRITICAL).**
+  `winjob` built every child command line with `syscall.EscapeArg` (the CommandLineToArgvW
+  convention) and handed it to `CreateProcess`. But `CreateProcess` runs a batch file *via
+  cmd.exe*, whose command-line parsing differs, so an argument like `a" & echo INJECTED & rem "`
+  broke out of quoting and cmd executed the injected command (confirmed repro). Fix
+  (`internal/winjob/batch.go`): a batch target is now launched through an explicitly, defensively
+  quoted `cmd.exe /e:ON /v:OFF /d /c "..."` — the whole `/c` payload wrapped in an outer quote
+  pair, each argument individually quoted, embedded quotes doubled (`""`, cmd's own convention, not
+  `\"`) with backslash runs doubled, and every `%` rewritten `%%cd:~,%` so cmd cannot expand
+  `%VAR%` into the argument (`/v:OFF` likewise disables `!VAR!`). Ported from Rust's `std::process`,
+  the reference fix for this CVE — Go's `os/exec` deliberately does *not* auto-escape batch args
+  (its docs punt to caller-provided `SysProcAttr.CmdLine`), so winjob owns the escaping. cmd.exe is
+  resolved from drang's OWN environment / the system directory, never a child's custom `ComSpec`
+  (which could point at a malicious `cmd.exe`). NUL/CR/LF in a batch argument, and a `"` or trailing
+  `\` in the script path, are rejected with a catchable Err. Tests: golden command-line strings, an
+  end-to-end canary launch, `isBatchTarget`.
+
+- **Unbounded recursion crashed the interpreter (fatal Go stack overflow).** No call-depth guard
+  existed, so `fn .f($n) { .f($n+1) }` overflowed Go's goroutine stack — a *fatal, unrecoverable*
+  error, not a catchable panic. Fix: a `maxCallDepth` (4000) check in the shared `callFunction`
+  seam; past it a call returns a catchable Err (`//` recovers, `is_err` detects). Depth is threaded
+  as a plain `int` (through `vmRun` for the VM, and on `Env.callDepth` for the walker, set on each
+  freshly-created body scope) — never on the shared capture env, so `pmap`/`spawn` workers count
+  from zero on their own goroutines with no data race, and the hot register-recursion path stays
+  allocation-free (fib/tak unchanged vs. HEAD). Recursion through a HOF (`map`) is bounded too.
+
+- **`int == int` and `<=>` routed through `float64`.** `equalDepth` and `threeway` compared numbers
+  via `Num()` (float64) even when both were `Int`, so any two int64s above 2^53 that round to the
+  same float64 compared equal (`9007199254740993 == 9007199254740992` → `true`). Fix: compare two
+  ints as int64; mixed int/float comparison is unchanged (`1 == 1.0` still true).
+
+- **Structural equality was exponential on shared substructure.** `equalDepth` had a depth cap and
+  an identical-reference shortcut but no visited-pair memo, so two structurally-equal DAGs (e.g. 30
+  levels of `$x = [$x, $x]`) took exponential time. Fix: a lazily-allocated, per-call
+  `seen map[[2]Obj]bool`; revisiting a pair returns true, which breaks cycles AND prunes shared DAG
+  nodes to make equality linear. A concrete mismatch still returns false and unwinds, so an
+  optimistic revisit can never turn an unequal result equal. The memo is per-call, so concurrent
+  `Equal` on shared frozen values does not race.

@@ -8,8 +8,10 @@ type mapKey struct {
 }
 
 // normalizeKey reduces a key Value to a comparable mapKey. Integral floats
-// canonicalize to Int (so $h[1] and $h[1.0] collide, matching ==). Returns
-// ok=false for unhashable keys (non-integral float, nil, error, container, fn).
+// canonicalize to Int (so $h[1] and $h[1.0] collide, matching == for values within
+// float64's exact-integer range, |x| < 2^53; beyond that == widens both to float64
+// while keys stay exact int64, so the two can disagree — an accepted edge case).
+// Returns ok=false for unhashable keys (non-integral float, nil, error, container, fn).
 func normalizeKey(k Value) (mapKey, bool) {
 	switch k.tag {
 	case Int:
@@ -116,7 +118,7 @@ func (m *OrderedMap) Equal(o Obj) bool {
 	if !ok {
 		return false
 	}
-	return equalDepth(Value{tag: Map, ref: m}, Value{tag: Map, ref: n}, 0)
+	return equalDepth(Value{tag: Map, ref: m}, Value{tag: Map, ref: n}, 0, nil)
 }
 
 func (m *OrderedMap) DeepCopy(visited map[Obj]Obj) Obj {

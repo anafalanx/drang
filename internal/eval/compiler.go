@@ -850,19 +850,29 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 	case *ast.MapLit:
 		count := int32(len(n.Keys))
 		base := c.top
+		var badKeyJumps []int // OpJumpUnhashable sites, patched to jump past OpMakeMap
 		for i := range n.Keys {
 			kr := c.reserve()
 			if id, ok := n.Keys[i].(*ast.Ident); ok {
-				// A bare identifier key is its name as a string ({cwd: x} == {"cwd": x}).
+				// A bare identifier key is its name as a string ({cwd: x} == {"cwd": x}) —
+				// always hashable, so no per-key check is emitted (keeps the common
+				// options-map path check-free).
 				c.emit(OpLoadConst, kr, c.konst(value.MakeStr(id.Name)), 0)
 			} else {
 				c.compileExpr(n.Keys[i], kr)
+				// Check a dynamic key's hashability BEFORE evaluating its value, so a bad key
+				// short-circuits ahead of that value's side effects — matching the walker.
+				badKeyJumps = append(badKeyJumps, c.emit(OpJumpUnhashable, dst, kr, 0))
 			}
 			vr := c.reserve()
 			c.compileExpr(n.Vals[i], vr)
 		}
 		c.release(2 * count)
 		c.emit(OpMakeMap, dst, base, count)
+		end := int32(len(c.code))
+		for _, j := range badKeyJumps {
+			c.code[j].C = end // dst already holds the Err; skip the rest of the literal
+		}
 	case *ast.RangeLit:
 		t1 := c.reserve()
 		c.compileExpr(n.Lo, t1)

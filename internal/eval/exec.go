@@ -114,12 +114,16 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
+	if opts.timeout > 0 {
+		// A started process is detached and runs unbounded; {timeout} cannot apply. Reject it
+		// rather than silently ignore it. (Use run/capture for a bounded command.)
+		return value.MakeErr("start does not accept {timeout}: a started process is detached and runs unbounded", 1), nil
+	}
 	// Detached: stdio goes to the null device (not the terminal), like `exec cmd &`.
 	c, err := newJobCmd(argv, opts, nil, nil, nil)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
-	c.timeout = 0                  // a detached process is not bounded by the {timeout} option
 	c.killOnClose = opts.supervise // supervise:true ties it to drang's life; else it outlives drang
 	if startErr := c.start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
@@ -178,7 +182,7 @@ func builtinPid(args []value.Value) (value.Value, error) {
 // command finishes. stderr stays on the terminal. It is a special form (like spawn
 // and the HOFs) rather than a map builtin, because calling callFunction from a
 // builtins-map entry would form a package initialization cycle.
-func evalEachLine(args []value.Value) (value.Value, error) {
+func evalEachLine(args []value.Value, depth int) (value.Value, error) {
 	if len(args) < 2 {
 		return value.MakeNil(), fmt.Errorf("each_line expects a command and a callback")
 	}
@@ -213,7 +217,7 @@ func evalEachLine(args []value.Value) (value.Value, error) {
 	var abortVal value.Value                              // a callback-returned Err to surface
 	aborted := false
 	for scanner.Scan() {
-		v, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())})
+		v, cerr := callFunction(cb, []value.Value{value.MakeStr(scanner.Text())}, depth)
 		if cerr != nil {
 			c.killTree() // callback aborted (exit/die) — stop the child and its tree
 			cbErr = cerr

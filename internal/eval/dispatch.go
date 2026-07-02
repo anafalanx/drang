@@ -57,7 +57,7 @@ func dispatchResolve(tasks *value.OrderedMap, argv []string) (int, error) {
 	default:
 		return 0, fmt.Errorf("dispatch: task %q must take 0 or 1 parameter, got %d", name, len(fn.Params))
 	}
-	result, err := callFunction(fn, callArgs)
+	result, err := callFunction(fn, callArgs, 0) // a dispatched task is a fresh top-level entry (depth 0)
 	if err != nil {
 		fmt.Fprintln(stderr, "drang:", err)
 		return ExitCode(err), nil
