@@ -235,7 +235,9 @@ func resolveExe(name string, o execOpts) (string, error) {
 	}
 	p, err := exec.LookPath(name)
 	if err != nil {
-		return "", fmt.Errorf("exec: %q: %v", name, err)
+		// *exec.Error already renders as `exec: "name": <reason>`; return it unwrapped so the
+		// message has a single `exec:` prefix (matching the env-PATH branch), not a nested one.
+		return "", err
 	}
 	return p, nil
 }
@@ -250,6 +252,11 @@ func newJobCmd(argv []string, o execOpts, defaultStdin io.Reader, stdout, stderr
 	}
 	childArgv := append([]string(nil), argv...)
 	if o.hasArg0 {
+		if winjob.IsBatchTarget(exe) {
+			// A batch file is run via `cmd.exe /c`, which controls argv[0]; there is no way to
+			// present a different one. Reject rather than silently ignore the option.
+			return nil, fmt.Errorf("arg0 is not supported for a batch (.bat/.cmd) target: cmd.exe controls argv[0]")
+		}
 		childArgv[0] = o.arg0
 	}
 	var env []string

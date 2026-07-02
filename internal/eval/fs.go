@@ -13,13 +13,14 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// oneString validates a single string argument (wrong arity/type aborts).
+// oneString validates a single string argument. Wrong arity is a program abort (a Go error);
+// a wrong TYPE is a catchable Err (typeErr, converted by safeBuiltin) — the stdlib convention.
 func oneString(name string, args []value.Value) (string, error) {
 	if len(args) != 1 {
 		return "", fmt.Errorf("%s expects 1 argument, got %d", name, len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return "", fmt.Errorf("%s expects a string, got %s", name, args[0].TypeName())
+		return "", typeErrf("%s expects a string, got %s", name, args[0].TypeName())
 	}
 	return args[0].AsStr(), nil
 }
@@ -30,13 +31,13 @@ func twoStrings(name string, args []value.Value) (string, string, error) {
 	}
 	for i, a := range args {
 		if a.Tag() != value.Str {
-			return "", "", fmt.Errorf("%s: argument %d must be a string, got %s", name, i+1, a.TypeName())
+			return "", "", typeErrf("%s: argument %d must be a string, got %s", name, i+1, a.TypeName())
 		}
 	}
 	return args[0].AsStr(), args[1].AsStr(), nil
 }
 
-// --- path helpers: pure string transforms, never an Err; non-string aborts ---
+// --- path helpers: pure string transforms (never touch the disk); a non-string arg is a catchable Err ---
 
 // builtinJoin is polymorphic: join(array, sep?) joins the array's elements into
 // a string (the universal meaning of join), while join(str, str, ...) joins path
@@ -48,7 +49,7 @@ func builtinJoin(args []value.Value) (value.Value, error) {
 	parts := make([]string, len(args))
 	for i, a := range args {
 		if a.Tag() != value.Str {
-			return value.MakeNil(), fmt.Errorf("join: argument %d must be a string, got %s", i+1, a.TypeName())
+			return value.MakeNil(), typeErrf("join: argument %d must be a string, got %s", i+1, a.TypeName())
 		}
 		parts[i] = a.AsStr()
 	}
@@ -217,7 +218,7 @@ func builtinNewer(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("newer expects 2 arguments (a, b), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str || args[1].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("newer expects two string paths")
+		return value.MakeNil(), typeErrf("newer expects two string paths")
 	}
 	fa, ea := os.Stat(args[0].AsStr())
 	if ea != nil {
@@ -237,7 +238,7 @@ func builtinStale(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("stale expects 2 arguments (target, sources), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("stale: target must be a string")
+		return value.MakeNil(), typeErrf("stale: target must be a string")
 	}
 	target := args[0].AsStr()
 	sources, err := stringList("stale", args[1])
@@ -271,13 +272,13 @@ func stringList(name string, v value.Value) ([]string, error) {
 		out := make([]string, len(elems))
 		for i, e := range elems {
 			if e.Tag() != value.Str {
-				return nil, fmt.Errorf("%s: expected an array of strings", name)
+				return nil, typeErrf("%s: expected an array of strings", name)
 			}
 			out[i] = e.AsStr()
 		}
 		return out, nil
 	}
-	return nil, fmt.Errorf("%s: expected a string or array of strings, got %s", name, v.TypeName())
+	return nil, typeErrf("%s: expected a string or array of strings, got %s", name, v.TypeName())
 }
 
 func builtinGlob(args []value.Value) (value.Value, error) {
@@ -425,7 +426,7 @@ func builtinWriteFile(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("write_file expects 2 or 3 arguments (path, content, opts?), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("write_file: path must be a string")
+		return value.MakeNil(), typeErrf("write_file: path must be a string")
 	}
 	p := args[0].AsStr()
 	content := args[1].Display() // any value renders via its display; a string carries raw bytes
@@ -434,7 +435,13 @@ func builtinWriteFile(args []value.Value) (value.Value, error) {
 		if args[2].Tag() != value.Map {
 			return value.MakeErr("write_file: opts must be a map, got "+args[2].TypeName(), 1), nil
 		}
-		if v, ok := args[2].Obj().(*value.OrderedMap).Get(value.MakeStr("append")); ok {
+		m := args[2].Obj().(*value.OrderedMap)
+		for _, k := range m.Keys() {
+			if k.Display() != "append" {
+				return value.MakeErr("write_file: unknown option "+k.Display(), 1), nil
+			}
+		}
+		if v, ok := m.Get(value.MakeStr("append")); ok {
 			appendMode = v.Truthy()
 		}
 	}
@@ -496,7 +503,7 @@ func tempPrefix(name string, args []value.Value) (string, error) {
 	}
 	if len(args) == 1 {
 		if args[0].Tag() != value.Str {
-			return "", fmt.Errorf("%s: prefix must be a string", name)
+			return "", typeErrf("%s: prefix must be a string", name)
 		}
 		return args[0].AsStr(), nil
 	}

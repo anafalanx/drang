@@ -156,7 +156,7 @@ func (v Value) Truthy() bool {
 
 // Equal reports deep/structural equality between two values. Containers compare
 // element-/entry-wise; functions compare by identity.
-func Equal(l, r Value) bool { return equalDepth(l, r, 0) }
+func Equal(l, r Value) bool { return equalDepth(l, r, 0, nil) }
 
 // DeepCopyValue returns a deep, cycle-safe copy of v, used at goroutine
 // boundaries (copy-on-send): send, spawn args, await results, and pmap's per-row

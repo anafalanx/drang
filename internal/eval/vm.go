@@ -101,7 +101,7 @@ func RunProgramVM(prog *ast.Program, env *Env) error {
 	if !ok {
 		return RunProgram(prog, env)
 	}
-	_, err := vmRun(p, env, nil)
+	_, err := vmRun(p, env, nil, 0)
 	return err
 }
 
@@ -110,17 +110,20 @@ func RunProgramVM(prog *ast.Program, env *Env) error {
 // captured env with the arguments preloaded into the low registers. An Env-mode
 // function binds its params in a fresh child env, exactly like the walker's local
 // scope. The arity check happens in the shared callFunction before dispatch.
-func vmCallFunction(fn *Function, args []value.Value) (value.Value, error) {
+func vmCallFunction(fn *Function, args []value.Value, bodyDepth int) (value.Value, error) {
 	var v value.Value
 	var err error
 	if fn.Proto.RegLocals {
-		v, err = vmRun(fn.Proto, fn.Env, args)
+		// A register-mode function keeps its locals in registers and runs directly in its
+		// (shared) capture env — no per-call env allocation. The recursion depth rides
+		// through vmRun as a plain int, so nothing shared is mutated.
+		v, err = vmRun(fn.Proto, fn.Env, args, bodyDepth)
 	} else {
 		local := fn.Env.child()
 		for i, p := range fn.Params {
 			_ = local.define(p, args[i], false)
 		}
-		v, err = vmRun(fn.Proto, local, nil)
+		v, err = vmRun(fn.Proto, local, nil, bodyDepth)
 	}
 	// A ? that propagated an error out of the body becomes this function's error
 	// RESULT, matching the walker's errSignal handling in callFunction.
@@ -134,8 +137,9 @@ func vmCallFunction(fn *Function, args []value.Value) (value.Value, error) {
 // Env-backed); registers hold expression temporaries. The env pointer moves as
 // OpPushScope/OpPopScope enter and leave block scopes, mirroring the walker's
 // env.child() discipline exactly (a fresh child per if/else body and per loop
-// iteration).
-func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr error) {
+// iteration). depth is this body's user-call depth; every call it makes is passed
+// depth so the recursion guard tracks the Go-stack depth without touching env.
+func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value, rerr error) {
 	fr := regPool.Get().(*regFrame)
 	if cap(fr.regs) < p.NumRegs {
 		fr.regs = make([]value.Value, p.NumRegs)
@@ -278,11 +282,17 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			}
 			regs[in.A] = v
 		case OpSpaceship:
-			c, err := threeway(regs[in.B], regs[in.C])
-			if err != nil {
-				return value.MakeNil(), err
+			if b := regs[in.B]; b.IsErr() {
+				regs[in.A] = b // errors flow as values
+			} else if c := regs[in.C]; c.IsErr() {
+				regs[in.A] = c
+			} else {
+				cmp, err := threeway(regs[in.B], regs[in.C])
+				if err != nil {
+					return value.MakeNil(), err
+				}
+				regs[in.A] = value.MakeInt(int64(cmp))
 			}
-			regs[in.A] = value.MakeInt(int64(c))
 		case OpNeg:
 			x := regs[in.B]
 			switch x.Tag() {
@@ -290,6 +300,8 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 				regs[in.A] = value.MakeInt(-x.AsInt())
 			case value.Float:
 				regs[in.A] = value.MakeFloat(-x.AsFloat())
+			case value.Err:
+				regs[in.A] = x // errors flow as values
 			default:
 				return value.MakeNil(), fmt.Errorf("cannot negate %s", x.TypeName())
 			}
@@ -314,6 +326,14 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 				om.Set(k, regs[base+2*i+1])
 			}
 			regs[in.A] = result
+		case OpJumpUnhashable:
+			// Per-key hashability check for a dynamic map-literal key, emitted right after the
+			// key is evaluated and before its value — so a bad key fails BEFORE that value and
+			// any later entries run, matching the tree-walker exactly (byte-identical parity).
+			if k := regs[in.B]; !value.Hashable(k) {
+				regs[in.A] = value.MakeErr("unhashable map key: "+k.TypeName(), 1)
+				ip = int(in.C)
+			}
 		case OpMakeRange:
 			lo, hi := regs[in.B], regs[in.C]
 			if lo.Tag() != value.Int || hi.Tag() != value.Int {
@@ -473,14 +493,14 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 		case OpCall:
 			base, argc := in.A, in.B
 			name := p.Consts[in.C].AsStr()
-			res, err := resolveAndCall(name, regs[base:base+argc], env)
+			res, err := resolveAndCall(name, regs[base:base+argc], env, depth)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[base] = res
 		case OpCallBuiltin:
 			base, argc := in.A, in.B
-			res, err := dispatchNonUser(p.Consts[in.C].AsStr(), regs[base:base+argc], env)
+			res, err := dispatchNonUser(p.Consts[in.C].AsStr(), regs[base:base+argc], env, depth)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -491,7 +511,7 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 			if !ok {
 				return value.MakeNil(), fmt.Errorf("cannot call a %s", callee.TypeName())
 			}
-			res, err := callFunction(fn, regs[in.A:in.A+in.B])
+			res, err := callFunction(fn, regs[in.A:in.A+in.B], depth)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -514,6 +534,10 @@ func vmRun(p *Proto, env *Env, params []value.Value) (res value.Value, rerr erro
 				Name: t.Name, Params: t.Params, Defaults: t.Defaults, Body: t.Body, Env: env, Proto: t.Proto,
 			})
 		case OpIterNew:
+			if src := regs[in.B]; src.IsErr() {
+				// Match the walker: an unhandled Err iterable propagates (message preserved).
+				return value.MakeNil(), errSignal{e: src}
+			}
 			it, err := newForIter(regs[in.B])
 			if err != nil {
 				return value.MakeNil(), err

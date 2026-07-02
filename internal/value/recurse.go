@@ -59,9 +59,20 @@ func displayDepth(v Value, path map[Obj]bool, depth int) string {
 	return "?"
 }
 
-// equalDepth is Equal with the same depth bound and an identical-reference fast path.
-func equalDepth(l, r Value, depth int) bool {
+// equalDepth is Equal with a depth bound, an identical-reference fast path, and a
+// visited-pair memo. seen records container pairs already visited on this comparison;
+// revisiting one returns true, which both breaks reference cycles and — crucially —
+// prunes SHARED sub-structure so equality is linear rather than exponential in the
+// number of paths to a node. A concrete mismatch still returns false and unwinds the
+// whole comparison, so an optimistic revisit can never turn an unequal result equal.
+// seen is allocated lazily (only when the first container pair is compared) so scalar
+// comparisons stay allocation-free, and it is per-call, so concurrent Equal calls on
+// shared frozen values never race.
+func equalDepth(l, r Value, depth int, seen map[[2]Obj]bool) bool {
 	if l.IsNumber() && r.IsNumber() {
+		if l.tag == Int && r.tag == Int {
+			return l.n == r.n // exact int64: float64 would collapse values above 2^53
+		}
 		return l.Num() == r.Num()
 	}
 	if l.tag != r.tag {
@@ -86,14 +97,22 @@ func equalDepth(l, r Value, depth int) bool {
 		if depth >= maxValueDepth {
 			return true // absurdly deep / cyclic: stop rather than overflow the stack
 		}
+		key := [2]Obj{l.ref, r.ref}
+		if seen[key] {
+			return true // already visited this pair: cycle, or a shared DAG node — don't re-descend
+		}
 		switch lo := l.ref.(type) {
 		case *Array:
 			ro, ok := r.ref.(*Array)
 			if !ok || len(lo.Elems) != len(ro.Elems) {
 				return false
 			}
+			if seen == nil {
+				seen = map[[2]Obj]bool{}
+			}
+			seen[key] = true
 			for i := range lo.Elems {
-				if !equalDepth(lo.Elems[i], ro.Elems[i], depth+1) {
+				if !equalDepth(lo.Elems[i], ro.Elems[i], depth+1, seen) {
 					return false
 				}
 			}
@@ -103,10 +122,14 @@ func equalDepth(l, r Value, depth int) bool {
 			if !ok || len(lo.keys) != len(ro.keys) {
 				return false
 			}
+			if seen == nil {
+				seen = map[[2]Obj]bool{}
+			}
+			seen[key] = true
 			for i := range lo.keys {
 				mk, _ := normalizeKey(lo.keys[i])
 				j, present := ro.idx[mk]
-				if !present || !equalDepth(lo.vals[i], ro.vals[j], depth+1) {
+				if !present || !equalDepth(lo.vals[i], ro.vals[j], depth+1, seen) {
 					return false
 				}
 			}

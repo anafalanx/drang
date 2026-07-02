@@ -41,6 +41,7 @@ const (
 	OpNot                   // R[A] = !R[B]
 	OpMakeArray             // R[A] = [R[B] .. R[B+C])            (C = element count)
 	OpMakeMap               // R[A] = {pairs in R[B .. B+2C)}     (C = pair count; an unhashable key -> Err)
+	OpJumpUnhashable        // if R[B] is not a hashable map key: R[A] = Err, ip = C  (map-literal fail-fast, matches the walker's per-key check)
 	OpMakeRange             // R[A] = R[B]..R[C]                  (non-int bounds -> Err)
 	OpMakeRegex             // R[A] = compiled regex from Consts[B] (pattern string; bad pattern -> Err)
 	OpIndex                 // R[A] = R[B][R[C]]

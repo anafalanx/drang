@@ -253,6 +253,11 @@ func mapRowsToRecords(rows []value.Value, writeHeader, lenient bool) ([][]string
 	headerSet := make(map[string]bool, len(keys))
 	for i, k := range keys {
 		header[i] = k.Display() // a scalar key stringifies (int 1 -> "1")
+		// Distinct keys can stringify to the same header (int 1 vs string "1"); reject the
+		// collision, mirroring from_csv's strict duplicate-header rejection.
+		if headerSet[header[i]] {
+			return nil, fmt.Errorf("duplicate header %q (distinct record keys collide as strings)", header[i])
+		}
 		headerSet[header[i]] = true
 	}
 	var out [][]string

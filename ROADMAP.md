@@ -159,7 +159,7 @@ Must-use enforcement was deliberately dropped (`[LOCKED]`), not missing.
 
 Ternary `?:`, `**`, bitwise, `++`/`--`; classes/inheritance/`bless`/MOP; scalar-list
 context and the punctuation-variable zoo; **Perl's regex operators (`=~`, `s///`) and `$1..$n` capture variables** (drang keeps `qr//` + the `match`/`gsub`/`matches` builtins + pipelines; named-capture→map is the ergonomics path — `s///` reconsiderable only for one-liner mode); string `eval`; a package registry;
-sandboxing; an HTTP *client* (orchestrate `run(["curl", …])`); bignum; GUI/Tk hosting;
+sandboxing; an HTTP *server* / web framework; bignum; GUI/Tk hosting;
 the ops/observability and distributed/multi-host growth verticals (locked to
 "personal daily-driver"). **YAML/TOML** is the one genuine judgment-call: no Go-stdlib
 parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).

@@ -77,9 +77,10 @@ interpreter, and writes atomically. It produces a standalone Windows executable 
 
 ## Status
 
-**drang 0.4**: the first complete release, and a genuine daily-driver. See the *"Not Yet"* section of
-the manual for the remaining gaps: no structs (maps stand in as records), only daily-driver math (no
-trig), no character ranges, no implicit string↔number coercion, and no in-place one-liner mode (`-i`).
+**drang 0.5**: a genuine daily-driver. (0.5 made string interpolation opt-in — plain `'...'`/`"..."`
+no longer interpolate; use `$"..."`.) See the *"Not Yet"* section of the manual for the remaining
+gaps: no structs (maps stand in as records), only daily-driver math (no trig), no character ranges,
+no implicit string↔number coercion, and no in-place one-liner mode (`-i`).
 
 ## License
 

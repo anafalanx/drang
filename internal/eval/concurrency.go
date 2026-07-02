@@ -218,7 +218,7 @@ func evalSpawn(args []value.Value) (value.Value, error) {
 				t.res = value.MakeErr(fmt.Sprintf("spawned task panicked: %v", r), 1)
 			}
 		}()
-		v, err := callFunction(worker, callArgs)
+		v, err := callFunction(worker, callArgs, 0) // fresh goroutine and Go stack: count depth from zero
 		if err == nil {
 			t.res = v
 		} else if code, ok := ExitRequested(err); ok {

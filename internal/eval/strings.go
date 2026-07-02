@@ -8,10 +8,21 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// builtinIndexOf returns the rune index of the first occurrence of needle in s, or -1 if
-// absent. The index is in runes (to match chars()/slicing), not bytes; an empty needle
-// matches at 0. A non-string argument aborts (the string-builtin convention).
+// builtinIndexOf returns the index of the first occurrence of needle, or -1 if absent.
+// For a string subject the index is in runes (to match chars()/slicing), not bytes, and an
+// empty needle matches at 0. For an array subject it returns the first element index whose
+// value structurally equals needle — the sibling of the polymorphic contains(). A subject
+// that is neither a string nor an array aborts (the string-builtin convention).
 func builtinIndexOf(args []value.Value) (value.Value, error) {
+	if len(args) == 2 && args[0].Tag() == value.Arr {
+		elems := args[0].Obj().(*value.Array).Elems
+		for i, el := range elems {
+			if value.Equal(el, args[1]) {
+				return value.MakeInt(int64(i)), nil
+			}
+		}
+		return value.MakeInt(-1), nil
+	}
 	s, needle, err := twoStrings("index_of", args)
 	if err != nil {
 		return value.MakeNil(), err
@@ -30,7 +41,7 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("split expects 1 or 2 arguments (s, sep?), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("split expects a string, got %s", args[0].TypeName())
+		return value.MakeNil(), typeErrf("split expects a string, got %s", args[0].TypeName())
 	}
 	s := args[0].AsStr()
 	var parts []string
@@ -39,7 +50,7 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		parts = strings.Fields(s)
 	default:
 		if args[1].Tag() != value.Str {
-			return value.MakeNil(), fmt.Errorf("split separator must be a string, got %s", args[1].TypeName())
+			return value.MakeNil(), typeErrf("split separator must be a string, got %s", args[1].TypeName())
 		}
 		sep := args[1].AsStr()
 		if sep == "" {
@@ -63,7 +74,7 @@ func builtinReplace(args []value.Value) (value.Value, error) {
 	}
 	for i, a := range args {
 		if a.Tag() != value.Str {
-			return value.MakeNil(), fmt.Errorf("replace: argument %d must be a string, got %s", i+1, a.TypeName())
+			return value.MakeNil(), typeErrf("replace: argument %d must be a string, got %s", i+1, a.TypeName())
 		}
 	}
 	return value.MakeStr(strings.ReplaceAll(args[0].AsStr(), args[1].AsStr(), args[2].AsStr())), nil
@@ -75,11 +86,11 @@ func builtinTrim(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("trim expects 1 or 2 arguments (s, cutset?), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("trim expects a string, got %s", args[0].TypeName())
+		return value.MakeNil(), typeErrf("trim expects a string, got %s", args[0].TypeName())
 	}
 	if len(args) == 2 {
 		if args[1].Tag() != value.Str {
-			return value.MakeNil(), fmt.Errorf("trim cutset must be a string, got %s", args[1].TypeName())
+			return value.MakeNil(), typeErrf("trim cutset must be a string, got %s", args[1].TypeName())
 		}
 		return value.MakeStr(strings.Trim(args[0].AsStr(), args[1].AsStr())), nil
 	}
@@ -129,7 +140,7 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("format expects at least a format string")
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("format expects a string, got %s", args[0].TypeName())
+		return value.MakeNil(), typeErrf("format expects a string, got %s", args[0].TypeName())
 	}
 	f := args[0].AsStr()
 	rest := args[1:]
@@ -246,10 +257,12 @@ func builtinRepeat(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("repeat expects 2 arguments (s, n), got %d", len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeNil(), fmt.Errorf("repeat expects a string, got %s", args[0].TypeName())
+		return value.MakeNil(), typeErrf("repeat expects a string, got %s", args[0].TypeName())
 	}
 	if args[1].Tag() != value.Int {
-		return value.MakeNil(), fmt.Errorf("repeat count must be an int, got %s", args[1].TypeName())
+		// Catchable Err, like take/drop's count check — and consistent with repeat's own
+		// negative/oversized-count Err paths below.
+		return value.MakeErr(fmt.Sprintf("repeat count must be an int, got %s", args[1].TypeName()), 1), nil
 	}
 	n := args[1].AsInt()
 	if n < 0 {

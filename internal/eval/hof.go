@@ -23,7 +23,7 @@ var hofNames = map[string]bool{
 // evalHOF dispatches a higher-order call. Wrong argument COUNT aborts (Go error,
 // per the builtin convention); a non-array source or non-function callback is a
 // catchable Err value.
-func evalHOF(name string, args []value.Value, env *Env) (value.Value, error) {
+func evalHOF(name string, args []value.Value, depth int) (value.Value, error) {
 	if name == "reduce" {
 		if len(args) != 3 {
 			return value.MakeNil(), fmt.Errorf("reduce expects 3 arguments (array, init, fn), got %d", len(args))
@@ -36,18 +36,18 @@ func evalHOF(name string, args []value.Value, env *Env) (value.Value, error) {
 		if fn == nil {
 			return ev, nil
 		}
-		return hofReduce(arr, args[1], fn)
+		return hofReduce(arr, args[1], fn, depth)
 	}
 
 	// Ordering family: sort takes an optional comparator (1 or 2 args); the rest
 	// take a key function. Handled before the generic 2-arg gate below.
 	switch name {
 	case "sort":
-		return hofSort(name, args)
+		return hofSort(name, args, depth)
 	case "sort_by":
-		return hofSortBy(name, args)
+		return hofSortBy(name, args, depth)
 	case "min_by", "max_by":
-		return hofMinMaxBy(name, args)
+		return hofMinMaxBy(name, args, depth)
 	}
 
 	if len(args) != 2 {
@@ -63,25 +63,25 @@ func evalHOF(name string, args []value.Value, env *Env) (value.Value, error) {
 	}
 	switch name {
 	case "map":
-		return hofMap(arr, fn)
+		return hofMap(arr, fn, depth)
 	case "filter":
-		return hofFilter(arr, fn, true)
+		return hofFilter(arr, fn, true, depth)
 	case "reject":
-		return hofFilter(arr, fn, false)
+		return hofFilter(arr, fn, false, depth)
 	case "each":
-		return hofEach(args[0], arr, fn)
+		return hofEach(args[0], arr, fn, depth)
 	case "find":
-		return hofFind(arr, fn)
+		return hofFind(arr, fn, depth)
 	case "any":
-		return hofQuantify(arr, fn, true)
+		return hofQuantify(arr, fn, true, depth)
 	case "all":
-		return hofQuantify(arr, fn, false)
+		return hofQuantify(arr, fn, false, depth)
 	case "count":
-		return hofCount(arr, fn)
+		return hofCount(arr, fn, depth)
 	case "flat_map":
-		return hofFlatMap(arr, fn)
+		return hofFlatMap(arr, fn, depth)
 	case "pmap":
-		return hofPmap(arr, fn)
+		return hofPmap(arr, fn, depth)
 	}
 	return value.MakeNil(), fmt.Errorf("unknown higher-order function %s", name)
 }
@@ -104,25 +104,25 @@ func hofFn(name string, v value.Value) (*Function, value.Value) {
 // callCb calls an element callback, passing the index too if it declares two params. A
 // first-class builtin (e.g. map($xs, basename)) has no declared params, so it gets just
 // the element and does its own arity check.
-func callCb(fn *Function, el value.Value, idx int) (value.Value, error) {
+func callCb(fn *Function, el value.Value, idx int, depth int) (value.Value, error) {
 	if fn.Builtin != nil {
-		return callFunction(fn, []value.Value{el})
+		return callFunction(fn, []value.Value{el}, depth)
 	}
 	switch len(fn.Params) {
 	case 1:
-		return callFunction(fn, []value.Value{el})
+		return callFunction(fn, []value.Value{el}, depth)
 	case 2:
-		return callFunction(fn, []value.Value{el, value.MakeInt(int64(idx))})
+		return callFunction(fn, []value.Value{el, value.MakeInt(int64(idx))}, depth)
 	default:
 		return value.MakeNil(), fmt.Errorf("callback takes 1 or 2 parameters, got %d", len(fn.Params))
 	}
 }
 
-func hofMap(arr *value.Array, fn *Function) (value.Value, error) {
+func hofMap(arr *value.Array, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...) // snapshot
 	out := make([]value.Value, len(src))
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -134,11 +134,11 @@ func hofMap(arr *value.Array, fn *Function) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-func hofFilter(arr *value.Array, fn *Function, keep bool) (value.Value, error) {
+func hofFilter(arr *value.Array, fn *Function, keep bool, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	var out []value.Value
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -152,10 +152,10 @@ func hofFilter(arr *value.Array, fn *Function, keep bool) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-func hofEach(arrVal value.Value, arr *value.Array, fn *Function) (value.Value, error) {
+func hofEach(arrVal value.Value, arr *value.Array, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -166,10 +166,10 @@ func hofEach(arrVal value.Value, arr *value.Array, fn *Function) (value.Value, e
 	return arrVal, nil // return the original array, for |> chaining
 }
 
-func hofFind(arr *value.Array, fn *Function) (value.Value, error) {
+func hofFind(arr *value.Array, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -184,10 +184,10 @@ func hofFind(arr *value.Array, fn *Function) (value.Value, error) {
 }
 
 // hofQuantify implements any (stopOnTrue) and all (stop on first falsy).
-func hofQuantify(arr *value.Array, fn *Function, any bool) (value.Value, error) {
+func hofQuantify(arr *value.Array, fn *Function, any bool, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -204,11 +204,11 @@ func hofQuantify(arr *value.Array, fn *Function, any bool) (value.Value, error) 
 	return value.MakeBool(!any), nil // any over empty -> false; all over empty -> true
 }
 
-func hofCount(arr *value.Array, fn *Function) (value.Value, error) {
+func hofCount(arr *value.Array, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	n := int64(0)
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -222,7 +222,7 @@ func hofCount(arr *value.Array, fn *Function) (value.Value, error) {
 	return value.MakeInt(n), nil
 }
 
-func hofReduce(arr *value.Array, init value.Value, fn *Function) (value.Value, error) {
+func hofReduce(arr *value.Array, init value.Value, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	acc := init
 	for i, el := range src {
@@ -230,9 +230,9 @@ func hofReduce(arr *value.Array, init value.Value, fn *Function) (value.Value, e
 		var err error
 		switch {
 		case fn.Builtin != nil || len(fn.Params) == 2:
-			v, err = callFunction(fn, []value.Value{acc, el})
+			v, err = callFunction(fn, []value.Value{acc, el}, depth)
 		case len(fn.Params) == 3:
-			v, err = callFunction(fn, []value.Value{acc, el, value.MakeInt(int64(i))})
+			v, err = callFunction(fn, []value.Value{acc, el, value.MakeInt(int64(i))}, depth)
 		default:
 			return value.MakeNil(), fmt.Errorf("reduce callback takes 2 or 3 parameters, got %d", len(fn.Params))
 		}
@@ -249,11 +249,11 @@ func hofReduce(arr *value.Array, init value.Value, fn *Function) (value.Value, e
 
 // hofFlatMap maps then flattens one level: an array result is spliced in, a
 // scalar result is appended as-is.
-func hofFlatMap(arr *value.Array, fn *Function) (value.Value, error) {
+func hofFlatMap(arr *value.Array, fn *Function, depth int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	var out []value.Value
 	for i, el := range src {
-		v, err := callCb(fn, el, i)
+		v, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -291,7 +291,7 @@ func hofArrayFn(name string, args []value.Value) (arr *value.Array, fn *Function
 // a comparator fn(a, b) returning negative / 0 / positive — e.g. |$a,$b| $a <=> $b.
 // The sort is stable. A comparison that fails (mixed types, or a non-int
 // comparator result) becomes a catchable Err; a comparator that aborts propagates.
-func hofSort(name string, args []value.Value) (value.Value, error) {
+func hofSort(name string, args []value.Value, depth int) (value.Value, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return value.MakeNil(), fmt.Errorf("sort expects 1 or 2 arguments (array, cmp?), got %d", len(args))
 	}
@@ -325,7 +325,7 @@ func hofSort(name string, args []value.Value) (value.Value, error) {
 			if goErr != nil || failVal.IsErr() {
 				return false
 			}
-			v, err := callFunction(fn, []value.Value{out[i], out[j]})
+			v, err := callFunction(fn, []value.Value{out[i], out[j]}, depth)
 			if err != nil {
 				goErr = err
 				return false
@@ -353,7 +353,7 @@ func hofSort(name string, args []value.Value) (value.Value, error) {
 
 // hofSortBy returns a NEW array sorted ascending by keyFn(element), in natural key
 // order. Keys are computed once per element (Schwartzian), so keyFn runs O(n) times.
-func hofSortBy(name string, args []value.Value) (value.Value, error) {
+func hofSortBy(name string, args []value.Value, depth int) (value.Value, error) {
 	arr, fn, ev, abort := hofArrayFn(name, args)
 	if abort != nil {
 		return value.MakeNil(), abort
@@ -364,7 +364,7 @@ func hofSortBy(name string, args []value.Value) (value.Value, error) {
 	type keyed struct{ key, elem value.Value }
 	pairs := make([]keyed, len(arr.Elems))
 	for i, el := range arr.Elems {
-		k, err := callCb(fn, el, i)
+		k, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -398,7 +398,7 @@ func hofSortBy(name string, args []value.Value) (value.Value, error) {
 // hofMinMaxBy returns the element with the smallest (min_by) or largest (max_by)
 // keyFn(element). An empty array yields undef, so it composes with //. Ties keep
 // the first such element.
-func hofMinMaxBy(name string, args []value.Value) (value.Value, error) {
+func hofMinMaxBy(name string, args []value.Value, depth int) (value.Value, error) {
 	arr, fn, ev, abort := hofArrayFn(name, args)
 	if abort != nil {
 		return value.MakeNil(), abort
@@ -412,7 +412,7 @@ func hofMinMaxBy(name string, args []value.Value) (value.Value, error) {
 	wantMax := name == "max_by"
 	var best, bestKey value.Value
 	for i, el := range arr.Elems {
-		k, err := callCb(fn, el, i)
+		k, err := callCb(fn, el, i, depth)
 		if err != nil {
 			return value.MakeNil(), err
 		}
@@ -516,7 +516,9 @@ func builtinUniq(args []value.Value) (value.Value, error) {
 // callback runs over frozen top-level constants + its own per-call scope. Like
 // map, it is fail-loud: the first Err a callback produces becomes the result and
 // stops further work.
-func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
+func hofPmap(arr *value.Array, fn *Function, _ int) (value.Value, error) {
+	// The caller's depth is intentionally unused: each worker runs on its own goroutine and
+	// fresh Go stack, so it counts call depth from zero (applyPmap passes 0 below).
 	src := append([]value.Value(nil), arr.Elems...)
 	n := len(src)
 	out := make([]value.Value, n)
@@ -576,7 +578,7 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 				if cancelled.Load() {
 					continue // a failure was recorded: drain the rest without running callbacks
 				}
-				v, err := applyPmap(wfn, src[i], i)
+				v, err := applyPmap(wfn, src[i], i, 0)
 				if err != nil {
 					recordGoErr(err)
 					continue
@@ -602,7 +604,7 @@ func hofPmap(arr *value.Array, fn *Function) (value.Value, error) {
 // applyPmap runs one pmap callback over a deep-copied (isolated) element,
 // converting a panic into a catchable Err value so a worker goroutine can never
 // crash the interpreter.
-func applyPmap(fn *Function, elem value.Value, idx int) (v value.Value, err error) {
+func applyPmap(fn *Function, elem value.Value, idx int, depth int) (v value.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			v = value.MakeErr(fmt.Sprintf("pmap callback panicked: %v", r), 1)
@@ -610,5 +612,5 @@ func applyPmap(fn *Function, elem value.Value, idx int) (v value.Value, err erro
 		}
 	}()
 	el := value.DeepCopyValue(elem, map[value.Obj]value.Obj{})
-	return callCb(fn, el, idx)
+	return callCb(fn, el, idx, depth)
 }

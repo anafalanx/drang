@@ -26,7 +26,7 @@ func (a *Array) Equal(o Obj) bool {
 	if !ok {
 		return false
 	}
-	return equalDepth(Value{tag: Arr, ref: a}, Value{tag: Arr, ref: b}, 0)
+	return equalDepth(Value{tag: Arr, ref: a}, Value{tag: Arr, ref: b}, 0, nil)
 }
 
 func (a *Array) DeepCopy(visited map[Obj]Obj) Obj {
