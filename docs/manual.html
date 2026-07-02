@@ -183,7 +183,7 @@ say(!true, not false)</code></pre>
 true
 false true</code></pre>
 <p>(<code>boom ran</code> never prints, both calls are short-circuited.)</p>
-<p><strong>Compound assignment</strong> <code>+= -= *= /=</code>. Note that <code>/=</code> follows <code>/</code>'s float rule:</p>
+<p><strong>Compound assignment</strong> <code>+= -= *= /= %= ~= //=</code>, for any lvalue (<code>$x</code>, <code>$a[i]</code>, <code>$m.k</code>). Note that <code>/=</code> follows <code>/</code>'s float rule:</p>
 <pre><code class="language-drang">$n := 10
 $n += 5    # 15
 $n -= 2    # 13
@@ -191,6 +191,15 @@ $n *= 3    # 39
 $n /= 2    # -&gt; float
 say($n)</code></pre>
 <pre><code>19.5</code></pre>
+<p><code>~=</code> appends (string concat), <code>%=</code> takes the remainder, and <code>//=</code> is defined-or <em>in place</em> — it replaces the target only when it is currently nil or an error, so it reads as "default this if unset":</p>
+<pre><code class="language-drang">$msg := "line"
+$msg ~= "!"          # "line!"
+$cfg := {}
+$cfg.host //= "localhost"   # sets it (the key was absent)
+$cfg.host //= "other"       # keeps "localhost" (already present)
+say($msg, $cfg.host)</code></pre>
+<pre><code>line! localhost</code></pre>
+<p>The right-hand side is evaluated eagerly (like every assignment), so <code>//=</code> is a convenience for defaulting a value, not a way to guard an expensive call — use <code>if</code> for that. On a fresh array/map slot, <code>+=</code>/<code>-=</code>/<code>*=</code>/<code>/=</code>/<code>%=</code> seed with <code>0</code> and <code>~=</code> seeds with <code>""</code>, so <code>$counts[k] += 1</code> and <code>$groups[k] ~= item</code> work on a missing key.</p>
 <p><strong>Ranges</strong> <code>lo..hi</code> are inclusive of both ends:</p>
 <pre><code class="language-drang">say(len(1..5))</code></pre>
 <pre><code>5</code></pre>
@@ -918,7 +927,7 @@ where cmd -&gt; C:\Windows\System32\cmd.exe</code></pre>
 say($"pipe -&gt; $out")</code></pre>
 <pre><code>pipe -&gt; banana</code></pre>
 <p>(For genuine shell features: globbing, <code>&amp;&amp;</code>, redirection, invoke <code>cmd /c "..."</code> yourself as a single stage.)</p>
-<h3 id="options-cwd-env_exact-env_add-stdin-timeout-supervise">Options: <code>{cwd, env_exact, env_add, stdin, timeout, supervise}</code></h3>
+<h3 id="options-cwd-env_exact-env_add-stdin-stdin_file-merge_stderr-timeout-max_memory-max_cpu">Options: <code>{cwd, env_exact, env_add, stdin, stdin_file, merge_stderr, timeout, max_memory, max_cpu, …}</code></h3>
 <p>A trailing map sets per-command options on <code>run</code>, <code>capture</code>, <code>pipe</code>, <code>each_line</code>, and <code>start</code>. <code>env_exact</code> sets the child's <strong>exact</strong> environment: nothing is inherited unless you put it in the map (even <code>SystemRoot</code> and <code>PATH</code> are dropped unless you add them, so most callers want <code>env_add</code> instead). <code>env_add</code> is the overlay form: it starts from the inherited environment and replaces/adds the given keys, matched case-insensitively (Windows env-var names). When either form is present, bare command names are resolved against that child environment's <code>PATH</code>; exact environments that launch bare commands usually need to include <code>PATH</code>. <code>timeout</code> is in <strong>milliseconds</strong> and <code>0</code> means no limit.</p>
 <pre><code class="language-drang">$dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
 say($"cwd -&gt; $dir")
@@ -945,8 +954,18 @@ stdin -&gt; world</code></pre>
 $srv := start("my-server", "--port", "8080", {supervise: true})
 # ...do work... whether we return cleanly or are killed, my-server goes down with us</code></pre>
 <p>A <em>clean</em> exit kills a supervised <code>start</code> child too: that is the point. For a background child that should outlive drang, use a plain <code>start</code> with no <code>supervise</code>. Whole-tree termination (grandchildren included) is intrinsic to the job — a child cannot escape by forking.</p>
-<p>There is no global <code>cd</code>; per-command <code>{cwd}</code> is the only way to change the working directory (a process-wide chdir would race across goroutines).</p>
-<h3 id="error-codes-124-timeout-and-127-cannot-start">Error codes: 124 (timeout) and 127 (cannot start)</h3>
+<p><strong>Feed and merge stdio.</strong> <code>{stdin_file: path}</code> pipes a file straight into the child's stdin (no copy through drang — good for large inputs); it cannot be combined with <code>stdin</code>. <code>{merge_stderr: true}</code> folds the child's stderr into its stdout, like the shell's <code>2&gt;&amp;1</code>:</p>
+<pre><code class="language-drang">say(capture("cmd", "/c", "echo out&amp; echo err 1&gt;&amp;2", {merge_stderr: true}))</code></pre>
+<pre><code>out
+err</code></pre>
+<p><strong>Resource limits (Job Objects).</strong> These cap what a child — and its whole descendant tree — may consume, kernel-enforced. All are optional non-negative integers:</p>
+<table><thead><tr><th>Option</th><th>Unit</th><th>Scope</th></tr></thead><tbody><tr><td><code>max_memory</code></td><td>bytes</td><td>committed memory, per process</td></tr><tr><td><code>max_job_memory</code></td><td>bytes</td><td>committed memory, whole job (the child and every descendant)</td></tr><tr><td><code>max_cpu</code></td><td>milliseconds</td><td>user CPU time, per process</td></tr><tr><td><code>max_job_cpu</code></td><td>milliseconds</td><td>user CPU time, whole job</td></tr><tr><td><code>max_job_procs</code></td><td>count</td><td>concurrent processes allowed in the job</td></tr></tbody></table>
+<p>A breach terminates the offending child (for a job-wide cap, the whole tree) with exit code <strong>137</strong>, and the Err message names the cap that tripped — so a runaway build or a fork-bomb fails as ordinary, catchable data rather than swamping the machine:</p>
+<pre><code class="language-drang"># cap a helper at 200 ms of user CPU and 128 MB across its whole tree; a breach -&gt; 137
+$r := capture_all("some-helper", "--crunch", {max_cpu: 200, max_job_memory: 134217728})
+say($r.code)   # 137 if it hit a cap, else the child's own exit code</code></pre>
+<p>There is no global <code>cd</code>; per-command <code>{cwd}</code> is the only way to change the working directory (a process-wide chdir would race across goroutines). A <code>{cwd}</code> that doesn't exist is a clean catchable Err, not a launcher-internal message.</p>
+<h3 id="error-codes-124-timeout-127-cannot-start-137-killed-limit-breach">Error codes: 124 (timeout), 127 (cannot start), 137 (killed / limit breach)</h3>
 <p>Two exit codes are synthesized, matching GNU <code>timeout</code>/shell conventions. On <strong>timeout</strong> the whole process <em>tree</em> is killed (not just the direct child, so a <code>cmd /c &lt;spawner&gt;</code> whose grandchild holds the pipe can't keep the call blocked):</p>
 <pre><code class="language-drang">$r := run("cmd", "/c", "ping -n 5 127.0.0.1 &gt;NUL", {timeout: 300})
 say($"is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
@@ -955,6 +974,11 @@ say($"is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
 <pre><code class="language-drang">$r := run("no_such_program_xyz")
 say($"code: ${err_code($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>code: 127  msg: no_such_program_xyz: exec: "no_such_program_xyz": executable file not found in %PATH%</code></pre>
+<p>When a child is <strong>killed</strong> — by <code>kill</code>, or by breaching a resource limit (<code>max_memory</code>/<code>max_cpu</code>/…) — the code is <code>137</code>:</p>
+<pre><code class="language-drang">$p := start("cmd", "/c", "ping -n 30 127.0.0.1 &gt;NUL")
+kill($p)
+say($"code: ${err_code(await($p))}")</code></pre>
+<pre><code>code: 137</code></pre>
 <p><code>pipe</code> follows bash's pipeline semantics: <code>127</code> if a stage can't start, <code>124</code> on timeout, otherwise the <strong>last</strong> stage's exit code.</p>
 <h3 id="each_line-stream-output-line-by-line"><code>each_line</code>: stream output line by line</h3>
 <p><code>each_line(cmd, args..., {opts}?, |$line| { ... })</code> invokes the callback for each line of stdout <strong>as it arrives</strong> (not buffered), ideal for build logs or tails. It returns <code>true</code> on success or an <code>Err</code> (exit code / <code>124</code> timeout) once the command finishes.</p>
@@ -976,11 +1000,24 @@ $status := await($p)
 say($"await -&gt; is_err: ${is_err($status)}  code: ${err_code($status)}")</code></pre>
 <pre><code>pid &gt; 0: true
 await -&gt; is_err: true  code: 3</code></pre>
-<p><code>kill</code> works on a still-running process; its pending <code>await</code> then yields an error:</p>
+<p><code>kill</code> works on a still-running process; its pending <code>await</code> then yields an error (code <code>137</code>):</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "ping -n 30 127.0.0.1 &gt;NUL")
 kill($p)
 say($"after kill, is_err: ${is_err(await($p))}")</code></pre>
 <pre><code>after kill, is_err: true</code></pre>
+<p><strong>Poll without blocking.</strong> <code>status(p)</code> reports on a child without waiting: <code>{running, ok, code}</code> — <code>running</code> is true while it lives, and once it exits, <code>ok</code>/<code>code</code> carry the outcome.</p>
+<pre><code class="language-drang">$p := start("cmd", "/c", "exit 0")
+await($p)
+$s := status($p)
+say($s.running, $s.ok, $s.code)</code></pre>
+<pre><code>false true 0</code></pre>
+<p><strong>Drive a live child's stdin.</strong> Launch with <code>{stdin_pipe: true}</code>, push input with <code>send_stdin(p, s)</code>, and signal end-of-input with <code>close_stdin(p)</code>. This lets you feed a long-running filter incrementally (here <code>sort</code>, which emits its result once its input closes):</p>
+<pre><code class="language-drang">$p := start("cmd", "/c", "sort &gt; out.txt", {stdin_pipe: true})
+send_stdin($p, "banana\n")
+send_stdin($p, "apple\n")
+close_stdin($p)
+await($p)     # out.txt now holds apple, then banana</code></pre>
+<p><code>stdin_pipe</code> is <code>start</code>-only (the synchronous forms take <code>stdin</code>/<code>stdin_file</code> instead), and it cannot be combined with either.</p>
 <hr>
 <h2 id="in-language-concurrency">In-language concurrency</h2>
 <p>drang has <strong>real multi-core parallelism with no GIL</strong>: goroutine-backed, made safe by <em>subtraction</em>: top-level bindings are frozen constants, scoping is lexical-only, strings are immutable, and there is no shared mutable global state. With almost nothing shared, parallel execution needs no locks.</p>
@@ -997,7 +1034,7 @@ $res := await(spawn(.boom))
 say($"is_err: ${is_err($res)}  msg: ${err_msg($res)}")</code></pre>
 <pre><code>is_err: true  msg: worker failed</code></pre>
 <h3 id="channels-chan-send-recv-recv_ok-close-drain">Channels: <code>chan</code> / <code>send</code> / <code>recv</code> / <code>recv_ok</code> / <code>close</code> / <code>drain</code></h3>
-<p><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> a buffered one. A channel is the one intentionally <em>shared</em> value type. <code>send</code> blocks until received (and copies the value, copy-on-send); <code>recv</code> blocks for the next value (and yields <code>undef</code> once the channel is closed and drained); <code>recv_ok</code> returns <code>[value, ok]</code>; <code>close</code> is idempotent; <code>drain</code> collects every remaining value into an array, blocking until the channel is closed.</p>
+<p><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> a buffered one. A channel is the one intentionally <em>shared</em> value type. <code>send</code> blocks until received (and copies the value, copy-on-send); <code>recv</code> blocks for the next value (and yields <code>undef</code> once the channel is closed and drained); <code>recv_ok</code> returns <code>[value, ok]</code>; <code>close</code> is idempotent; <code>drain</code> collects every remaining value into an array, blocking until the channel is closed. A <code>send</code> or <code>recv</code> that could only ever deadlock — no counterparty and no other task running — is a catchable Err, not a process abort, so a mistaken lone <code>send(chan(), x)</code> fails as data you can recover with <code>//</code>.</p>
 <pre><code class="language-drang">$c := chan(3)
 fn .produce($ch) {
   for $i in 1..3 { send($ch, $i * 10) }
@@ -1384,7 +1421,11 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>int</code></td><td><code>int(x)</code></td><td>Convert int/float/string to an int; unparseable → Err.</td></tr><tr><td><code>str</code></td><td><code>str(x)</code></td><td>Render any value as its display string (numbers, bools, nil, collections, errors).</td></tr><tr><td><code>float</code></td><td><code>float(x)</code></td><td>Convert int/float/string to a float; unparseable → Err.</td></tr><tr><td><code>bool</code></td><td><code>bool(x)</code></td><td>Coerce by truthiness (nil/false/0/0.0/""/empty container → false).</td></tr><tr><td><code>type</code></td><td><code>type(x)</code></td><td>Type name: <code>int</code> <code>float</code> <code>string</code> <code>bool</code> <code>nil</code> <code>array</code> <code>map</code> <code>range</code> <code>function</code> <code>error</code>.</td></tr></tbody></table>
 <h3 id="numeric">Numeric</h3>
 <p>Minimal daily-driver math (not a math/trig kitchen sink: no <code>sin</code>/<code>cos</code>, no bignum). <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code> preserve int vs float; <code>floor</code>/<code>ceil</code>/<code>round</code>/<code>div</code> return an int; <code>sqrt</code>/<code>log</code> return a float; <code>pow</code> returns an int when it can. A bad operand (non-number, <code>sqrt</code> of a negative, <code>log</code> of a non-positive, divide-by-zero, overflow) is a catchable Err.</p>
-<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>abs</code></td><td><code>abs(n)</code></td><td>Numeric absolute value (the path builtin is <code>abspath</code>).</td></tr><tr><td><code>sum</code></td><td><code>sum(arr)</code> / <code>sum(a, ...)</code></td><td>Add numbers (array or variadic); empty → 0; overflow → Err.</td></tr><tr><td><code>min</code></td><td><code>min(arr)</code> / <code>min(a, ...)</code></td><td>Smallest value; empty → Err.</td></tr><tr><td><code>max</code></td><td><code>max(arr)</code> / <code>max(a, ...)</code></td><td>Largest value; empty → Err.</td></tr><tr><td><code>floor</code></td><td><code>floor(n)</code></td><td>Round down to an int; NaN/Inf/out-of-range → Err.</td></tr><tr><td><code>ceil</code></td><td><code>ceil(n)</code></td><td>Round up to an int.</td></tr><tr><td><code>round</code></td><td><code>round(n)</code></td><td>Round to the nearest int (half away from zero).</td></tr><tr><td><code>sqrt</code></td><td><code>sqrt(n)</code></td><td>Square root (float); negative → Err.</td></tr><tr><td><code>pow</code></td><td><code>pow(base, exp)</code></td><td>base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float.</td></tr><tr><td><code>log</code></td><td><code>log(x, base?)</code></td><td>Natural log, or log base <code>base</code>; non-positive <code>x</code> or bad base → Err.</td></tr><tr><td><code>div</code></td><td><code>div(a, b)</code></td><td>Truncating integer division (toward zero, matching <code>%</code>); divide-by-zero → Err.</td></tr></tbody></table>
+<table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>abs</code></td><td><code>abs(n)</code></td><td>Numeric absolute value (the path builtin is <code>abspath</code>).</td></tr><tr><td><code>sum</code></td><td><code>sum(arr)</code> / <code>sum(a, ...)</code></td><td>Add numbers (array or variadic); empty → 0; overflow → Err.</td></tr><tr><td><code>min</code></td><td><code>min(arr)</code> / <code>min(a, ...)</code></td><td>Smallest value; empty → Err.</td></tr><tr><td><code>max</code></td><td><code>max(arr)</code> / <code>max(a, ...)</code></td><td>Largest value; empty → Err.</td></tr><tr><td><code>floor</code></td><td><code>floor(n)</code></td><td>Round down to an int; NaN/Inf/out-of-range → Err.</td></tr><tr><td><code>ceil</code></td><td><code>ceil(n)</code></td><td>Round up to an int.</td></tr><tr><td><code>round</code></td><td><code>round(n)</code></td><td>Round to the nearest int (half away from zero).</td></tr><tr><td><code>sqrt</code></td><td><code>sqrt(n)</code></td><td>Square root (float); negative → Err.</td></tr><tr><td><code>pow</code></td><td><code>pow(base, exp)</code></td><td>base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float.</td></tr><tr><td><code>log</code></td><td><code>log(x, base?)</code></td><td>Natural log, or log base <code>base</code>; non-positive <code>x</code> or bad base → Err.</td></tr><tr><td><code>log2</code></td><td><code>log2(x)</code></td><td>Base-2 log; non-positive <code>x</code> → Err.</td></tr><tr><td><code>log10</code></td><td><code>log10(x)</code></td><td>Base-10 log; non-positive <code>x</code> → Err.</td></tr><tr><td><code>exp</code></td><td><code>exp(x)</code></td><td>e raised to <code>x</code> (float).</td></tr><tr><td><code>cbrt</code></td><td><code>cbrt(x)</code></td><td>Cube root (float; defined for negatives).</td></tr><tr><td><code>div</code></td><td><code>div(a, b)</code></td><td>Truncating integer division (toward zero, matching <code>%</code>); divide-by-zero → Err.</td></tr><tr><td><code>sin</code> <code>cos</code> <code>tan</code></td><td><code>sin(r)</code></td><td>Trigonometric functions; the argument is in <strong>radians</strong>.</td></tr><tr><td><code>asin</code> <code>acos</code></td><td><code>asin(x)</code></td><td>Inverse sine/cosine; argument outside <code>[-1, 1]</code> → Err.</td></tr><tr><td><code>atan</code></td><td><code>atan(x)</code></td><td>Inverse tangent (radians).</td></tr><tr><td><code>atan2</code></td><td><code>atan2(y, x)</code></td><td>Angle of the point <code>(x, y)</code> in radians, quadrant-correct.</td></tr><tr><td><code>hypot</code></td><td><code>hypot(x, y)</code></td><td><code>sqrt(x*x + y*y)</code> without overflow.</td></tr><tr><td><code>pi</code> <code>e</code></td><td><code>pi()</code></td><td>The constants π and e as zero-arg builtins (<code>$PI ::= pi()</code> for a constant).</td></tr></tbody></table>
+<p>Trigonometry works in radians — <code>pi()</code> converts (a full turn is <code>2 * pi()</code>). A non-number or out-of-domain argument is a catchable Err, never a silent NaN:</p>
+<pre><code class="language-drang">say(sin(pi() / 2))          # 1
+say(round(atan2(1, 1) * 4 / pi()))   # 1  (atan2(1,1) is pi/4)
+say(is_err(asin(2)))        # true  (outside [-1, 1])</code></pre>
 <h3 id="strings">Strings</h3>
 <table><thead><tr><th>Builtin</th><th>Signature</th><th>Description</th></tr></thead><tbody><tr><td><code>split</code></td><td><code>split(s, sep?)</code></td><td>Split <code>s</code>; no <code>sep</code> splits on whitespace runs, <code>""</code> splits into runes.</td></tr><tr><td><code>replace</code></td><td><code>replace(s, old, new)</code></td><td>Replace every literal <code>old</code> with <code>new</code>.</td></tr><tr><td><code>trim</code></td><td><code>trim(s, cutset?)</code></td><td>Trim whitespace, or the given <code>cutset</code> characters, from both ends.</td></tr><tr><td><code>upper</code></td><td><code>upper(s)</code></td><td>Uppercase.</td></tr><tr><td><code>lower</code></td><td><code>lower(s)</code></td><td>Lowercase.</td></tr><tr><td><code>starts_with</code></td><td><code>starts_with(s, prefix)</code></td><td>True if <code>s</code> begins with <code>prefix</code>.</td></tr><tr><td><code>ends_with</code></td><td><code>ends_with(s, suffix)</code></td><td>True if <code>s</code> ends with <code>suffix</code>.</td></tr><tr><td><code>format</code></td><td><code>format(tmpl, x...)</code></td><td>Fill each <code>{}</code> in <code>tmpl</code> with the next arg (<code>{{</code>/<code>}}</code> are literal); arity-checked → Err.</td></tr><tr><td><code>lines</code></td><td><code>lines(s)</code></td><td>Split into lines (CRLF-normalized), dropping one trailing newline; <code>""</code> → <code>[]</code>.</td></tr><tr><td><code>repeat</code></td><td><code>repeat(s, n)</code></td><td>Concatenate <code>n</code> copies of <code>s</code>; negative or oversized <code>n</code> → Err.</td></tr><tr><td><code>chars</code></td><td><code>chars(s)</code></td><td>Array of single-rune strings.</td></tr><tr><td><code>index_of</code></td><td><code>index_of(s, needle)</code></td><td>Rune index of the first <code>needle</code> in <code>s</code>, or -1; empty needle → 0.</td></tr><tr><td><code>len</code></td><td><code>len(x)</code></td><td>Rune count of a string (also entry count of an array/map/range).</td></tr><tr><td><code>contains</code></td><td><code>contains(s, needle)</code></td><td>Substring test for a string (also membership for an array).</td></tr></tbody></table>
 <h3 id="json">JSON</h3>
@@ -1419,11 +1460,8 @@ $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
 <hr>
 <h2 id="not-yet-known-gaps-and-surprises">Not Yet: Known Gaps and Surprises</h2>
 <p>drang is a personal daily-driver under active construction, not a finished language. This section is the honest inventory of what is missing or behaves unexpectedly, so you don't waste time reaching for something that isn't there. Everything below was confirmed against the binary.</p>
-<h3 id="whole-capability-areas-with-no-builtins">Whole capability areas with no builtins</h3>
-<p>The math family is daily-driver-sized, not a scientific library: <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code>/<code>floor</code>/<code>ceil</code>/<code>round</code>/<code>sqrt</code>/<code>pow</code>/<code>log</code>/<code>div</code> are present, but trigonometry is not. Calling one is an <code>unknown function</code> error:</p>
-<pre><code>drang -e 'say(sin(0))'
-# drang: unknown function sin</code></pre>
-<p>Trig (<code>sin</code>, <code>cos</code>, <code>tan</code>, …) is planned as a thin binding over Go's <code>math</code>, not yet landed; for a one-off, orchestrate an external tool. Everything else you might reach for <em>is</em> here now: HTTP (<code>http_get</code>/<code>http_post</code>/<code>http</code>, see <a href="#http-client">HTTP client</a>), date/time, hashing, encodings, and randomness. (The bare name <code>fetch</code> is not a builtin. Use <code>http_get</code>.)</p>
+<h3 id="math-is-daily-driver-sized-not-a-scientific-library">Math is daily-driver-sized, not a scientific library</h3>
+<p>The math family covers everyday needs — <code>abs</code>/<code>sum</code>/<code>min</code>/<code>max</code>/<code>floor</code>/<code>ceil</code>/<code>round</code>/<code>sqrt</code>/<code>pow</code>/<code>log</code>/<code>log2</code>/<code>log10</code>/<code>exp</code>/<code>cbrt</code>/<code>div</code>, the trig set (<code>sin</code>/<code>cos</code>/<code>tan</code>/<code>asin</code>/<code>acos</code>/<code>atan</code>/<code>atan2</code>/<code>hypot</code>, radians), and the constants <code>pi()</code>/<code>e()</code> — but it is not a scientific computing stack. There is no arbitrary-precision/bignum arithmetic (<code>int</code> is 64-bit and overflow is a loud Err, see below), no complex numbers, and no matrix/linear-algebra or statistics library (the prelude has <code>mean</code>/<code>median</code>; reach for a real tool beyond that). Everything else a glue script commonly reaches for <em>is</em> here: HTTP (<code>http_get</code>/<code>http_post</code>/<code>http</code>, see <a href="#http-client">HTTP client</a>), date/time, hashing, encodings, and randomness. (The bare name <code>fetch</code> is not a builtin. Use <code>http_get</code>.)</p>
 <h3 id="missing-operators">Missing operators</h3>
 <ul><li><strong>No integer-division operator.</strong> <code>/</code> is always float division. Use the <code>div()</code> builtin (truncating, like <code>%</code>), or <code>int()</code>:</li></ul>
 <pre><code class="language-drang">  say(10 / 4)        # 2.5

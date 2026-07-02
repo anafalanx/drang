@@ -399,6 +399,12 @@ func assignOp(k token.Kind) (token.Kind, bool) {
 		return token.STAR, true
 	case token.SLASHEQ:
 		return token.SLASH, true
+	case token.PERCENTEQ:
+		return token.PERCENT, true
+	case token.TILDEEQ:
+		return token.TILDE, true
+	case token.DEFOREQ:
+		return token.DEFOR, true
 	}
 	return token.ILLEGAL, false
 }

@@ -704,8 +704,27 @@ func assignVar(name string, op token.Kind, rhs value.Value, env *Env) (value.Val
 	return newv, nil
 }
 
-// compound applies a compound-assignment op; an undef current value seeds 0.
+// compound applies a compound-assignment op to a slot's current value and rhs. The
+// arithmetic ops (+= -= *= /= %=) seed a missing (nil) slot with 0 so a compound update
+// on a fresh array/map key works ($counts[k] += 1); ~= seeds with "" (the concat
+// identity). //= is defined-or, not arithmetic: it keeps cur UNLESS cur is nil or an
+// error, in which case it takes rhs — and it never seeds. rhs is always already
+// evaluated (compound assignment evaluates its right-hand side eagerly, like every
+// other form). Shared by the walker (assignVar/assignSlot) and the VM (OpCompound*),
+// so both backends stay in lockstep.
 func compound(op token.Kind, cur, rhs value.Value) (value.Value, error) {
+	switch op {
+	case token.DEFOR:
+		if cur.IsErr() || cur.Tag() == value.Nil {
+			return rhs, nil
+		}
+		return cur, nil
+	case token.TILDE:
+		if cur.Tag() == value.Nil {
+			cur = value.MakeStr("")
+		}
+		return value.MakeStr(cur.Display() + rhs.Display()), nil
+	}
 	if cur.Tag() == value.Nil {
 		cur = value.MakeInt(0)
 	}
@@ -1766,6 +1785,22 @@ var builtins = map[string]builtin{
 	"pow":   builtinPow,
 	"log":   builtinLog,
 	"div":   builtinDiv,
+
+	// trigonometry & extended math (radians; thin bindings over Go's math)
+	"sin":   builtinSin,
+	"cos":   builtinCos,
+	"tan":   builtinTan,
+	"asin":  builtinAsin,
+	"acos":  builtinAcos,
+	"atan":  builtinAtan,
+	"atan2": builtinAtan2,
+	"exp":   builtinExp,
+	"log2":  builtinLog2,
+	"log10": builtinLog10,
+	"hypot": builtinHypot,
+	"cbrt":  builtinCbrt,
+	"pi":    builtinPi,
+	"e":     builtinE,
 
 	// regex (RE2)
 	"re":       builtinRe,

@@ -63,6 +63,9 @@ func TestPrelude(t *testing.T) {
 		{"capitalize", `say(capitalize("hELLO"))`, "Hello\n"},
 		{"reverse", `say(reverse("abc"))`, "cba\n"},
 		{"reverse-rune", `say(reverse("héllo"))`, "olléh\n"},
+		{"reverse-array", `say(str(reverse([1, 2, 3])))`, "[3, 2, 1]\n"},
+		{"reverse-empty-array", `say(str(reverse([])))`, "[]\n"}, // was the infinite-loop trigger
+		{"reverse-bad", `say(is_err(reverse(42)))`, "true\n"},    // non-string/array -> catchable Err, not a hang
 		{"dedent", `say(dedent("    a\n      b") == "a\n  b")`, "true\n"},
 		// numbers
 		{"clamp", `say(clamp(15, 0, 10), clamp(-3, 0, 10), clamp(5, 0, 10))`, "10 0 5\n"},

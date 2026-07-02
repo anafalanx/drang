@@ -260,6 +260,12 @@ func (l *Lexer) scan() token.Token {
 		return mk(token.STAR, "*")
 	case '/':
 		if l.peek() == '/' {
+			if l.peek2() == '=' {
+				l.advance()
+				l.advance()
+				l.advance()
+				return mk(token.DEFOREQ, "//=")
+			}
 			l.advance()
 			l.advance()
 			return mk(token.DEFOR, "//")
@@ -272,9 +278,19 @@ func (l *Lexer) scan() token.Token {
 		l.advance()
 		return mk(token.SLASH, "/")
 	case '%':
+		if l.peek() == '=' {
+			l.advance()
+			l.advance()
+			return mk(token.PERCENTEQ, "%=")
+		}
 		l.advance()
 		return mk(token.PERCENT, "%")
 	case '~':
+		if l.peek() == '=' {
+			l.advance()
+			l.advance()
+			return mk(token.TILDEEQ, "~=")
+		}
 		l.advance()
 		return mk(token.TILDE, "~")
 	case '?':

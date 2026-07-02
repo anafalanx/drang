@@ -1911,6 +1911,32 @@ Locked the naming ruleset for future additions: predicates `is_X`; IO
 blessed idioms (`dirname`, `basename`, `re`, `gsub`, `chan`, `recv`, `pid`). Deferred
 `matches`→`test` (kept `matches`). Build + full test suite green.
 
+### Amendment: bare-when-unambiguous (2026-07-02)
+
+The `domain_verb` rule above was written with three exemplars — `time_now`,
+`hash_sha256`, `base64_*` — but *every* specialized domain actually shipped bare or
+under a different convention: the clock is `now`/`strftime`, hashing is
+`sha256`/`sha1`/`md5`, encodings are `to_base64`/`to_hex`. A ~120-builtin review
+(2026-07-02) found the written rule and the real surface had drifted apart, which is a
+trap for the next domain author. Rather than mass-rename good short names, the rule is
+**amended** to describe what the surface already, sensibly, does:
+
+- **Bare when unambiguous.** A single, obvious operation in its domain keeps a bare
+  name (`now`, `sha256`, `uuid`, `run`, `capture`) — short names for the constantly-
+  reached, matching Perl/Ruby/Python instinct.
+- **`domain_` prefix only on collision or ambiguity**, or when a domain has several
+  peer operations that read better grouped. This is why the *secondary* HTTP domain
+  is `http_get`/`http_post`/`http` while the *headline* process-exec domain stays bare
+  (`run`/`capture`/`pipe`/`start`): a hot daily-driver domain earns bare names; an
+  occasional one takes the prefix.
+
+The disciplined families are unchanged and held perfectly through the growth: predicates
+`is_X`, IO `read_X`/`write_X`, (de)serialization `from_X`/`to_X`. Renames remain cheap
+pre-1.0 (curated in-binary, no external adopters, `fmt --fix` can migrate), so the one
+concrete rename made in this pass was the brand-new, undocumented `max_procs` exec-option
+key → `max_job_procs` (it is job-scoped; the bare `max_` prefix wrongly implied
+per-process, breaking the symmetry with `max_memory`/`max_job_memory`).
+
 ## Build progress: one-liner stream mode (2026-06-27)
 
 Phase 2 of the niche-definers: awk/perl/sed-style `-n`/`-p` stream processing, so

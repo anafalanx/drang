@@ -566,6 +566,11 @@ func hofPmap(arr *value.Array, fn *Function, _ int) (value.Value, error) {
 		cancelled.Store(true)
 	}
 	wg.Add(workers)
+	// Count the workers as live for the duration of the parallel section, so a drang
+	// channel used inside a pmap callback doesn't mistake a legitimate block for a
+	// terminal deadlock (see spawnedLive in concurrency.go).
+	atomic.AddInt64(&spawnedLive, int64(workers))
+	defer atomic.AddInt64(&spawnedLive, -int64(workers))
 	for w := 0; w < workers; w++ {
 		go func() {
 			defer wg.Done()

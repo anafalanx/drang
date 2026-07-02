@@ -407,7 +407,8 @@ false true
 
 (`boom ran` never prints, both calls are short-circuited.)
 
-**Compound assignment** `+= -= *= /=`. Note that `/=` follows `/`'s float rule:
+**Compound assignment** `+= -= *= /= %= ~= //=`, for any lvalue (`$x`, `$a[i]`, `$m.k`). Note that
+`/=` follows `/`'s float rule:
 
 ```drang
 $n := 10
@@ -421,6 +422,27 @@ say($n)
 ```
 19.5
 ```
+
+`~=` appends (string concat), `%=` takes the remainder, and `//=` is defined-or *in place* — it
+replaces the target only when it is currently nil or an error, so it reads as "default this if unset":
+
+```drang
+$msg := "line"
+$msg ~= "!"          # "line!"
+$cfg := {}
+$cfg.host //= "localhost"   # sets it (the key was absent)
+$cfg.host //= "other"       # keeps "localhost" (already present)
+say($msg, $cfg.host)
+```
+
+```
+line! localhost
+```
+
+The right-hand side is evaluated eagerly (like every assignment), so `//=` is a convenience for
+defaulting a value, not a way to guard an expensive call — use `if` for that. On a fresh array/map
+slot, `+=`/`-=`/`*=`/`/=`/`%=` seed with `0` and `~=` seeds with `""`, so `$counts[k] += 1` and
+`$groups[k] ~= item` work on a missing key.
 
 **Ranges** `lo..hi` are inclusive of both ends:
 
@@ -2005,7 +2027,7 @@ pipe -> banana
 (For genuine shell features: globbing, `&&`, redirection, invoke `cmd /c "..."`
 yourself as a single stage.)
 
-### Options: `{cwd, env_exact, env_add, stdin, timeout, supervise}`
+### Options: `{cwd, env_exact, env_add, stdin, stdin_file, merge_stderr, timeout, max_memory, max_cpu, …}`
 
 A trailing map sets per-command options on `run`, `capture`, `pipe`, `each_line`,
 and `start`. `env_exact` sets the child's **exact** environment: nothing is inherited
@@ -2060,10 +2082,44 @@ A *clean* exit kills a supervised `start` child too: that is the point. For a ba
 that should outlive drang, use a plain `start` with no `supervise`. Whole-tree termination
 (grandchildren included) is intrinsic to the job — a child cannot escape by forking.
 
-There is no global `cd`; per-command `{cwd}` is the only way to change the working
-directory (a process-wide chdir would race across goroutines).
+**Feed and merge stdio.** `{stdin_file: path}` pipes a file straight into the child's stdin (no copy
+through drang — good for large inputs); it cannot be combined with `stdin`. `{merge_stderr: true}`
+folds the child's stderr into its stdout, like the shell's `2>&1`:
 
-### Error codes: 124 (timeout) and 127 (cannot start)
+```drang
+say(capture("cmd", "/c", "echo out& echo err 1>&2", {merge_stderr: true}))
+```
+```
+out
+err
+```
+
+**Resource limits (Job Objects).** These cap what a child — and its whole descendant tree — may
+consume, kernel-enforced. All are optional non-negative integers:
+
+| Option | Unit | Scope |
+|---|---|---|
+| `max_memory` | bytes | committed memory, per process |
+| `max_job_memory` | bytes | committed memory, whole job (the child and every descendant) |
+| `max_cpu` | milliseconds | user CPU time, per process |
+| `max_job_cpu` | milliseconds | user CPU time, whole job |
+| `max_job_procs` | count | concurrent processes allowed in the job |
+
+A breach terminates the offending child (for a job-wide cap, the whole tree) with exit code **137**,
+and the Err message names the cap that tripped — so a runaway build or a fork-bomb fails as ordinary,
+catchable data rather than swamping the machine:
+
+```drang
+# cap a helper at 200 ms of user CPU and 128 MB across its whole tree; a breach -> 137
+$r := capture_all("some-helper", "--crunch", {max_cpu: 200, max_job_memory: 134217728})
+say($r.code)   # 137 if it hit a cap, else the child's own exit code
+```
+
+There is no global `cd`; per-command `{cwd}` is the only way to change the working
+directory (a process-wide chdir would race across goroutines). A `{cwd}` that doesn't exist is a
+clean catchable Err, not a launcher-internal message.
+
+### Error codes: 124 (timeout), 127 (cannot start), 137 (killed / limit breach)
 
 Two exit codes are synthesized, matching GNU `timeout`/shell conventions. On
 **timeout** the whole process *tree* is killed (not just the direct child, so a
@@ -2086,6 +2142,18 @@ say($"code: ${err_code($r)}  msg: ${err_msg($r)}")
 ```
 ```
 code: 127  msg: no_such_program_xyz: exec: "no_such_program_xyz": executable file not found in %PATH%
+```
+
+When a child is **killed** — by `kill`, or by breaching a resource limit (`max_memory`/`max_cpu`/…) —
+the code is `137`:
+
+```drang
+$p := start("cmd", "/c", "ping -n 30 127.0.0.1 >NUL")
+kill($p)
+say($"code: ${err_code(await($p))}")
+```
+```
+code: 137
 ```
 
 `pipe` follows bash's pipeline semantics: `127` if a stage can't start, `124` on
@@ -2131,7 +2199,7 @@ pid > 0: true
 await -> is_err: true  code: 3
 ```
 
-`kill` works on a still-running process; its pending `await` then yields an error:
+`kill` works on a still-running process; its pending `await` then yields an error (code `137`):
 
 ```drang
 $p := start("cmd", "/c", "ping -n 30 127.0.0.1 >NUL")
@@ -2141,6 +2209,34 @@ say($"after kill, is_err: ${is_err(await($p))}")
 ```
 after kill, is_err: true
 ```
+
+**Poll without blocking.** `status(p)` reports on a child without waiting: `{running, ok, code}` —
+`running` is true while it lives, and once it exits, `ok`/`code` carry the outcome.
+
+```drang
+$p := start("cmd", "/c", "exit 0")
+await($p)
+$s := status($p)
+say($s.running, $s.ok, $s.code)
+```
+```
+false true 0
+```
+
+**Drive a live child's stdin.** Launch with `{stdin_pipe: true}`, push input with `send_stdin(p, s)`,
+and signal end-of-input with `close_stdin(p)`. This lets you feed a long-running filter
+incrementally (here `sort`, which emits its result once its input closes):
+
+```drang
+$p := start("cmd", "/c", "sort > out.txt", {stdin_pipe: true})
+send_stdin($p, "banana\n")
+send_stdin($p, "apple\n")
+close_stdin($p)
+await($p)     # out.txt now holds apple, then banana
+```
+
+`stdin_pipe` is `start`-only (the synchronous forms take `stdin`/`stdin_file` instead), and it cannot
+be combined with either.
 
 ---
 
@@ -2187,7 +2283,9 @@ one intentionally *shared* value type. `send` blocks until received (and copies
 the value, copy-on-send); `recv` blocks for the next value (and yields `undef`
 once the channel is closed and drained); `recv_ok` returns `[value, ok]`; `close`
 is idempotent; `drain` collects every remaining value into an array, blocking
-until the channel is closed.
+until the channel is closed. A `send` or `recv` that could only ever deadlock — no
+counterparty and no other task running — is a catchable Err, not a process abort, so a
+mistaken lone `send(chan(), x)` fails as data you can recover with `//`.
 
 ```drang
 $c := chan(3)
@@ -3064,7 +3162,26 @@ Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bign
 | `sqrt` | `sqrt(n)` | Square root (float); negative → Err. |
 | `pow` | `pow(base, exp)` | base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float. |
 | `log` | `log(x, base?)` | Natural log, or log base `base`; non-positive `x` or bad base → Err. |
+| `log2` | `log2(x)` | Base-2 log; non-positive `x` → Err. |
+| `log10` | `log10(x)` | Base-10 log; non-positive `x` → Err. |
+| `exp` | `exp(x)` | e raised to `x` (float). |
+| `cbrt` | `cbrt(x)` | Cube root (float; defined for negatives). |
 | `div` | `div(a, b)` | Truncating integer division (toward zero, matching `%`); divide-by-zero → Err. |
+| `sin` `cos` `tan` | `sin(r)` | Trigonometric functions; the argument is in **radians**. |
+| `asin` `acos` | `asin(x)` | Inverse sine/cosine; argument outside `[-1, 1]` → Err. |
+| `atan` | `atan(x)` | Inverse tangent (radians). |
+| `atan2` | `atan2(y, x)` | Angle of the point `(x, y)` in radians, quadrant-correct. |
+| `hypot` | `hypot(x, y)` | `sqrt(x*x + y*y)` without overflow. |
+| `pi` `e` | `pi()` | The constants π and e as zero-arg builtins (`$PI ::= pi()` for a constant). |
+
+Trigonometry works in radians — `pi()` converts (a full turn is `2 * pi()`). A non-number or
+out-of-domain argument is a catchable Err, never a silent NaN:
+
+```drang
+say(sin(pi() / 2))          # 1
+say(round(atan2(1, 1) * 4 / pi()))   # 1  (atan2(1,1) is pi/4)
+say(is_err(asin(2)))        # true  (outside [-1, 1])
+```
 
 ### Strings
 
@@ -3279,16 +3396,9 @@ A point in time is epoch seconds (a float); see the Date-and-time chapter. `strf
 
 drang is a personal daily-driver under active construction, not a finished language. This section is the honest inventory of what is missing or behaves unexpectedly, so you don't waste time reaching for something that isn't there. Everything below was confirmed against the binary.
 
-### Whole capability areas with no builtins
+### Math is daily-driver-sized, not a scientific library
 
-The math family is daily-driver-sized, not a scientific library: `abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round`/`sqrt`/`pow`/`log`/`div` are present, but trigonometry is not. Calling one is an `unknown function` error:
-
-```
-drang -e 'say(sin(0))'
-# drang: unknown function sin
-```
-
-Trig (`sin`, `cos`, `tan`, …) is planned as a thin binding over Go's `math`, not yet landed; for a one-off, orchestrate an external tool. Everything else you might reach for *is* here now: HTTP (`http_get`/`http_post`/`http`, see [HTTP client](#http-client)), date/time, hashing, encodings, and randomness. (The bare name `fetch` is not a builtin. Use `http_get`.)
+The math family covers everyday needs — `abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round`/`sqrt`/`pow`/`log`/`log2`/`log10`/`exp`/`cbrt`/`div`, the trig set (`sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`/`hypot`, radians), and the constants `pi()`/`e()` — but it is not a scientific computing stack. There is no arbitrary-precision/bignum arithmetic (`int` is 64-bit and overflow is a loud Err, see below), no complex numbers, and no matrix/linear-algebra or statistics library (the prelude has `mean`/`median`; reach for a real tool beyond that). Everything else a glue script commonly reaches for *is* here: HTTP (`http_get`/`http_post`/`http`, see [HTTP client](#http-client)), date/time, hashing, encodings, and randomness. (The bare name `fetch` is not a builtin. Use `http_get`.)
 
 ### Missing operators
 

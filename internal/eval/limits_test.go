@@ -25,7 +25,7 @@ func TestLimitOptionsRejectBadValues(t *testing.T) {
 // The command is trivial so no breach fires; this just proves the option threads through.
 func TestLimitOptionsAcceptedByAllForms(t *testing.T) {
 	assertBoth(t, `say(capture("cmd","/c","echo hi",{max_memory: 50000000}))`, "hi\n")
-	assertBoth(t, `say(capture_all(["cmd","/c","echo hi"],{max_procs: 8}).ok)`, "true\n")
+	assertBoth(t, `say(capture_all(["cmd","/c","echo hi"],{max_job_procs: 8}).ok)`, "true\n")
 	assertBoth(t, `say(run("cmd","/c","exit 0",{max_cpu: 5000}))`, "true\n") // run inherits stdio: use a no-output cmd
 }
 

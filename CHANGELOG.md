@@ -5,6 +5,42 @@ follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `
 
 ## [Unreleased]
 
+The single-process-control release: kernel-enforced resource limits and the process-control gaps
+filled, plus a first math/ergonomics batch and two robustness fixes. Still Windows-only.
+
+### Added — process control & resource limits
+- **Kernel-enforced resource caps** on every exec form (`run`/`capture`/`capture_all`/`each_line`/
+  `pipe`/`start`), via Windows Job Objects: `{max_memory}` / `{max_job_memory}` (per-process /
+  whole-job commit, bytes), `{max_cpu}` / `{max_job_cpu}` (per-process / whole-job user CPU,
+  milliseconds), and `{max_job_procs}` (active-process cap). A breach terminates the child with exit
+  **137**, and the job's IOCP monitor names which cap (memory / CPU-time) tripped.
+- **Process-control builtins & options:** `status(proc)` polls a child without blocking
+  (`{running, ok, code}`); a `kill()`'d process reports `"was killed"` (137), distinct from a real
+  exit code; `{stdin_file: path}` feeds stdin from a file; `{merge_stderr: true}` folds stderr into
+  stdout (`2>&1`); `{cwd}` is validated up front (a bad directory is a clean catchable Err); and
+  `start(..., {stdin_pipe: true})` with `send_stdin(proc, s)` / `close_stdin(proc)` drives a live
+  child's stdin.
+
+### Added — language
+- **Trigonometry & extended math** (radians), the capability area the manual had promised:
+  `sin cos tan asin acos atan atan2 exp log2 log10 hypot cbrt`, plus the constants `pi()` / `e()`.
+  Thin bindings over Go's `math`; a domain or type error is a catchable Err, never a silent NaN.
+- **Compound assignment extended** to `%=`, `~=`, and `//=`. `~=` appends/concatenates (seeding a
+  fresh slot with `""`); `//=` is defined-or in place — it takes the right-hand side only when the
+  slot is nil or an error, and keeps a present value (even a falsy `0`).
+
+### Fixed
+- **`reverse` no longer infinite-loops on an array.** It now reverses arrays as well as strings, and a
+  non-string / non-array argument is a catchable Err instead of a hang (`reverse([1,2,3])` → `[3,2,1]`).
+- **A channel `send`/`recv` that could only ever deadlock** — no counterparty and no other task
+  running — is now a catchable Err rather than a raw Go `all goroutines are asleep` process abort. A
+  genuine multi-goroutine deadlock still fails loudly.
+
+### Changed
+- **Namespace:** the (brand-new, undocumented) `max_procs` exec option is renamed `max_job_procs` — it
+  is job-scoped, and the bare `max_` prefix wrongly implied per-process. The builtin-naming rule is
+  amended in DESIGN.md to "bare when unambiguous, `domain_` prefix only on collision."
+
 ### Testing & tooling
 - **Local preflight** ([tools/verify.dr](tools/verify.dr), `z verify`): one on-demand command —
   `go build` + `go vet` + the full `go test -race ./...` suite + a bounded fuzz burst on each

@@ -731,8 +731,8 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 				return o, err
 			}
 			o.limits.JobCPUTime = time.Duration(n) * time.Millisecond
-		case "max_procs": // max concurrent processes in the job (count)
-			n, err := limitInt(name, "max_procs", vals[i])
+		case "max_job_procs": // max concurrent processes in the whole job (count)
+			n, err := limitInt(name, "max_job_procs", vals[i])
 			if err != nil {
 				return o, err
 			}

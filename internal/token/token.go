@@ -63,6 +63,9 @@ const (
 	MINUSEQ   // -=
 	STAREQ    // *=
 	SLASHEQ   // /=
+	PERCENTEQ // %=
+	TILDEEQ   // ~=
+	DEFOREQ   // //=
 
 	EQ        // ==
 	NE        // !=
@@ -132,6 +135,9 @@ var names = [...]string{
 	MINUSEQ:   "MINUSEQ",
 	STAREQ:    "STAREQ",
 	SLASHEQ:   "SLASHEQ",
+	PERCENTEQ: "PERCENTEQ",
+	TILDEEQ:   "TILDEEQ",
+	DEFOREQ:   "DEFOREQ",
 	EQ:        "EQ",
 	NE:        "NE",
 	LT:        "LT",

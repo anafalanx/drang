@@ -189,15 +189,23 @@ fn capitalize($s) {
   upper($cs[0]) ~ lower(join(drop($cs, 1), ""))
 }
 
-# reverse a string by characters (rune-correct): reverse("abc") -> "cba"
-fn reverse($s) {
-  $cs := chars($s)
+# reverse a string (rune-correct) or an array, returning the same kind reversed:
+# reverse("abc") -> "cba", reverse([1, 2, 3]) -> [3, 2, 1]. A non-string, non-array
+# argument is a catchable Err (via chars), never a hang.
+fn reverse($xs) {
+  $arr := type($xs) == "array"
+  $src := $xs
+  if !$arr {
+    $src = chars($xs)
+    if is_err($src) { return $src }
+  }
   $out := []
-  $i := len($cs) - 1
+  $i := len($src) - 1
   while $i >= 0 {
-    push($out, $cs[$i])
+    push($out, $src[$i])
     $i = $i - 1
   }
+  if $arr { return $out }
   join($out, "")
 }
 
