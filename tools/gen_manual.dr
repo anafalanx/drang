@@ -287,7 +287,7 @@ push($h, "<header><a class=\"brand\" href=\"/\">drang</a><nav><a href=\"/\">Home
 push($h, "<main id=\"main\" class=\"wrap\"><div class=\"prose\">")
 push($h, $body)
 push($h, "</div></main>")
-push($h, "<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.5 · built by drang</div></footer>")
+push($h, "<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.6 · built by drang</div></footer>")
 push($h, "<script src=\"site.js\"></script>")
 push($h, "</body></html>")
 

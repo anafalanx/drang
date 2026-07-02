@@ -2,7 +2,7 @@
 
 *A small, Perl-inspired, parallel scripting language for text processing, system glue, and orchestration, implemented in Go.*
 
-*Covers drang 0.5.*
+*Covers drang 0.6.*
 
 > Every code example in this manual was executed against the interpreter; the shown output is real.
 

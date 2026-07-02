@@ -31,14 +31,14 @@
 <main id="main" class="wrap">
 
   <section class="hero">
-    <span class="pill">v0.5 · released</span>
+    <span class="pill">v0.6 · released</span>
     <h1 class="mark">drang</h1>
     <p class="tag">Your agents write the glue. You can read it.</p>
     <p class="lede">Reads like Ruby, thinks like Perl, runs like Go. A small, parallel
       scripting language for text, glue, and orchestration.</p>
     <p class="etym">drang: Dutch/German for drive, urge, momentum.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.5</a>
+      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.6</a>
       <a class="btn ghost" href="https://github.com/anafalanx/drang">View on GitHub</a>
     </div>
   </section>
@@ -72,7 +72,7 @@ say($"hi $user, you have $msgs new")   <span class="c"># hi ada, you have 3 new<
 <pre class="code slide" data-label="Glue built in" hidden><span class="c"># shell out, capture stdout, fail loud on error;</span>
 <span class="c"># a timeout tree-kills the whole job</span>
 $v := capture(exe(), "--version")
-say($"running $v")   <span class="c"># running drang 0.5</span></pre>
+say($"running $v")   <span class="c"># running drang 0.6</span></pre>
 <pre class="code slide" data-label="No orphaned processes" hidden><span class="c"># workers under {supervise: true} die with the parent:</span>
 <span class="c"># the whole tree, on every OS (clean exit, crash, or kill)</span>
 ["api", "worker", "cron"]
@@ -135,7 +135,7 @@ find_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
     <a href="manual.html">Manual</a>
     <a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a>
   </nav>
-  <div>MIT licensed · drang 0.5</div>
+  <div>MIT licensed · drang 0.6</div>
 </footer>
 
 <script src="site.js"></script>

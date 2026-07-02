@@ -77,10 +77,11 @@ interpreter, and writes atomically. It produces a standalone Windows executable 
 
 ## Status
 
-**drang 0.5**: a genuine daily-driver. (0.5 made string interpolation opt-in — plain `'...'`/`"..."`
-no longer interpolate; use `$"..."`.) See the *"Not Yet"* section of the manual for the remaining
-gaps: no structs (maps stand in as records), only daily-driver math (no trig), no character ranges,
-no implicit string↔number coercion, and no in-place one-liner mode (`-i`).
+**drang 0.6**: a genuine daily-driver, now Windows-native. (0.6 rebuilds process control on Windows
+Job Objects, fixes a batch-argument injection hole, and hardens the interpreter and the
+errors-as-values model — see [CHANGELOG.md](CHANGELOG.md).) See the *"Not Yet"* section of the manual
+for the remaining gaps: no structs (maps stand in as records), only daily-driver math (no trig), no
+character ranges, no implicit string↔number coercion, and no in-place one-liner mode (`-i`).
 
 ## License
 
