@@ -1,0 +1,2 @@
+go test fuzz v1
+string("fn .fib($n) {\t\tif $n < 2 { return $n }\n\n.fib($n - 1) + .fib($n)\n}\nsay(.fib(15)5")

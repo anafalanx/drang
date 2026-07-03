@@ -63,6 +63,10 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 	nr := int64(0)
 	runLine := func(line, fname string) error {
 		nr++
+		// Each input line is its own "run" for the runaway-recursion budget: an
+		// awk-style job over millions of lines that legitimately catches a deep
+		// overflow per line must never accumulate into a spurious storm abort.
+		env.resetOverflowBudget()
 		// Inject the per-line variables. A define error means the user froze one of
 		// these in BEGIN (e.g. $nr ::= ...); surface it rather than silently running
 		// the loop on stale values.

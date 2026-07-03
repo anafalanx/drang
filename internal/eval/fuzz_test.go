@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/ast"
@@ -128,8 +129,15 @@ func pureProgram(prog *ast.Program) bool {
 				walkExpr(x.Vals[i])
 			}
 		case *ast.RangeLit:
-			walkExpr(x.Lo)
-			walkExpr(x.Hi)
+			// Only small literal ranges are in scope: a mutated endpoint like
+			// 0..2000000000 is finite but takes hours (and a call-free loop body
+			// never touches the call budget), so it is a harness hang, not a
+			// divergence.
+			lo, loOk := x.Lo.(*ast.IntLit)
+			hi, hiOk := x.Hi.(*ast.IntLit)
+			if !loOk || !hiOk || lo.Value < -100_000 || lo.Value > 100_000 || hi.Value < -100_000 || hi.Value > 100_000 {
+				pure = false
+			}
 		case *ast.Lambda:
 			for _, d := range x.Defaults {
 				walkExpr(d)
@@ -148,8 +156,9 @@ func pureProgram(prog *ast.Program) bool {
 		case *ast.UseStmt, *ast.SpecialBlock, *ast.WhileStmt:
 			// Module import / BEGIN-END / while-until: out of scope. `while` (and
 			// `until`) are the only unbounded constructs in the language — `for`
-			// ranges are finite and runaway recursion is depth-guarded into a clean
-			// error — so a pure `while` can be a non-terminating program, which is a
+			// ranges are finite, LINEAR runaway recursion is depth-guarded into a clean
+			// catchable Err, and BRANCHING runaway recursion escalates to an aborting error
+			// after maxOverflowFires guard fires — so a pure `while` can be a non-terminating program, which is a
 			// hang, not a parity divergence. Excluding it keeps the fuzzer flowing.
 			pure = false
 		case *ast.BreakStmt, *ast.NextStmt:
@@ -238,6 +247,12 @@ say(split($s, ","), join(["x","y"], "-"))`,
 // pureProgram). This keeps the fuzzer flowing instead of stalling on a pure infinite
 // loop, at the cost of not mutating `while` bodies; ordinary while-loop parity is
 // still covered by the deterministic TestVMParity corpus.
+// isBudgetErr recognizes the test-only call-budget abort even if a layer wrapped it
+// with position info on the way up.
+func isBudgetErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "test call budget exceeded")
+}
+
 func FuzzBackendParity(f *testing.F) {
 	for _, s := range fuzzParitySeeds {
 		f.Add(s)
@@ -251,8 +266,20 @@ func FuzzBackendParity(f *testing.F) {
 		if !pureProgram(prog) {
 			return // touches the world or is nondeterministic — skip
 		}
+		// Bound each execution: a pure program can be finite yet astronomically slow
+		// (exponential recursion WITH a base case — legal in production, useless to
+		// verify here). Both backends make the identical call sequence, so each gets
+		// the same fresh budget; an execution that exhausts it is skipped, not failed.
+		testCallBudget = 5_000_000
+		defer func() { testCallBudget = 0 }()
+
+		testCallsUsed.Store(0)
 		wOut, wErr := runBackend(t, src, false) // tree-walking oracle
-		vOut, vErr := runBackend(t, src, true)  // register VM (production path)
+		testCallsUsed.Store(0)
+		vOut, vErr := runBackend(t, src, true) // register VM (production path)
+		if isBudgetErr(wErr) || isBudgetErr(vErr) {
+			return // too slow to verify — not a divergence
+		}
 		if wOut != vOut {
 			t.Fatalf("output mismatch:\n--- src ---\n%s\n--- walker ---\n%q\n--- vm ---\n%q", src, wOut, vOut)
 		}

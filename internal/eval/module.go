@@ -136,6 +136,13 @@ func runModule(canon string, importerEnv *Env) (value.Value, error) {
 		return value.MakeNil(), fmt.Errorf("parse error in %s: %s", canon, strings.Join(errs, "; "))
 	}
 	base := NewEnv()
+	// The module's functions charge overflow-guard fires to the IMPORTING run's
+	// counter, which the entry points reset — a module universe of its own would
+	// accumulate caught overflows forever (the module cache outlives runs). A cached
+	// module keeps its first importer's counter; reset-on-fire bounds that staleness.
+	if c := importerEnv.stormCounter(); c != nil {
+		base.overflowFires = c
+	}
 	seedArgv(base, nil)
 	if err := RunPrelude(base); err != nil {
 		return value.MakeNil(), err

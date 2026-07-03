@@ -286,6 +286,10 @@ func evalSpawn(args []value.Value) (value.Value, error) {
 			}
 			t.res = value.MakeErr(fmt.Sprintf("exit(%d) inside a spawned task", code), ec)
 		} else {
+			// Any worker error — including the runaway-recursion escalation — becomes
+			// the task's Err (the task model: errors surface at await). The escalation
+			// resets the overflow budget as it fires, so a demoted storm cannot poison
+			// the rest of the program's guard budget.
 			t.res = value.MakeErr(err.Error(), 1)
 		}
 	}()

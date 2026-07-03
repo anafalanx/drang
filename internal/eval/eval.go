@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/ast"
@@ -46,6 +47,11 @@ type Env struct {
 	moduleDir    string          // base directory for relative `use` paths (set on the top env per run/module)
 	loadingChain map[string]bool // canonical paths being loaded up the import chain (cycle detection)
 	callDepth    int             // dynamic user-function call depth at this env; the recursion guard (see callFunction)
+	// overflowFires counts depth-guard fires across a whole env universe (see the
+	// runaway-recursion escalation in callFunction). Allocated once per NewEnv root and
+	// found by walking the chain; atomic because pmap/spawn workers share the pointer
+	// (a snapshot preserves it). Reset per program run/REPL submission.
+	overflowFires *atomic.Int64
 }
 
 // maxCallDepth bounds nested user-function calls. Each drang call recurses the Go
@@ -56,8 +62,36 @@ type Env struct {
 // several Go frames each drang call adds, yet far above any real recursion.
 const maxCallDepth = 4000
 
+// maxOverflowFires bounds how many times the depth guard may fire before the catchable
+// Err escalates to an aborting error. The depth guard bounds each recursion PATH, but a
+// base-case-less BRANCHING recursion (.f($n){.f($n-1)*.f($n-2)}) explores
+// ~2^maxCallDepth sibling paths — each terminates, the tree does not. One overflow (or
+// a few thousand) stays a catchable Err, preserving `deep() // fallback`; a storm of
+// them is a programming bug and aborts loudly instead of hanging. Normal programs never
+// touch this counter (it moves only when the guard fires), so the hot call path is
+// unchanged. A var, not a const, ONLY so tests can lower it to exercise the escalation
+// cheaply; production never writes it.
+var maxOverflowFires int64 = 100_000
+
+// depthErrMsg is the depth-guard's catchable-Err message, formatted once — during a
+// storm the guard fires up to maxOverflowFires times, so the fire path stays cheap.
+var depthErrMsg = fmt.Sprintf("call depth exceeded %d (infinite recursion?)", maxCallDepth)
+
+// testCallBudget, when nonzero, bounds the TOTAL user-function calls in a run — a
+// TEST-ONLY knob (the fuzz harness sets it around each execution) so a finite but
+// astronomically slow program (exponential recursion WITH a base case, say) aborts
+// instead of stalling the harness. Always zero in production, where the check is a
+// single predictable branch; such programs are legal there — slow is not a bug.
+// callsUsed is atomic because pmap/spawn workers call concurrently; the budget var
+// itself is only written while no interpreter goroutines run.
+var (
+	testCallBudget    int64
+	testCallsUsed     atomic.Int64
+	errTestCallBudget = fmt.Errorf("test call budget exceeded (finite but too slow to verify)")
+)
+
 // NewEnv returns a fresh top-level scope.
-func NewEnv() *Env { return &Env{vars: map[string]binding{}} }
+func NewEnv() *Env { return &Env{vars: map[string]binding{}, overflowFires: new(atomic.Int64)} }
 
 // child returns a nested scope. It inherits callDepth so the recursion guard tracks
 // depth across block scopes (if/for bodies) within one call; a function body's local
@@ -117,7 +151,28 @@ func (e *Env) snapshot() *Env {
 	for k, b := range e.vars {
 		vars[k] = b
 	}
-	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, loadingChain: e.loadingChain}
+	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, loadingChain: e.loadingChain, overflowFires: e.overflowFires}
+}
+
+// stormCounter finds the env universe's overflow-fire counter (on the NewEnv root, or
+// any snapshot of it). Nil for a synthetic chain that never descends from NewEnv — the
+// escalation is then simply skipped.
+func (e *Env) stormCounter() *atomic.Int64 {
+	for s := e; s != nil; s = s.parent {
+		if s.overflowFires != nil {
+			return s.overflowFires
+		}
+	}
+	return nil
+}
+
+// resetOverflowBudget zeroes the universe's overflow-fire counter — called at each
+// program-run / REPL-submission entry so one run's (caught) overflows never bleed into
+// the next run's runaway-recursion budget.
+func (e *Env) resetOverflowBudget() {
+	if c := e.stormCounter(); c != nil {
+		c.Store(0)
+	}
 }
 
 func (e *Env) get(name string) (value.Value, bool) {
@@ -305,6 +360,7 @@ func ErrorPos(err error) (line, col int, ok bool) {
 
 // RunProgram evaluates a whole program against env.
 func RunProgram(prog *ast.Program, env *Env) error {
+	env.resetOverflowBudget()
 	for _, s := range prog.Stmts {
 		if _, err := evalStmt(s, env); err != nil {
 			return err
@@ -327,6 +383,7 @@ func NewREPLEnv() *Env {
 // tree-walker — the VM's behavioral oracle, so results match normal execution —
 // while functions defined here still compile and run on the VM when later called.
 func EvalREPL(prog *ast.Program, env *Env) (value.Value, error) {
+	env.resetOverflowBudget()
 	last := value.MakeNil()
 	for _, s := range prog.Stmts {
 		v, err := evalStmt(s, env)
@@ -1598,11 +1655,28 @@ func callFunction(fn *Function, args []value.Value, depth int) (value.Value, err
 		// builtin still does its own arity/type checks.
 		return safeBuiltin(fn.Name, fn.Builtin, args)
 	}
+	if testCallBudget > 0 && testCallsUsed.Add(1) > testCallBudget {
+		return value.MakeNil(), errTestCallBudget
+	}
 	bodyDepth := depth + 1
 	if bodyDepth > maxCallDepth {
 		// Deep enough to risk a fatal Go stack overflow: fail loud with a catchable Err
-		// rather than crash the interpreter.
-		return value.MakeErr(fmt.Sprintf("call depth exceeded %d (infinite recursion?)", maxCallDepth), 1), nil
+		// rather than crash the interpreter. But a STORM of these fires — the signature
+		// of base-case-less branching recursion, whose ~2^maxCallDepth sibling paths the
+		// per-path guard cannot bound — escalates to an aborting error instead of
+		// effectively hanging (see maxOverflowFires).
+		if c := fn.Env.stormCounter(); c != nil && c.Add(1) > maxOverflowFires {
+			// Reset as the escalation fires: a layer may demote this abort to a
+			// catchable Err (a spawned task's worker reports errors as the task's
+			// result — the task model), and without the reset the saturated counter
+			// would misattribute the NEXT legitimate single overflow to a storm.
+			// One storm burns one budget; the rest of the run starts fresh.
+			c.Store(0)
+			return value.MakeNil(), fmt.Errorf(
+				"runaway recursion: the call-depth limit (%d) was hit more than %d times — branching recursion with no base case? (a single overflow is a catchable error)",
+				maxCallDepth, maxOverflowFires)
+		}
+		return value.MakeErr(depthErrMsg, 1), nil
 	}
 	args, err := bindArgs(fn, args)
 	if err != nil {

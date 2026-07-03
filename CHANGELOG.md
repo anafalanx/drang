@@ -30,6 +30,19 @@ filled, plus a first math/ergonomics batch and two robustness fixes. Still Windo
   slot is nil or an error, and keeps a present value (even a falsy `0`).
 
 ### Fixed
+- **Branching runaway recursion no longer hangs the interpreter.** The recursion guard bounds
+  each call PATH (depth 4000), but a base-case-less branching recursion like
+  `fn .f($n) { .f($n - 1) * .f($n - 2) }` explores ~2^4000 sibling paths — each path terminated,
+  the tree never did. A storm of depth-guard hits (>100,000 in one run) now escalates to a loud
+  aborting error ("runaway recursion") within milliseconds, on both backends. A single overflow
+  (or thousands) is still the same catchable Err as before — `deep() // fallback` keeps working —
+  and the normal call path pays nothing (the counter moves only when the guard fires). This also
+  de-flakes `FuzzBackendParity` and the `z verify` release gate, which previously hung when the
+  fuzzer mutated a recursion seed into the branching shape. Separately, the parity harness now
+  bounds each fuzz execution with a test-only call budget and restricts fuzzed ranges to small
+  literals — a finite-but-astronomically-slow program (exponential recursion WITH a base case,
+  a two-billion-iteration loop) is skipped as unverifiable rather than stalling the gate; such
+  programs remain perfectly legal in production, where slow is not a bug.
 - **`reverse` no longer infinite-loops on an array.** It now reverses arrays as well as strings, and a
   non-string / non-array argument is a catchable Err instead of a hang (`reverse([1,2,3])` → `[3,2,1]`).
 - **A channel `send`/`recv` that could only ever deadlock** — no counterparty and no other task

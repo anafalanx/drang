@@ -97,6 +97,7 @@ func (it *forIter) next() (value.Value, value.Value, bool) {
 // coherent and produces byte-identical results — the property the parity tests
 // assert across the whole suite.
 func RunProgramVM(prog *ast.Program, env *Env) error {
+	env.resetOverflowBudget()
 	p, ok := compileProgram(prog)
 	if !ok {
 		return RunProgram(prog, env)
