@@ -38,12 +38,15 @@ A follow-up security review (no high-severity findings) closed a set of hardenin
   whole-job commit, bytes), `{max_cpu}` / `{max_job_cpu}` (per-process / whole-job user CPU,
   milliseconds), and `{max_job_procs}` (active-process cap). A breach terminates the child with exit
   **137**, and the job's IOCP monitor names which cap (memory / CPU-time) tripped.
-- **Process-control builtins & options:** `status(proc)` polls a child without blocking
-  (`{running, ok, code}`); a `kill()`'d process reports `"was killed"` (137), distinct from a real
+- **Process-control builtins & options:** `status(proc)` polls a child without blocking, always
+  returning the uniform shape `{running, ok, code, pid}` (while alive: `running` is true, `code` is
+  the `-1` sentinel, `ok` false); a `kill()`'d process reports `"was killed"` (137), distinct from a real
   exit code; `{stdin_file: path}` feeds stdin from a file; `{merge_stderr: true}` folds stderr into
   stdout (`2>&1`); `{cwd}` is validated up front (a bad directory is a clean catchable Err); and
   `start(..., {stdin_pipe: true})` with `send_stdin(proc, s)` / `close_stdin(proc)` drives a live
-  child's stdin.
+  child's stdin. Option hygiene: `cwd`/`stdin`/`arg0` require a string (a non-string is a clean
+  error, not a silent stringification), and `supervise` is rejected on the waiting forms (it is
+  start-only). Reserved but **not in 0.7**: `recv_stdout`/`{stdout_pipe}` and `stop`/`signal`.
 
 ### Added — language
 - **Trigonometry & a small extended-math line** (radians), the capability area the manual had

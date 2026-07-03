@@ -237,10 +237,12 @@ func builtinKill(args []value.Value) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
-// builtinStatus polls a started process WITHOUT blocking (unlike await): it returns
-// {running: true} while the child is alive, else {running: false, ok, code} — the same
-// ok/code shape as capture_all (code 0 on success, else the exit/breach/killed code). This is
-// how you supervise a background child without committing to a blocking wait.
+// builtinStatus polls a started process WITHOUT blocking (unlike await). It ALWAYS returns the
+// same four keys — {running, ok, code, pid} — so a caller never has to test for a missing one.
+// While the child is alive: running=true, ok=false, code=-1 (the "no exit code yet" sentinel).
+// Once reaped: running=false with the final ok/code, the same shape as capture_all (code 0 on
+// success, else the exit/breach/killed code). pid is the child's OS process id throughout. This
+// is how you supervise a background child without committing to a blocking wait.
 func builtinStatus(args []value.Value) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("status expects 1 argument (a process), got %d", len(args))
@@ -249,21 +251,23 @@ func builtinStatus(args []value.Value) (value.Value, error) {
 	if !ok {
 		return errv, nil
 	}
-	m := value.MakeMap()
-	om := m.Obj().(*value.OrderedMap)
+	running, okv, code := true, false, int64(-1)
 	select {
 	case <-p.done: // reaped: p.res is final (set before close(p.done))
-		om.Set(value.MakeStr("running"), value.MakeBool(false))
+		running = false
 		if p.res.IsErr() {
-			om.Set(value.MakeStr("ok"), value.MakeBool(false))
-			om.Set(value.MakeStr("code"), value.MakeInt(p.res.ErrCode()))
+			code = p.res.ErrCode()
 		} else {
-			om.Set(value.MakeStr("ok"), value.MakeBool(true))
-			om.Set(value.MakeStr("code"), value.MakeInt(0))
+			okv, code = true, 0
 		}
-	default:
-		om.Set(value.MakeStr("running"), value.MakeBool(true))
+	default: // still alive: keep the running-sentinel values
 	}
+	m := value.MakeMap()
+	om := m.Obj().(*value.OrderedMap)
+	om.Set(value.MakeStr("running"), value.MakeBool(running))
+	om.Set(value.MakeStr("ok"), value.MakeBool(okv))
+	om.Set(value.MakeStr("code"), value.MakeInt(code))
+	om.Set(value.MakeStr("pid"), value.MakeInt(int64(p.pid)))
 	return m, nil
 }
 
@@ -696,9 +700,15 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 		}
 		switch k.AsStr() {
 		case "cwd":
-			o.cwd = vals[i].Display()
+			if vals[i].Tag() != value.Str {
+				return o, fmt.Errorf("%s: cwd must be a string path", name)
+			}
+			o.cwd = vals[i].AsStr()
 		case "stdin":
-			o.stdin = vals[i].Display()
+			if vals[i].Tag() != value.Str {
+				return o, fmt.Errorf("%s: stdin must be a string", name)
+			}
+			o.stdin = vals[i].AsStr()
 			o.hasStdin = true
 		case "stdin_file":
 			if vals[i].Tag() != value.Str {
@@ -720,7 +730,10 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			}
 			o.stdinPipe = vals[i].Truthy()
 		case "arg0":
-			o.arg0 = vals[i].Display()
+			if vals[i].Tag() != value.Str {
+				return o, fmt.Errorf("%s: arg0 must be a string", name)
+			}
+			o.arg0 = vals[i].AsStr()
 			o.hasArg0 = true
 		case "timeout":
 			if vals[i].Tag() != value.Int {
@@ -746,6 +759,11 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			}
 			overlayEnv = vals[i].Obj().(*value.OrderedMap)
 		case "supervise":
+			if name != "start" {
+				// supervise ties a DETACHED child's lifetime to drang's; run/capture/pipe already
+				// wait for the child, so it is meaningless there — reject rather than silently ignore.
+				return o, fmt.Errorf("%s: supervise is only for start() (it ties a detached child's lifetime to drang)", name)
+			}
 			if vals[i].Tag() != value.Bool {
 				return o, fmt.Errorf("%s: supervise must be true or false", name)
 			}

@@ -2215,14 +2215,16 @@ say($"after kill, is_err: ${is_err(await($p))}")
 after kill, is_err: true
 ```
 
-**Poll without blocking.** `status(p)` reports on a child without waiting: `{running, ok, code}` —
-`running` is true while it lives, and once it exits, `ok`/`code` carry the outcome.
+**Poll without blocking.** `status(p)` reports on a child without waiting. It ALWAYS returns the
+same four keys — `{running, ok, code, pid}` — so you never test for a missing one. While the child
+lives, `running` is true, `ok` is false, and `code` is the sentinel `-1`; once it exits, `ok`/`code`
+carry the outcome (the same shape as `capture_all`). `pid` is the child's OS process id throughout.
 
 ```drang
 $p := start("cmd", "/c", "exit 0")
 await($p)
 $s := status($p)
-say($s.running, $s.ok, $s.code)
+say($s.running, $s.ok, $s.code)   # pid is also present (the child's process id)
 ```
 ```
 false true 0
@@ -3318,13 +3320,20 @@ optional trailing options map `{cwd, env_exact, env_add, stdin, timeout, arg0, s
 sets the exact child environment; `env_add` overlays inherited environment; `timeout`
 is in ms; `arg0` presents a different argv[0] than the launched executable; `supervise:
 true` ties the child's lifetime to ours, see [Options](#options-cwd-env_exact-env_add-stdin-timeout-supervise)).
-No shell is involved; args are passed verbatim. A few caveats, each a catchable Err rather than a
-silent surprise: `arg0` is rejected for a `.bat`/`.cmd` target (it is launched via `cmd.exe`, which
-owns argv[0]); `start` rejects `{timeout}` (a started process is detached and runs unbounded — use
-`run`/`capture` for a bounded command); and `supervise` is only meaningful for `start` — the
-synchronous forms (`run`/`capture`/`capture_all`/`pipe`/`stream_lines`) always die with drang while it
-waits for them, so it is a no-op there. Channels and tasks are shared
-reference types; values are deep-copied on send and on `await`.
+No shell is involved; args are passed verbatim. The string-valued options (`cwd`, `stdin`, `arg0`)
+require a string — a non-string is a clean error, not a silent stringification. A few caveats, each
+a catchable Err rather than a silent surprise: `arg0` is rejected for a `.bat`/`.cmd` target (it is
+launched via `cmd.exe`, which owns argv[0]); `start` rejects `{timeout}` (a started process is
+detached and runs unbounded — use `run`/`capture` for a bounded command); and `supervise` is
+**rejected** on the synchronous forms (`run`/`capture`/`capture_all`/`pipe`/`stream_lines`) — those
+always die with drang while it waits for them, so it is meaningless there and belongs only on
+`start`. Channels and tasks are shared reference types; values are deep-copied on send and on
+`await`.
+
+Some names are **reserved but not in 0.7** (a later release may add them; do not rely on them yet):
+a `recv_stdout(p)` / `{stdout_pipe: true}` pair (incrementally read a live child's stdout, the read
+sibling of `send_stdin`/`{stdin_pipe}`), and `stop(p)` / `signal(p, ...)` (graceful shutdown, as
+distinct from `kill`'s immediate tree-terminate).
 
 | Builtin | Signature | Description |
 |---|---|---|

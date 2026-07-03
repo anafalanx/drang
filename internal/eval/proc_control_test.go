@@ -7,12 +7,47 @@ import (
 	"testing"
 )
 
-// TestProcStatus: status(proc) polls without blocking and reports the ok/code shape after exit.
+// TestProcStatus: status(proc) polls without blocking and reports the reaped shape after exit.
+// The shape is uniform {running, ok, code, pid} — pid is always present.
 func TestProcStatus(t *testing.T) {
 	assertBoth(t, `$p := start("cmd","/c","exit 0")
 await($p)
 $s := status($p)
-say($s.running ~ " " ~ str($s.ok) ~ " " ~ str($s.code))`, "false true 0\n")
+say(str($s.running) ~ " " ~ str($s.ok) ~ " " ~ str($s.code) ~ " " ~ str($s.pid > 0))`, "false true 0 true\n")
+}
+
+// TestStatusWhileRunning: while the child is alive, status is the uniform running-sentinel —
+// running=true, ok=false, code=-1, pid>0 — so a caller never has to test for a missing key.
+func TestStatusWhileRunning(t *testing.T) {
+	out := run(t, `$p := start("cmd","/c","ping -n 30 127.0.0.1 >nul")
+$s := status($p)
+kill($p)
+await($p)
+say(str($s.running) ~ " " ~ str($s.ok) ~ " " ~ str($s.code) ~ " " ~ str($s.pid > 0))`)
+	if strings.TrimSpace(out) != "true false -1 true" {
+		t.Errorf("running status shape = %q, want %q", strings.TrimSpace(out), "true false -1 true")
+	}
+}
+
+// TestExecOptionTypeChecks: cwd/stdin/arg0 require a string (a non-string is a clean abort, not a
+// silent stringification), and supervise is start-only (meaningless on the waiting forms).
+func TestExecOptionTypeChecks(t *testing.T) {
+	reject := []string{
+		`capture("cmd","/c","echo hi",{cwd: 42})`,
+		`capture("cmd","/c","echo hi",{stdin: 42})`,
+		`capture("cmd","/c","echo hi",{arg0: 42})`,
+		`capture("cmd","/c","echo hi",{supervise: true})`, // start-only
+		`run("cmd","/c","echo hi",{supervise: true})`,
+	}
+	for _, src := range reject {
+		for _, vm := range []bool{false, true} {
+			if _, err := runBackend(t, src, vm); err == nil {
+				t.Errorf("vm=%v: expected a rejection for %s", vm, src)
+			}
+		}
+	}
+	// supervise IS accepted on start (the one place it means something).
+	assertBoth(t, `$p := start("cmd","/c","exit 0", {supervise: true}); say(err_code(await($p)))`, "0\n")
 }
 
 // TestKilledVsExited: a kill()'d process reports "was killed" (137), distinct from a natural exit.
