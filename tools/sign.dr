@@ -1,0 +1,90 @@
+# sign.dr — code-sign a drang release binary with the Certum Open Source cert (SimplySign).
+#   drang tools/sign.dr [file.exe]     (or: z sign [file.exe])
+# With no file, signs the sole drang_*_windows_amd64.exe in the current directory.
+#
+# This script holds NO secrets and names no one. The certificate lives in Certum's cloud
+# (the private key never touches this machine); the PIN and the phone's one-time code stay
+# with you. Cert selection is delegated to signtool's /a flag, which auto-picks the
+# machine's code-signing certificate — so there is nothing here to update when the cert is
+# renewed each year, and no identity is hardcoded. (This machine has exactly one code-
+# signing cert; if you ever add a second, select explicitly with /n or /sha1.)
+#
+# Prerequisite: SimplySign Desktop must be CONNECTED (tray icon -> Connect to SimplySign,
+# your SimplySign e-mail + the 6-digit token from the phone app). While connected, the
+# cloud certificate appears in the Windows store as a virtual smart card. If it is not
+# connected, signtool finds no cert and this script REFUSES rather than emit an unsigned
+# binary.
+
+$TSA ::= "http://time.certum.pl"  # Certum RFC-3161 timestamp server (mandatory: keeps the
+                                  # signature valid after the certificate expires)
+
+# resolve_signtool locates signtool.exe: prefer the Windows SDK's own copy (glob picks the
+# highest installed version, so an SDK update just works), then the zmal junction, then PATH.
+fn .resolve_signtool() {
+  $sdk := glob("C:/Program Files (x86)/Windows Kits/10/bin/*/x64/signtool.exe")
+  if len($sdk) > 0 { return $sdk[len($sdk) - 1] }
+  $junction := "C:/zmal/r/winsdk/10.0.26100.0/signtool.exe"
+  if exists($junction) { return $junction }
+  $w := capture_all("where", "signtool")
+  if $w.ok and len(lines($w.out)) > 0 {
+    $first := trim(lines($w.out)[0])
+    if $first != "" { return $first }
+  }
+  die("signtool.exe not found. Install the Windows SDK \"Signing Tools for Desktop Apps\".")
+}
+
+# resolve_target picks the file to sign: the argument if given, else the lone
+# drang_*_windows_amd64.exe in the current directory.
+fn .resolve_target() {
+  if len($ARGV) > 0 {
+    $f := $ARGV[0]
+    if !exists($f) { die("file not found: " ~ $f) }
+    return $f
+  }
+  $g := glob("drang_*_windows_amd64.exe")
+  if len($g) == 0 {
+    die("no file given and no drang_*_windows_amd64.exe here.\n  usage: z sign <file.exe>")
+  }
+  if len($g) > 1 {
+    die("multiple candidates: " ~ join($g, ", ") ~ "\n  pass one explicitly: z sign <file.exe>")
+  }
+  $g[0]
+}
+
+# --- run ---
+$signtool := .resolve_signtool()
+$exe := .resolve_target()
+say("file:      " ~ $exe)
+say("signtool:  " ~ $signtool)
+say("")
+say("Signing (signtool /a auto-selects the code-signing cert; a PIN dialog may pop)...")
+
+# Sign. /a auto-selects the machine's code-signing certificate; /v prints which one it chose.
+$s := capture_all($signtool, "sign", "/a",
+                  "/tr", $TSA, "/td", "sha256", "/fd", "sha256", "/v", $exe)
+if trim($s.out) != "" { say(trim($s.out)) }
+if !$s.ok {
+  if contains($s.out, "No certificates were found") or contains($s.err, "No certificates were found") {
+    die("no code-signing certificate found — SimplySign is not connected.\n" ~
+        "  -> Open SimplySign Desktop, tray icon -> Connect to SimplySign\n" ~
+        "     (your SimplySign e-mail + the 6-digit phone token), then re-run.\n" ~
+        "     Refusing to emit an unsigned binary.")
+  }
+  die("signtool sign failed (code " ~ str($s.code) ~ "): " ~ trim($s.err))
+}
+
+# Verify: the signature must validate AND be timestamped.
+$v := capture_all($signtool, "verify", "/pa", "/all", "/v", $exe)
+if !$v.ok { die("signature verify FAILED:\n" ~ trim($v.out) ~ trim($v.err)) }
+if !contains($v.out, "timestamp") {
+  die("signature is NOT timestamped — it would expire with the certificate. Aborting.")
+}
+
+# Report the release checksum (drang hashing its own release — the full-file SHA-256 that
+# goes in the GitHub release notes, computed by reading the bytes back).
+$sum := sha256(read_file($exe))
+say("")
+say("OK — signed, verified, timestamped.")
+say("  file    " ~ $exe)
+say("  sha256  " ~ $sum)
+true
