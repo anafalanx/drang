@@ -169,22 +169,61 @@ func builtinFindAll(args []value.Value) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-// builtinGsub replaces every match of the pattern in s with repl, where repl may
-// use $1 / ${name} backreferences (Go's ReplaceAllString syntax). The pattern may
-// be a string or a regex value.
-func builtinGsub(args []value.Value) (value.Value, error) {
+// replaceArgs validates the shared (s, needle, repl) shape of replace_first/replace_all.
+// The needle picks the mode: a plain string is a LITERAL needle (repl is literal too),
+// a qr// regex value matches as a pattern (repl may use $1 / ${name} backreferences,
+// Go's ReplaceAllString syntax). This bare-string-means-literal dispatch matches Ruby's
+// String#gsub and is why these builtins never compile a string as a pattern — write
+// re(pat) or qr// when a pattern is meant.
+func replaceArgs(name string, args []value.Value) (s, repl string, re *regexp.Regexp, err error) {
 	if len(args) != 3 {
-		return value.MakeNil(), fmt.Errorf("gsub expects 3 arguments (s, pattern, repl), got %d", len(args))
+		return "", "", nil, fmt.Errorf("%s expects 3 arguments (s, needle, repl), got %d", name, len(args))
 	}
 	if args[0].Tag() != value.Str {
-		return value.MakeErr(fmt.Sprintf("gsub: first argument must be a string, got %s", args[0].TypeName()), 1), nil
+		return "", "", nil, typeErrf("%s: first argument must be a string, got %s", name, args[0].TypeName())
 	}
 	if args[2].Tag() != value.Str {
-		return value.MakeErr(fmt.Sprintf("gsub: replacement must be a string, got %s", args[2].TypeName()), 1), nil
+		return "", "", nil, typeErrf("%s: replacement must be a string, got %s", name, args[2].TypeName())
 	}
-	re, errv, ok := regexArg("gsub", args[1])
-	if !ok {
-		return errv, nil
+	switch args[1].Tag() {
+	case value.Str:
+		return args[0].AsStr(), args[2].AsStr(), nil, nil // literal needle
+	case value.Regex:
+		return args[0].AsStr(), args[2].AsStr(), args[1].Obj().(*regexObj).re, nil
+	default:
+		return "", "", nil, typeErrf("%s: needle must be a string (literal) or a regex, got %s", name, args[1].TypeName())
 	}
-	return value.MakeStr(re.ReplaceAllString(args[0].AsStr(), args[2].AsStr())), nil
+}
+
+// builtinReplaceAll replaces EVERY occurrence of needle in s (the _all marks
+// exhaustiveness, mirroring find/find_all; replace_first is the single-shot form).
+func builtinReplaceAll(args []value.Value) (value.Value, error) {
+	s, repl, re, err := replaceArgs("replace_all", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	if re == nil {
+		return value.MakeStr(strings.ReplaceAll(s, args[1].AsStr(), repl)), nil
+	}
+	return value.MakeStr(re.ReplaceAllString(s, repl)), nil
+}
+
+// builtinReplaceFirst replaces only the FIRST occurrence of needle in s.
+func builtinReplaceFirst(args []value.Value) (value.Value, error) {
+	s, repl, re, err := replaceArgs("replace_first", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	if re == nil {
+		return value.MakeStr(strings.Replace(s, args[1].AsStr(), repl, 1)), nil
+	}
+	loc := re.FindStringSubmatchIndex(s)
+	if loc == nil {
+		return value.MakeStr(s), nil
+	}
+	out := make([]byte, 0, len(s))
+	out = append(out, s[:loc[0]]...)
+	out = re.ExpandString(out, repl, s, loc) // $1 / ${name} backreferences
+	out = append(out, s[loc[1]:]...)
+	return value.MakeStr(string(out)), nil
 }

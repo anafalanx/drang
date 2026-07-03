@@ -132,17 +132,22 @@ var gcPresets = map[string]int{
 	"relaxed": 400,
 }
 
-// builtinSysGC tunes the garbage collector and returns the PREVIOUS target percent,
+// builtinDrangGC tunes the garbage collector and returns the PREVIOUS target percent,
 // so a heavy phase can relax GC and then restore it:
 //
-//	$old := sys_gc("relaxed"); ...heavy work...; sys_gc($old)
+//	$old := drang_gc("relaxed"); ...heavy work...; drang_gc($old)
 //
-//	sys_gc("off" | "lean" | "normal" | "relaxed")  — friendly presets
-//	sys_gc(n)                                       — set the GOGC percent directly
-//	                                              (advanced; a negative n disables GC)
-func builtinSysGC(args []value.Value) (value.Value, error) {
+//	drang_gc("off" | "lean" | "normal" | "relaxed")  — friendly presets
+//	drang_gc(n)                                       — set the GOGC percent directly
+//	                                                (advanced; a negative n disables GC)
+//
+// The drang_ prefix marks knobs/introspection on the drang interpreter itself
+// (future siblings: drang_version, drang_mem) — distinct from the bare machine
+// facts (os, arch, home) and unambiguous in orchestration scripts that steer
+// OTHER runtimes.
+func builtinDrangGC(args []value.Value) (value.Value, error) {
 	if len(args) != 1 {
-		return value.MakeNil(), fmt.Errorf("sys_gc expects 1 argument (a mode word or an int), got %d", len(args))
+		return value.MakeNil(), fmt.Errorf("drang_gc expects 1 argument (a mode word or an int), got %d", len(args))
 	}
 	var pct int
 	switch a := args[0]; a.Tag() {
@@ -151,11 +156,11 @@ func builtinSysGC(args []value.Value) (value.Value, error) {
 	case value.Str:
 		p, ok := gcPresets[a.AsStr()]
 		if !ok {
-			return value.MakeErr(fmt.Sprintf("sys_gc: unknown mode %q (use off/lean/normal/relaxed or an int)", a.AsStr()), 1), nil
+			return value.MakeErr(fmt.Sprintf("drang_gc: unknown mode %q (use off/lean/normal/relaxed or an int)", a.AsStr()), 1), nil
 		}
 		pct = p
 	default:
-		return value.MakeErr(fmt.Sprintf("sys_gc expects a mode word or an int, got %s", a.TypeName()), 1), nil
+		return value.MakeErr(fmt.Sprintf("drang_gc expects a mode word or an int, got %s", a.TypeName()), 1), nil
 	}
 	return value.MakeInt(int64(debug.SetGCPercent(pct))), nil
 }

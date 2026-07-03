@@ -462,7 +462,7 @@ These are deliberate omissions. Each is a parse error, not a missing feature you
 - **No exponent** `**`: there is no power operator.
 - **No bitwise** operators (`&`, `|`, `^`, `<<`, `>>`).
 - **No increment/decrement** `++` / `--`: use `+= 1` / `-= 1`.
-- **No Perl regex operators** (`=~`, `s///`) or `$1..$n` capture variables: drang uses `qr//` literals with the `match`/`gsub`/`matches`/`find_all` builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.
+- **No Perl regex operators** (`=~`, `s///`) or `$1..$n` capture variables: drang uses `qr//` literals with the `match`/`replace_all`/`matches`/`find_all` builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.
 
 ```drang
 say(2 ** 3)
@@ -751,7 +751,7 @@ string instead.
 | `trim` | `(s, cutset?)` | trims whitespace, or the given cutset of chars |
 | `split` | `(s, sep?)` | no `sep` → split on whitespace runs; `""` → split into runes; else split on `sep` |
 | `join` | `(array, sep?)` | renders each element and joins with `sep` (default `""`) |
-| `replace` | `(s, old, new)` | replaces all occurrences |
+| `replace_first` / `replace_all` | `(s, needle, repl)` | replace the first / every occurrence; a string `needle` is literal, a `qr//` regex matches as a pattern (see the regex chapter) |
 | `contains` | `(s, needle)` | substring test (also works on arrays) |
 | `starts_with` / `ends_with` | `(s, prefix/suffix)` | boolean |
 | `repeat` | `(s, n)` | `n` copies; `n` must be an int |
@@ -766,7 +766,7 @@ say(trim("xxhix", "x"))
 say(split("a b  c"))
 say(split("a,b,c", ","))
 say(join(["a", "b", "c"], "-"))
-say(replace("a.b.c", ".", "-"))
+say(replace_all("a.b.c", ".", "-"))
 say(contains("hello", "ell"))
 say(starts_with("foobar", "foo"))
 say(repeat("ab", 3))
@@ -1529,8 +1529,7 @@ builtins above, available unqualified like any builtin:
 |--------|---------|
 | `flatten(xss)` | concatenate one level of nesting: `[[1, 2], [3]]` → `[1, 2, 3]` |
 | `sum_by(xs, f)` | sum of `f` over each element |
-| `tally(xs)` | count occurrences → a map `{value: count}` |
-| `count_by(xs, f)` | like `tally`, but keyed by `f(x)` |
+| `count_by(xs, f)` | count occurrences keyed by `f(x)` → a map `{key: count}`; a plain histogram is the identity key, `count_by($xs, \|$x\| $x)` |
 | `chunk(xs, n)` | split into `n`-sized pieces (`n < 1` is an error) |
 | `zip(a, b)` | pair two arrays element-wise, truncating to the shorter |
 | `group_by(xs, f)` | bucket elements by `f(x)` → `{key: [elems]}` |
@@ -1867,14 +1866,15 @@ qr/(?i)x/
 
 ### The matching builtins
 
-Every regex builtin takes the pattern as **either a string or a compiled `regex` value**. They are interchangeable. Using a `qr//` value (or one from `re()`) reuses the compiled object instead of recompiling.
+For `matches`/`match`/`find_all`, the pattern is **either a string or a compiled `regex` value** — interchangeable. (`replace_first`/`replace_all` are the exception: a plain-string needle there is a LITERAL; see below.) Using a `qr//` value (or one from `re()`) reuses the compiled object instead of recompiling.
 
 | Builtin | Returns |
 |---|---|
 | `matches(s, p)` | bool: does `p` match anywhere in `s` |
 | `match(s, p)` | `[full, group1, group2, ...]`, or `nil` if no match |
 | `find_all(s, p)` | array of every (full) match, in order |
-| `gsub(s, p, repl)` | `s` with every match replaced by `repl` |
+| `replace_first(s, needle, repl)` | `s` with the first match replaced by `repl` |
+| `replace_all(s, needle, repl)` | `s` with every match replaced by `repl` |
 
 ```drang
 say(matches("Hello World", qr/world/i))
@@ -1890,7 +1890,7 @@ nil
 [1, 22, 333]
 ```
 
-String and `qr//` pattern arguments are equivalent, but note the string form needs the backslash that the literal form does not:
+For `matches`/`match`/`find_all`, string and `qr//` pattern arguments are equivalent (a string is compiled as a pattern), but note the string form needs the backslash that the literal form does not:
 
 ```drang
 say(find_all("a1b2", "\d"))
@@ -1902,22 +1902,27 @@ say(find_all("a1b2", qr/\d/))
 [1, 2]
 ```
 
-### `gsub` and backreferences in the replacement
+**`replace_first`/`replace_all` are the one exception:** there a plain-string needle is a
+LITERAL (so `replace_all("a.b", ".", "-")` replaces dots, not every character), and only a
+`qr//` value (or `re(...)`) matches as a pattern. This is the Ruby `gsub` convention — the
+needle's type says what you mean.
 
-In `gsub`, the **replacement** string uses Go's `$1` / `${name}` substitution (this is replacement-side substitution, not a pattern backreference, RE2 has none of those):
+### `replace_first` / `replace_all` and backreferences in the replacement
+
+With a regex needle, the **replacement** string uses Go's `$1` / `${name}` substitution (this is replacement-side substitution, not a pattern backreference, RE2 has none of those):
 
 ```drang
-say(gsub("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))
+say(replace_all("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1"))
 ```
 
 ```
 26/06/2026
 ```
 
-For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. A plain `"..."` (or `q{...}`) replacement is non-interpolating, so its `${...}` reaches `gsub` intact. Beware only the opt-in interpolating forms: a `$"..."` or `$qq{...}` replacement is interpolated by drang first and would consume the `${...}` before `gsub` sees it. Use a non-interpolating literal here:
+For `${name}` references, name the groups with RE2's `(?P<name>...)` syntax. A plain `"..."` (or `q{...}`) replacement is non-interpolating, so its `${...}` reaches `replace_all` intact. Beware only the opt-in interpolating forms: a `$"..."` or `$qq{...}` replacement is interpolated by drang first and would consume the `${...}` before `replace_all` sees it. Use a non-interpolating literal here:
 
 ```drang
-say(gsub("john smith", qr/(?P<first>\w+) (?P<last>\w+)/, q{${last}, ${first}}))
+say(replace_all("john smith", qr/(?P<first>\w+) (?P<last>\w+)/, q{${last}, ${first}}))
 ```
 
 ```
@@ -2029,7 +2034,7 @@ yourself as a single stage.)
 
 ### Options: `{cwd, env_exact, env_add, stdin, stdin_file, merge_stderr, timeout, max_memory, max_cpu, …}`
 
-A trailing map sets per-command options on `run`, `capture`, `pipe`, `each_line`,
+A trailing map sets per-command options on `run`, `capture`, `pipe`, `stream_lines`,
 and `start`. `env_exact` sets the child's **exact** environment: nothing is inherited
 unless you put it in the map (even `SystemRoot` and `PATH` are dropped unless you add
 them, so most callers want `env_add` instead). `env_add` is the overlay form: it starts
@@ -2066,7 +2071,7 @@ stdin -> world
 **Die-with-parent.** A running child is tied to drang's lifetime by a Windows Job Object: if
 drang exits or dies for *any* reason — a clean finish, a crash, or an outright kill — the child
 and its whole process tree are terminated too, **kernel-enforced** (`KILL_ON_JOB_CLOSE`), not
-best-effort. For the synchronous forms (`run`, `capture`, `each_line`, `pipe`) this is always on:
+best-effort. For the synchronous forms (`run`, `capture`, `stream_lines`, `pipe`) this is always on:
 while drang is waiting on a child, it never leaves an orphan behind.
 
 **`{supervise: true}`** applies that same tie to a *detached* `start`, which otherwise outlives
@@ -2159,16 +2164,16 @@ code: 137
 `pipe` follows bash's pipeline semantics: `127` if a stage can't start, `124` on
 timeout, otherwise the **last** stage's exit code.
 
-### `each_line`: stream output line by line
+### `stream_lines`: stream output line by line
 
-`each_line(cmd, args..., {opts}?, |$line| { ... })` invokes the callback for each
+`stream_lines(cmd, args..., {opts}?, |$line| { ... })` invokes the callback for each
 line of stdout **as it arrives** (not buffered), ideal for build logs or tails.
 It returns `true` on success or an `Err` (exit code / `124` timeout) once the
 command finishes.
 
 ```drang
 $n := 0
-each_line("cmd", "/c", "echo one& echo two& echo three", |$line| {
+stream_lines("cmd", "/c", "echo one& echo two& echo three", |$line| {
   $n = $n + 1
   say($"[$n] $line")
 })
@@ -2398,7 +2403,7 @@ drang treats paths as plain strings and leans on Go's `os`/`filepath` underneath
 The builtins fall into four groups: **file I/O** (`read_file`, `write_file`,
 `lines`), **filesystem ops** (`exists`, `is_dir`, `mkdir`, `glob`, `rename`, `rm`,
 `copy`, `size`), **pure path transforms** (`dirname`, `basename`, `ext`, `stem`,
-`abs`, `slash`), and **freshness gates** for build scripts (`mtime`, `newer`,
+`abs_path`, `to_slash`), and **freshness gates** for build scripts (`mtime`, `newer`,
 `stale`).
 
 A guided tour: everything below was run end to end. It builds a scratch
@@ -2525,7 +2530,7 @@ is never yielded):
 
 ```drang
 $all := glob(join($dir, "**", "*.go"))
-for $m in $all { say(slash($m)) }
+for $m in $all { say(to_slash($m)) }
 ```
 
 ```
@@ -2545,8 +2550,8 @@ is still a hard abort). On Windows they use the native separator unless noted.
 | `basename(p)` | `.../notes.txt` | `notes.txt` |
 | `ext(p)` | `.../notes.txt` | `.txt` (leading dot) |
 | `stem(p)` | `.../notes.txt` | `notes` (basename minus ext) |
-| `abspath(p)` | `foo/bar.txt` | absolute path against the CWD (numeric absolute value is `abs`) |
-| `slash(p)` | `C:\a\b` | `C:/a/b` (forward slashes) |
+| `abs_path(p)` | `foo/bar.txt` | absolute path against the CWD (numeric absolute value is `abs`) |
+| `to_slash(p)` | `C:\a\b` | `C:/a/b` (forward slashes) |
 
 ```drang
 $f := "C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt"
@@ -2554,10 +2559,10 @@ say(dirname($f))   # C:\Users\anafa\AppData\Local\Temp\drang_fs_demo
 say(basename($f))  # notes.txt
 say(ext($f))       # .txt
 say(stem($f))      # notes
-say(slash($f))     # C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt
+say(to_slash($f))     # C:/Users/anafa/AppData/Local/Temp/drang_fs_demo/notes.txt
 ```
 
-Note `dirname` returns the path with the platform separator; reach for `slash`
+Note `dirname` returns the path with the platform separator; reach for `to_slash`
 when you want stable forward-slash output (e.g. for logging or comparison).
 
 ### Freshness helpers for build scripts
@@ -2718,21 +2723,21 @@ operators: `$t + 3600` is an hour later, `$a < $b` is "before".
 
 - `now()`: the current time, as epoch seconds (a float).
 - `sleep($secs)`: pause for `$secs` seconds (a float; fractional is fine).
-- `strftime($epoch, $fmt, {utc: true}?)`: format an epoch as a string, using `%`-codes; local time by default, or UTC with `{utc: true}`.
+- `format_time($epoch, $fmt, {utc: true}?)`: format an epoch as a string, using `%`-codes; local time by default, or UTC with `{utc: true}`.
 - `parse_time($str, $fmt, {utc: true}?)`: parse a string (same `%`-codes) back to an epoch, or an `Err`; interprets the string as local time, or UTC with `{utc: true}`.
 - `date_parts($epoch, {utc: true}?)`: a map of components: `year month day hour minute second weekday yearday` (`weekday` is 0–6, Sunday = 0); local or, with `{utc: true}`, UTC.
 
 ```drang
 $t := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S")
-say(strftime($t, "%A, %b %e %Y at %H:%M"))   # Saturday, Jun 27 2026 at 13:45
-say(strftime($t + 86400, "%Y-%m-%d"))         # 2026-06-28  (one day later)
+say(format_time($t, "%A, %b %e %Y at %H:%M"))   # Saturday, Jun 27 2026 at 13:45
+say(format_time($t + 86400, "%Y-%m-%d"))         # 2026-06-28  (one day later)
 say(date_parts($t).weekday)                   # 6
 ```
 
 The `%`-codes are the usual strftime set: `%Y %y %m %d %e %H %I %M %S %p %A %a %B %b
-%j %w %z %Z %%` (plus `%n` / `%t`). An unknown code is left literal by `strftime`;
+%j %w %z %Z %%` (plus `%n` / `%t`). An unknown code is left literal by `format_time`;
 `parse_time` rejects a code it can't parse. Times are **local** by default; pass
-`{utc: true}` to `strftime`/`parse_time`/`date_parts` to work in UTC (important for
+`{utc: true}` to `format_time`/`parse_time`/`date_parts` to work in UTC (important for
 cross-machine logs and timestamps).
 
 ---
@@ -2748,13 +2753,13 @@ say(sha256("abc"))   # ba7816bf...f20015ad
 say(md5("abc"))      # 900150983cd24fb0d6963f7d28e17f72
 ```
 
-**Encoding**: `to_base64`/`from_base64`, `to_hex`/`from_hex`, and `url_encode`/`url_decode` convert to and from a string; the `from_*` / `*_decode` side returns a catchable `Err` on malformed input:
+**Encoding**: `to_base64`/`from_base64`, `to_hex`/`from_hex`, and `to_url`/`from_url` convert to and from a string; the `from_*` side returns a catchable `Err` on malformed input:
 
 ```drang
 say(to_base64("hi"))                    # aGk=
 say(from_base64("aGk="))                # hi
 say(to_hex("AB"))                       # 4142
-say(url_encode("a b&c=d"))              # a+b%26c%3Dd
+say(to_url("a b&c=d"))              # a+b%26c%3Dd
 say(from_base64("!!!") // "bad input")  # bad input
 ```
 
@@ -3119,7 +3124,7 @@ can recover with `//` or propagate with `?`. "→ Err" below means the failure m
 is a catchable Err value.
 
 The list is derived from the `builtins` map in `internal/eval/eval.go` and the
-higher-order forms in `internal/eval/hof.go`. (`spawn`, `each_line`, and `dispatch`
+higher-order forms in `internal/eval/hof.go`. (`spawn`, `stream_lines`, and `dispatch`
 are evaluator special forms, not map builtins, and are documented elsewhere; `pmap`,
 `sort`, and the `*_by` forms are higher-order and appear under Collections.)
 
@@ -3152,7 +3157,7 @@ Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bign
 
 | Builtin | Signature | Description |
 |---|---|---|
-| `abs` | `abs(n)` | Numeric absolute value (the path builtin is `abspath`). |
+| `abs` | `abs(n)` | Numeric absolute value (the path builtin is `abs_path`). |
 | `sum` | `sum(arr)` / `sum(a, ...)` | Add numbers (array or variadic); empty → 0; overflow → Err. |
 | `min` | `min(arr)` / `min(a, ...)` | Smallest value; empty → Err. |
 | `max` | `max(arr)` / `max(a, ...)` | Largest value; empty → Err. |
@@ -3188,7 +3193,8 @@ say(is_err(asin(2)))        # true  (outside [-1, 1])
 | Builtin | Signature | Description |
 |---|---|---|
 | `split` | `split(s, sep?)` | Split `s`; no `sep` splits on whitespace runs, `""` splits into runes. |
-| `replace` | `replace(s, old, new)` | Replace every literal `old` with `new`. |
+| `replace_first` | `replace_first(s, needle, repl)` | Replace the first `needle` (a string is literal; a `qr//` regex matches as a pattern, `$1`/`${name}` backrefs). |
+| `replace_all` | `replace_all(s, needle, repl)` | Replace every `needle` — same needle dispatch as `replace_first`. |
 | `trim` | `trim(s, cutset?)` | Trim whitespace, or the given `cutset` characters, from both ends. |
 | `upper` | `upper(s)` | Uppercase. |
 | `lower` | `lower(s)` | Lowercase. |
@@ -3198,7 +3204,7 @@ say(is_err(asin(2)))        # true  (outside [-1, 1])
 | `lines` | `lines(s)` | Split into lines (CRLF-normalized), dropping one trailing newline; `""` → `[]`. |
 | `repeat` | `repeat(s, n)` | Concatenate `n` copies of `s`; negative or oversized `n` → Err. |
 | `chars` | `chars(s)` | Array of single-rune strings. |
-| `index_of` | `index_of(s, needle)` | Rune index of the first `needle` in `s`, or -1; empty needle → 0. |
+| `find_index` | `find_index(s, needle)` | Rune index of the first `needle` in `s`, or -1; empty needle → 0. |
 | `len` | `len(x)` | Rune count of a string (also entry count of an array/map/range). |
 | `contains` | `contains(s, needle)` | Substring test for a string (also membership for an array). |
 
@@ -3263,7 +3269,7 @@ cached) or a compiled regex value (a `qr/.../` literal or `re(...)`).
 | `matches` | `matches(s, pattern)` | True if `pattern` matches anywhere in `s`. |
 | `match` | `match(s, pattern)` | First match as `[full, group1, ...]`, or undef if no match. |
 | `find_all` | `find_all(s, pattern)` | Array of every (full) match, in order. |
-| `gsub` | `gsub(s, pattern, repl)` | Replace every match with `repl` (`$1`/`${name}` backrefs). |
+| `replace_first` / `replace_all` | `replace_all(s, needle, repl)` | Replace the first / every match with `repl` (`$1`/`${name}` backrefs). A plain-string needle is a LITERAL — write `qr//` or `re(...)` when a pattern is meant. |
 
 ### Filesystem & paths
 
@@ -3277,8 +3283,8 @@ a bool; the rest signal real I/O failures as Err.
 | `basename` | `basename(p)` | Final path element. |
 | `ext` | `ext(p)` | Extension including the dot (`.txt`), or `""`. |
 | `stem` | `stem(p)` | Basename without its extension. |
-| `abspath` | `abspath(p)` | Absolute path against the CWD; failure → Err. (Numeric absolute value is `abs`.) |
-| `slash` | `slash(p)` | Convert separators to forward slashes. |
+| `abs_path` | `abs_path(p)` | Absolute path against the CWD; failure → Err. (Numeric absolute value is `abs`.) |
+| `to_slash` | `to_slash(p)` | Convert separators to forward slashes. |
 | `is_abs` | `is_abs(p)` | True if `p` is an absolute path. |
 | `clean` | `clean(p)` | Lexically simplify a path (resolve `.`/`..`). |
 | `rel` | `rel(base, p)` | Relative path from `base` to `p`; uncomparable → Err. |
@@ -3312,7 +3318,7 @@ No shell is involved; args are passed verbatim. A few caveats, each a catchable 
 silent surprise: `arg0` is rejected for a `.bat`/`.cmd` target (it is launched via `cmd.exe`, which
 owns argv[0]); `start` rejects `{timeout}` (a started process is detached and runs unbounded — use
 `run`/`capture` for a bounded command); and `supervise` is only meaningful for `start` — the
-synchronous forms (`run`/`capture`/`capture_all`/`pipe`/`each_line`) always die with drang while it
+synchronous forms (`run`/`capture`/`capture_all`/`pipe`/`stream_lines`) always die with drang while it
 waits for them, so it is a no-op there. Channels and tasks are shared
 reference types; values are deep-copied on send and on `await`.
 
@@ -3347,7 +3353,7 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 
 | Builtin | Signature | Description |
 |---|---|---|
-| `sys_gc` | `sys_gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
+| `drang_gc` | `drang_gc(mode)` | Tune the GC (`off`/`lean`/`normal`/`relaxed`, or a GOGC int); returns the previous percent. |
 | `cwd` | `cwd()` | Current working directory as a native path. |
 | `env` | `env(name, default?)` | Process env var (case-insensitive); `default` or nil if unset. |
 | `os` | `os()` | Operating system name — always `windows` (drang is Windows-only). |
@@ -3359,13 +3365,13 @@ Transport failure → catchable Err (a `timeout` carries `err_code` 124); an HTT
 
 ### Date & time
 
-A point in time is epoch seconds (a float); see the Date-and-time chapter. `strftime`/`parse_time`/`date_parts` take an optional trailing `{utc: true}` map (local time otherwise).
+A point in time is epoch seconds (a float); see the Date-and-time chapter. `format_time`/`parse_time`/`date_parts` take an optional trailing `{utc: true}` map (local time otherwise).
 
 | Builtin | Signature | Description |
 |---|---|---|
 | `now` | `now()` | Current time as epoch seconds (float). |
 | `sleep` | `sleep(secs)` | Pause for `secs` seconds (fractional ok). |
-| `strftime` | `strftime(epoch, fmt, {utc}?)` | Format an epoch via `%`-codes (local, or UTC). |
+| `format_time` | `format_time(epoch, fmt, {utc}?)` | Format an epoch via `%`-codes (local, or UTC). |
 | `parse_time` | `parse_time(str, fmt, {utc}?)` | Parse a string back to an epoch, or Err. |
 | `date_parts` | `date_parts(epoch, {utc}?)` | Map of `year month day hour minute second weekday yearday`. |
 
@@ -3376,7 +3382,7 @@ A point in time is epoch seconds (a float); see the Date-and-time chapter. `strf
 | `sha256` / `sha1` / `md5` | `sha256(s)` | Hex digest of a string. |
 | `to_base64` / `from_base64` | `to_base64(s)` | Standard base64 encode / decode (decode → Err on bad input). |
 | `to_hex` / `from_hex` | `to_hex(s)` | Hex encode / decode (decode → Err on bad input). |
-| `url_encode` / `url_decode` | `url_encode(s)` | Percent-encode / decode (decode → Err on bad input). |
+| `to_url` / `from_url` | `to_url(s)` | Percent-encode / decode (decode → Err on bad input). |
 
 ### Randomness
 
@@ -3463,7 +3469,7 @@ Several features are specified in DESIGN.md but do not work in the binary yet. D
   say(err_msg(.f(0)))             # call depth exceeded 4000 (infinite recursion?)
   ```
 
-- **Running a `.bat` / `.cmd` is safe from argument injection.** `run`/`capture`/`pipe`/`each_line`/`start` launch batch files through `cmd.exe` with defensive quoting, so an argument containing `"`, `&`, `|`, `<`, `>`, or `%VAR%` is passed as inert data, never interpreted as a command (the "BatBadBut" / CVE-2024-24576 class of hole). A batch argument may not contain a NUL or a raw newline; those are rejected with a catchable Err.
+- **Running a `.bat` / `.cmd` is safe from argument injection.** `run`/`capture`/`pipe`/`stream_lines`/`start` launch batch files through `cmd.exe` with defensive quoting, so an argument containing `"`, `&`, `|`, `<`, `>`, or `%VAR%` is passed as inert data, never interpreted as a command (the "BatBadBut" / CVE-2024-24576 class of hole). A batch argument may not contain a NUL or a raw newline; those are rejected with a catchable Err.
 
 ### Also absent (from DESIGN.md, not yet built)
 

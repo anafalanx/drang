@@ -82,22 +82,24 @@ func builtinFromHex(args []value.Value) (value.Value, error) {
 	return value.MakeStr(string(b)), nil
 }
 
-func builtinURLEncode(args []value.Value) (value.Value, error) {
-	s, err := oneString("url_encode", args)
+// to_url / from_url are the URL percent-encoding codec, named by direction like
+// to_hex/from_hex and to_base64/from_base64 (the from_ side errs on bad input).
+func builtinToURL(args []value.Value) (value.Value, error) {
+	s, err := oneString("to_url", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	return value.MakeStr(url.QueryEscape(s)), nil
 }
 
-func builtinURLDecode(args []value.Value) (value.Value, error) {
-	s, err := oneString("url_decode", args)
+func builtinFromURL(args []value.Value) (value.Value, error) {
+	s, err := oneString("from_url", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	d, derr := url.QueryUnescape(s)
 	if derr != nil {
-		return value.MakeErr("url_decode: "+derr.Error(), 1), nil
+		return value.MakeErr("from_url: "+derr.Error(), 1), nil
 	}
 	return value.MakeStr(d), nil
 }

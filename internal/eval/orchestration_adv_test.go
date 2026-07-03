@@ -7,7 +7,7 @@ import (
 
 // These exercise the advanced orchestration surface end-to-end (real child
 // processes); run under -race to cover the Proc reaper, pipe waits, and the
-// each_line callback. Windows commands, matching the target platform.
+// stream_lines callback. Windows commands, matching the target platform.
 
 func TestPipeline(t *testing.T) {
 	out := runWithEnv(t, NewEnv(), `say(pipe(["cmd", "/c", "echo hi there"], ["findstr", "there"]))`)
@@ -26,10 +26,10 @@ say(is_err($r), err_code($r))`)
 
 func TestEachLineStreaming(t *testing.T) {
 	out := runWithEnv(t, NewEnv(), `$lines := []
-$ok := each_line("cmd", "/c", "echo a& echo b& echo c", |$l| push($lines, trim($l)))
+$ok := stream_lines("cmd", "/c", "echo a& echo b& echo c", |$l| push($lines, trim($l)))
 say($ok, len($lines))`)
 	if !strings.Contains(out, "true 3") {
-		t.Errorf("each_line should stream 3 lines and succeed: %q", out)
+		t.Errorf("stream_lines should stream 3 lines and succeed: %q", out)
 	}
 }
 
@@ -44,10 +44,10 @@ say(is_err($r), err_code($r))`)
 func TestEachLineLongLine(t *testing.T) {
 	// A stdout line beyond the 4MB scanner cap must yield a catchable Err (not hang,
 	// not silently succeed). The test completing at all proves the no-hang fix.
-	out := runWithEnv(t, NewEnv(), `$r := each_line("powershell", "-NoProfile", "-Command", "[Console]::Out.Write('x' * 5000000)", |$l| 0)
+	out := runWithEnv(t, NewEnv(), `$r := stream_lines("powershell", "-NoProfile", "-Command", "[Console]::Out.Write('x' * 5000000)", |$l| 0)
 say(is_err($r))`)
 	if !strings.Contains(out, "true") {
-		t.Errorf("each_line on a >4MB line should return an Err, got %q", out)
+		t.Errorf("stream_lines on a >4MB line should return an Err, got %q", out)
 	}
 }
 

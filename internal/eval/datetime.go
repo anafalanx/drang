@@ -12,8 +12,8 @@ import (
 // Date/time builtins. drang represents an instant as a float: seconds since the
 // Unix epoch, with sub-second precision — so ordinary number operators handle
 // arithmetic ($t + 3600) and comparison ($a < $b) with no new value type. now()
-// reads the clock; sleep() pauses; strftime / parse_time / date_parts convert to and
-// from human strings and components, using strftime %-codes in LOCAL time.
+// reads the clock; sleep() pauses; format_time / parse_time / date_parts convert to and
+// from human strings and components, using strftime-style %-codes in LOCAL time.
 
 func builtinNow(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {
@@ -71,17 +71,19 @@ func utcOpt(name string, args []value.Value, idx int) (bool, error) {
 	return ok && v.Truthy(), nil
 }
 
-func builtinStrftime(args []value.Value) (value.Value, error) {
+// builtinFormatTime formats an epoch with %-codes — the spelled-out inverse of
+// parse_time (the pair rhymes; the C name strftime did not).
+func builtinFormatTime(args []value.Value) (value.Value, error) {
 	if len(args) < 2 || len(args) > 3 {
-		return value.MakeNil(), fmt.Errorf("strftime expects 2 or 3 arguments (epoch, format, opts?), got %d", len(args))
+		return value.MakeNil(), fmt.Errorf("format_time expects 2 or 3 arguments (epoch, format, opts?), got %d", len(args))
 	}
 	if !args[0].IsNumber() {
-		return value.MakeErr(fmt.Sprintf("strftime expects a number epoch, got %s", args[0].TypeName()), 1), nil
+		return value.MakeErr(fmt.Sprintf("format_time expects a number epoch, got %s", args[0].TypeName()), 1), nil
 	}
 	if args[1].Tag() != value.Str {
-		return value.MakeErr(fmt.Sprintf("strftime expects a format string, got %s", args[1].TypeName()), 1), nil
+		return value.MakeErr(fmt.Sprintf("format_time expects a format string, got %s", args[1].TypeName()), 1), nil
 	}
-	utc, err := utcOpt("strftime", args, 2)
+	utc, err := utcOpt("format_time", args, 2)
 	if err != nil {
 		return value.MakeErr(err.Error(), 1), nil
 	}

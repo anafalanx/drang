@@ -80,7 +80,7 @@ say($f())`, "got 42\n"},
 }
 
 // TestStdlibWalls covers the first stdlib batch: the conversion family (str/float/bool/
-// type), the math additions (sqrt/pow/log/div), and index_of — values and catchable
+// type), the math additions (sqrt/pow/log/div), and find_index — values and catchable
 // error cases.
 func TestStdlibWalls(t *testing.T) {
 	cases := []struct{ name, src, want string }{
@@ -105,9 +105,9 @@ func TestStdlibWalls(t *testing.T) {
 		{"log", `say(round(log(8, 2)), round(log(1000, 10)))`, "3 3\n"},
 		{"div", `say(div(17, 5), div(-17, 5), div(17, -5), div(-17, -5))`, "3 -3 -3 3\n"},
 		{"div-zero", `say(div(1, 0) // "dz")`, "dz\n"},
-		// index_of (rune-indexed)
-		{"index-of", `say(index_of("hello", "ll"), index_of("hello", "z"))`, "2 -1\n"},
-		{"index-of-rune", `say(index_of("héllo", "llo"))`, "2\n"},
+		// find_index (rune-indexed)
+		{"find-index", `say(find_index("hello", "ll"), find_index("hello", "z"))`, "2 -1\n"},
+		{"find-index-rune", `say(find_index("héllo", "llo"))`, "2\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,16 +122,16 @@ func TestStdlibWalls(t *testing.T) {
 // and tempfile/tempdir + write_file append.
 func TestStdlibWalls2(t *testing.T) {
 	// epoch 0 is 1970-01-01 00:00:00 UTC regardless of the machine's local zone
-	if got := run(t, `say(strftime(0, "%Y-%m-%d %H:%M:%S", {utc: true}))`); got != "1970-01-01 00:00:00\n" {
-		t.Errorf("strftime utc = %q", got)
+	if got := run(t, `say(format_time(0, "%Y-%m-%d %H:%M:%S", {utc: true}))`); got != "1970-01-01 00:00:00\n" {
+		t.Errorf("format_time utc = %q", got)
 	}
 	if got := run(t, "$p := date_parts(0, {utc: true})\nsay($p.year, $p.month, $p.day, $p.hour)"); got != "1970 1 1 0\n" {
 		t.Errorf("date_parts utc = %q", got)
 	}
-	// parse_time + strftime round-trip in UTC (zone-independent)
-	rt := "$e := parse_time(\"2021-07-04 12:30:00\", \"%Y-%m-%d %H:%M:%S\", {utc: true})\nsay(strftime($e, \"%Y-%m-%d %H:%M:%S\", {utc: true}))"
+	// parse_time + format_time round-trip in UTC (zone-independent)
+	rt := "$e := parse_time(\"2021-07-04 12:30:00\", \"%Y-%m-%d %H:%M:%S\", {utc: true})\nsay(format_time($e, \"%Y-%m-%d %H:%M:%S\", {utc: true}))"
 	if got := run(t, rt); got != "2021-07-04 12:30:00\n" {
-		t.Errorf("parse_time/strftime utc round-trip = %q", got)
+		t.Errorf("parse_time/format_time utc round-trip = %q", got)
 	}
 	// os/arch/home are non-empty
 	if got := run(t, `say(len(os()) > 0, len(arch()) > 0, len(home()) > 0)`); got != "true true true\n" {
@@ -274,7 +274,13 @@ func TestOutput(t *testing.T) {
 		{"split-sep", `say(split("a,b,c", ","))`, "[a, b, c]\n"},
 		{"split-ws", `say(split("a  b   c"))`, "[a, b, c]\n"},
 		{"join-string", `say(join(["a", "b", "c"], "-"))`, "a-b-c\n"},
-		{"replace", `say(replace("o_o", "o", "0"))`, "0_0\n"},
+		{"replace-all", `say(replace_all("o_o", "o", "0"))`, "0_0\n"},
+		{"replace-first", `say(replace_first("o_o", "o", "0"))`, "0_o\n"},
+		{"replace-all-regex", `say(replace_all("a1b2", qr/\d/, "#"))`, "a#b#\n"},
+		{"replace-first-regex", `say(replace_first("a1b2", qr/\d/, "#"))`, "a#b2\n"},
+		{"replace-first-regex-backref", `say(replace_first("John Smith", qr/(\w+) (\w+)/, "$2 $1"))`, "Smith John\n"},
+		{"replace-first-no-match", `say(replace_first("abc", qr/\d/, "#"))`, "abc\n"},
+		{"replace-literal-needle-is-literal", `say(replace_all("a.b.c", ".", "-"))`, "a-b-c\n"},
 		{"trim", `say(trim("  hi  "))`, "hi\n"},
 		{"upper-lower", `say(upper("aB"), lower("aB"))`, "AB ab\n"},
 		{"starts-ends", `say(starts_with("hello", "he"), ends_with("hello", "lo"))`, "true true\n"},
@@ -297,9 +303,9 @@ func TestOutput(t *testing.T) {
 		{"fmt-hex-zero-alt", `say(format("{:#06x}", 255))`, "0x00ff\n"},
 		{"fmt-octal-alt", `say(format("{:#o}", 8))`, "0o10\n"},
 		{"fmt-zero-under-align", `say(format("{:>05}", 7))`, "00007\n"},
-		{"dt-roundtrip", `$e := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S"); say(strftime($e, "%Y-%m-%d %H:%M:%S"))`, "2026-06-27 13:45:09\n"},
+		{"dt-roundtrip", `$e := parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S"); say(format_time($e, "%Y-%m-%d %H:%M:%S"))`, "2026-06-27 13:45:09\n"},
 		{"dt-parts", `$p := date_parts(parse_time("2026-06-27 13:45:09", "%Y-%m-%d %H:%M:%S")); say(format("{}/{}/{} {}:{}:{}", $p.year, $p.month, $p.day, $p.hour, $p.minute, $p.second))`, "2026/6/27 13:45:9\n"},
-		{"dt-arith", `$e := parse_time("2026-06-27 00:00:00", "%Y-%m-%d %H:%M:%S"); say(strftime($e + 3600, "%H:%M"))`, "01:00\n"},
+		{"dt-arith", `$e := parse_time("2026-06-27 00:00:00", "%Y-%m-%d %H:%M:%S"); say(format_time($e + 3600, "%H:%M"))`, "01:00\n"},
 		{"dt-weekday", `say(date_parts(parse_time("2026-06-27", "%Y-%m-%d")).weekday)`, "6\n"},
 		{"dt-now-positive", `say(now() > 1700000000.0)`, "true\n"},
 		{"dt-sleep-zero", `sleep(0.0); say("ok")`, "ok\n"},
@@ -308,7 +314,7 @@ func TestOutput(t *testing.T) {
 		{"base64-roundtrip", `say(from_base64(to_base64("hello, world")))`, "hello, world\n"},
 		{"base64-encode", `say(to_base64("hi"))`, "aGk=\n"},
 		{"hex-roundtrip", `say(from_hex(to_hex("AB")))`, "AB\n"},
-		{"url-encode", `say(url_encode("a b&c=d"))`, "a+b%26c%3Dd\n"},
+		{"url-encode", `say(to_url("a b&c=d"))`, "a+b%26c%3Dd\n"},
 		{"rand-range", `$r := rand(); say($r >= 0.0 and $r < 1.0)`, "true\n"},
 		{"rand-int-range", `$x := rand_int(5, 8); say($x >= 5 and $x < 8)`, "true\n"},
 		{"rand-int-wide", `$x := rand_int(-1, 9223372036854775807); say($x >= -1)`, "true\n"},
@@ -347,8 +353,8 @@ func TestOutput(t *testing.T) {
 		{"regex-match-caps", `say(match("a1-b2", "(\w+)-(\w+)"))`, "[a1-b2, a1, b2]\n"},
 		{"regex-match-nil", `say(match("xyz", "\d+"))`, "nil\n"},
 		{"regex-find-all", `say(find_all("a1b2c3", "\d"))`, "[1, 2, 3]\n"},
-		{"regex-gsub", `say(gsub("a1b2", "\d", "#"))`, "a#b#\n"},
-		{"regex-gsub-backref", `say(gsub("John Smith", "(\w+) (\w+)", "$2 $1"))`, "Smith John\n"},
+		{"regex-replace-all", `say(replace_all("a1b2", re("\d"), "#"))`, "a#b#\n"},
+		{"regex-replace-all-backref", `say(replace_all("John Smith", re("(\w+) (\w+)"), "$2 $1"))`, "Smith John\n"},
 		{"regex-bad-pattern-caught", `say(matches("x", "(") // "bad")`, "bad\n"},
 
 		// lambdas

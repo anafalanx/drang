@@ -35,15 +35,15 @@ var pureIdents = map[string]bool{
 	"any": true, "all": true, "count": true, "reduce": true, "flat_map": true,
 	"sort": true, "sort_by": true, "min_by": true, "max_by": true,
 	// strings
-	"split": true, "replace": true, "trim": true, "upper": true, "lower": true,
+	"split": true, "replace_first": true, "replace_all": true, "trim": true, "upper": true, "lower": true,
 	"starts_with": true, "ends_with": true, "format": true, "lines": true,
-	"repeat": true, "index_of": true,
+	"repeat": true, "find_index": true,
 	// path string manipulation (no disk access)
-	"dirname": true, "basename": true, "ext": true, "stem": true, "slash": true,
+	"dirname": true, "basename": true, "ext": true, "stem": true, "to_slash": true,
 	"is_abs": true, "clean": true, "rel": true, "within": true, "path_list_sep": true,
 	// encoding
 	"from_json": true, "to_json": true, "from_csv": true, "to_csv": true,
-	"to_hex": true, "from_hex": true, "url_encode": true, "url_decode": true,
+	"to_hex": true, "from_hex": true, "to_url": true, "from_url": true,
 	// math
 	"abs": true, "sum": true, "min": true, "max": true, "floor": true, "ceil": true,
 	"round": true, "sqrt": true, "pow": true, "log": true, "div": true,
@@ -51,7 +51,7 @@ var pureIdents = map[string]bool{
 	"atan2": true, "exp": true, "log2": true, "log10": true, "hypot": true, "cbrt": true,
 	"pi": true, "e": true,
 	// regex — compiling and matching are pure
-	"re": true, "matches": true, "match": true, "find_all": true, "gsub": true,
+	"re": true, "matches": true, "match": true, "find_all": true,
 }
 
 // pureProgram reports whether prog uses only allowlisted operations, so both backends

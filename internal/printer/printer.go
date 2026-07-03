@@ -836,10 +836,12 @@ func orRaw(raw string, fallback func() string) string {
 	return fallback()
 }
 
-// interpFallback reconstructs an interpolating string from Parts, for the rare case of a
-// synthesized Interp with no Raw. Under v2, interpolation is opt-in, so the fallback MUST
-// emit a dollar form — $qq{...} when Form is FormDollarQQ, otherwise $"...". (A plain
-// "..." would print a non-interpolating string for an interpolating node.)
+// interpFallback reconstructs an interpolating string from Parts, for an Interp with no
+// Raw — synthesized nodes, and any interpolation whose ${...} parts a `fmt --fix`
+// migration rule rewrote (the rule clears Raw so the rewrite is not shadowed by the
+// verbatim source text). Under v2, interpolation is opt-in, so the fallback MUST emit a
+// dollar form — $qq{...} when Form is FormDollarQQ, otherwise $"...". (A plain "..."
+// would print a non-interpolating string for an interpolating node.)
 func interpFallback(n *ast.Interp) string {
 	var b strings.Builder
 	dollarQQ := n.Form == ast.FormDollarQQ
@@ -856,8 +858,12 @@ func interpFallback(n *ast.Interp) string {
 		case *ast.Var:
 			b.WriteString("${" + e.Name + "}")
 		default:
+			// Render through the real printer (one-line), NOT ast.String() debug
+			// notation — the output must re-parse as drang source.
+			sub := &printer{oneLine: true}
+			sub.expr(e)
 			b.WriteString("${")
-			b.WriteString(e.String())
+			b.WriteString(sub.b.String())
 			b.WriteString("}")
 		}
 	}

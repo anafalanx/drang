@@ -40,7 +40,7 @@ func TestPathHelpers(t *testing.T) {
 		{"basename", callBuiltin(t, "basename", str("a/b/c.txt")).AsStr(), "c.txt"},
 		{"ext", callBuiltin(t, "ext", str("a/b/c.txt")).AsStr(), ".txt"},
 		{"stem", callBuiltin(t, "stem", str("a/b/c.txt")).AsStr(), "c"},
-		{"slash", callBuiltin(t, "slash", str(filepath.Join("a", "b"))).AsStr(), "a/b"},
+		{"to_slash", callBuiltin(t, "to_slash", str(filepath.Join("a", "b"))).AsStr(), "a/b"},
 		{"join", callBuiltin(t, "join", str("a"), str("b"), str("c")).AsStr(), filepath.Join("a", "b", "c")},
 	}
 	for _, c := range cases {

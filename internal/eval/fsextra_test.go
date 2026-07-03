@@ -12,8 +12,8 @@ func TestPathAndEnvBuiltins(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"is_abs-rel", `say(is_abs("rel/path"))`, "false\n"},
 		{"is_abs-cwd", `say(is_abs(cwd()))`, "true\n"},
-		{"clean", `say(slash(clean("a/./b/../c")))`, "a/c\n"},
-		{"rel", `say(slash(rel("a/b", "a/b/c/d")))`, "c/d\n"},
+		{"clean", `say(to_slash(clean("a/./b/../c")))`, "a/c\n"},
+		{"rel", `say(to_slash(rel("a/b", "a/b/c/d")))`, "c/d\n"},
 		{"within-true", `say(within("a/b", "a/b/c"))`, "true\n"},
 		{"within-eq", `say(within("a/b", "a/b"))`, "true\n"},
 		{"within-false", `say(within("a/b", "a/x"))`, "false\n"},

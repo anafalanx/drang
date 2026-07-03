@@ -51,11 +51,11 @@ while $i < 3 {
 say($g)`,
 	`say(len("hello"))`,
 	`say(len("hi") + len("there"))`,
-	// stdlib batch: conversions, math, index_of (must run identically on both backends)
+	// stdlib batch: conversions, math, find_index (must run identically on both backends)
 	`say(str(42), type([1, 2]), float("1.5"))`,
 	`say(sqrt(16), pow(2, 8), div(17, 5))`,
-	`say(index_of("abcdef", "cd"))`,
-	`say(strftime(0, "%Y-%m-%d", {utc: true}))`, // deterministic on both backends
+	`say(find_index("abcdef", "cd"))`,
+	`say(format_time(0, "%Y-%m-%d", {utc: true}))`, // deterministic on both backends
 	// first-class builtins (resolved as values on both backends)
 	`say(["/a/b.txt", "/c/d"] |> map(basename))`,
 	"$f := len\nsay($f([1, 2, 3]))",
@@ -205,7 +205,7 @@ say("after")`,
 say(matches("a1b2", $d), matches("xyz", $d))
 say(find_all("a1 b2 c3", $d))
 say(match("k=9", qr{(\w+)=(\d+)})[2])
-say(gsub("a1b2", re(q(\d)), "#"))
+say(replace_all("a1b2", re(q(\d)), "#"))
 say(qr/x/i == qr/x/i, qr/x/ == qr/x/i)`,
 	// ? inside a function: a propagated error becomes the function's result, then
 	// // recovers it at the call site

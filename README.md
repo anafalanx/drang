@@ -20,7 +20,7 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
 - **Perl's soul, not its warts**: one `$` sigil on every variable, string interpolation and heredocs,
   `qr//` regex literals, `q//`/`qq//`/`qw//` quotes, and `|>` pipelines.
 - **Glue built in**: `run`/`capture`/`pipe`/`start` with `{cwd, env, env_add, stdin, timeout}` options and
-  process-tree kill on timeout, `each_line` streaming, plus channels and tasks.
+  process-tree kill on timeout, `stream_lines` streaming, plus channels and tasks.
 - **Batteries, curated**: modules (`use`) with frozen exports, a standard library of ~120 builtins
   plus a drang-written prelude, JSON & CSV, `qr//` regexes, date/time, hashing/encoding, and a minimal
   robust HTTP client (`http_get`/`http_post`). Broad, not a kitchen sink.

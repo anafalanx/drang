@@ -8,12 +8,13 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// builtinIndexOf returns the index of the first occurrence of needle, or -1 if absent.
-// For a string subject the index is in runes (to match chars()/slicing), not bytes, and an
-// empty needle matches at 0. For an array subject it returns the first element index whose
-// value structurally equals needle — the sibling of the polymorphic contains(). A subject
-// that is neither a string nor an array aborts (the string-builtin convention).
-func builtinIndexOf(args []value.Value) (value.Value, error) {
+// builtinFindIndex returns the index of the first occurrence of needle, or -1 if absent —
+// the "where" sibling of find/find_all. For a string subject the index is in runes (to
+// match chars()/slicing), not bytes, and an empty needle matches at 0. For an array subject
+// it returns the first element index whose value structurally equals needle — the sibling
+// of the polymorphic contains(). A subject that is neither a string nor an array aborts
+// (the string-builtin convention).
+func builtinFindIndex(args []value.Value) (value.Value, error) {
 	if len(args) == 2 && args[0].Tag() == value.Arr {
 		elems := args[0].Obj().(*value.Array).Elems
 		for i, el := range elems {
@@ -23,7 +24,7 @@ func builtinIndexOf(args []value.Value) (value.Value, error) {
 		}
 		return value.MakeInt(-1), nil
 	}
-	s, needle, err := twoStrings("index_of", args)
+	s, needle, err := twoStrings("find_index", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
@@ -66,18 +67,6 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		out[i] = value.MakeStr(p)
 	}
 	return value.MakeArray(out), nil
-}
-
-func builtinReplace(args []value.Value) (value.Value, error) {
-	if len(args) != 3 {
-		return value.MakeNil(), fmt.Errorf("replace expects 3 arguments (s, old, new), got %d", len(args))
-	}
-	for i, a := range args {
-		if a.Tag() != value.Str {
-			return value.MakeNil(), typeErrf("replace: argument %d must be a string, got %s", i+1, a.TypeName())
-		}
-	}
-	return value.MakeStr(strings.ReplaceAll(args[0].AsStr(), args[1].AsStr(), args[2].AsStr())), nil
 }
 
 // builtinTrim trims whitespace, or the given cutset of characters.

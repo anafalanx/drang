@@ -73,7 +73,7 @@ func TestStringFamilyTypeErrorsCatchable(t *testing.T) {
 		`say(is_err(upper(5)))`,
 		`say(is_err(trim(5)))`,
 		`say(is_err(split(5)))`,
-		`say(is_err(replace(5, "a", "b")))`,
+		`say(is_err(replace_all(5, "a", "b")))`,
 		`say(is_err(basename(5)))`,       // path helper (former carve-out) now catchable too
 		`say(is_err(join(5, "x")))`,      // path-join form
 		`say(is_err(read_file(5)))`,
@@ -157,9 +157,9 @@ func TestRepeatBadCountCatchable(t *testing.T) {
 // TestDatetimeOptValidation: a misspelled datetime option is rejected (catchable) rather than
 // silently falling back to local time; the correct key still works.
 func TestDatetimeOptValidation(t *testing.T) {
-	assertBoth(t, `say(is_err(strftime(0, "%Y", {UTC: true})))`, "true\n")
-	assertBoth(t, `say(is_err(strftime(0, "%Y", 5)))`, "true\n") // non-map opts rejected too
-	assertBoth(t, `say(strftime(0, "%Y", {utc: true}))`, "1970\n")
+	assertBoth(t, `say(is_err(format_time(0, "%Y", {UTC: true})))`, "true\n")
+	assertBoth(t, `say(is_err(format_time(0, "%Y", 5)))`, "true\n") // non-map opts rejected too
+	assertBoth(t, `say(format_time(0, "%Y", {utc: true}))`, "1970\n")
 	assertBoth(t, `say(is_err(date_parts(0, {bogus: 1})))`, "true\n")
 }
 
@@ -169,12 +169,12 @@ func TestWriteFileOptValidation(t *testing.T) {
 	assertBoth(t, `say(is_err(write_file("_never_created.txt", "hi", {apend: true})))`, "true\n")
 }
 
-// TestIndexOfArray: index_of is now polymorphic over arrays (first structurally-equal element
+// TestIndexOfArray: find_index is now polymorphic over arrays (first structurally-equal element
 // index, else -1), the sibling of the polymorphic contains(); the string form is unchanged.
 func TestIndexOfArray(t *testing.T) {
-	assertBoth(t, `say(index_of([10, 20, 30], 20))`, "1\n")
-	assertBoth(t, `say(index_of([10, 20], 99))`, "-1\n")
-	assertBoth(t, `say(index_of(["a", "b", "c"], "c"))`, "2\n")
-	assertBoth(t, `say(index_of([[1], [2]], [2]))`, "1\n") // structural equality, like contains
-	assertBoth(t, `say(index_of("hello", "ll"))`, "2\n")   // string form unchanged
+	assertBoth(t, `say(find_index([10, 20, 30], 20))`, "1\n")
+	assertBoth(t, `say(find_index([10, 20], 99))`, "-1\n")
+	assertBoth(t, `say(find_index(["a", "b", "c"], "c"))`, "2\n")
+	assertBoth(t, `say(find_index([[1], [2]], [2]))`, "1\n") // structural equality, like contains
+	assertBoth(t, `say(find_index("hello", "ll"))`, "2\n")   // string form unchanged
 }

@@ -35,7 +35,7 @@ func TestPrelude(t *testing.T) {
 		{"flatten", `say(to_json(flatten([[1,2],[3],[4,5]])))`, `[1,2,3,4,5]` + "\n"},
 		{"flatten-empty", `say(to_json(flatten([])))`, "[]\n"},
 		{"sum_by", `say(sum_by([{n: 3}, {n: 4}], |$x| $x.n))`, "7\n"},
-		{"tally", `say(to_json(tally(["a", "a", "b"])))`, `{"a":2,"b":1}` + "\n"},
+		{"count_by-identity", `say(to_json(count_by(["a", "a", "b"], |$x| $x)))`, `{"a":2,"b":1}` + "\n"},
 		{"count_by", `say(to_json(count_by(["aa", "bb", "c"], |$s| len($s))))`, `{"2":2,"1":1}` + "\n"},
 		{"chunk", `say(to_json(chunk([1,2,3,4,5], 2)))`, `[[1,2],[3,4],[5]]` + "\n"},
 		{"chunk-exact", `say(to_json(chunk([1,2,3,4], 2)))`, `[[1,2],[3,4]]` + "\n"},
@@ -98,7 +98,7 @@ func TestRunPreludeDefinesGlobals(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{
-		"flatten", "sum_by", "tally", "count_by", "chunk", "zip",
+		"flatten", "sum_by", "count_by", "chunk", "zip",
 		"group_by", "partition", "uniq_by", "enumerate", "mean", "median",
 		"intersect", "union", "difference", "pad", "capitalize", "reverse",
 		"dedent", "clamp", "sign", "get_in", "deep_merge", "retry",

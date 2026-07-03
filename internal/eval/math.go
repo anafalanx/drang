@@ -16,7 +16,7 @@ import (
 // log of a non-positive, divide-by-zero, out-of-range/overflow) is a catchable Err.
 
 // builtinAbs is the numeric absolute value (the path-absolutize builtin is now
-// abspath). Preserves int/float.
+// abs_path). Preserves int/float.
 func builtinAbs(args []value.Value) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("abs expects 1 argument, got %d", len(args))

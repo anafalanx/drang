@@ -9,7 +9,7 @@ The single-process-control release: kernel-enforced resource limits and the proc
 filled, plus a first math/ergonomics batch and two robustness fixes. Still Windows-only.
 
 ### Added — process control & resource limits
-- **Kernel-enforced resource caps** on every exec form (`run`/`capture`/`capture_all`/`each_line`/
+- **Kernel-enforced resource caps** on every exec form (`run`/`capture`/`capture_all`/`stream_lines`/
   `pipe`/`start`), via Windows Job Objects: `{max_memory}` / `{max_job_memory}` (per-process /
   whole-job commit, bytes), `{max_cpu}` / `{max_job_cpu}` (per-process / whole-job user CPU,
   milliseconds), and `{max_job_procs}` (active-process cap). A breach terminates the child with exit
@@ -40,6 +40,44 @@ filled, plus a first math/ergonomics batch and two robustness fixes. Still Windo
 - **Namespace:** the (brand-new, undocumented) `max_procs` exec option is renamed `max_job_procs` — it
   is job-scoped, and the bare `max_` prefix wrongly implied per-process. The builtin-naming rule is
   amended in DESIGN.md to "bare when unambiguous, `domain_` prefix only on collision."
+
+### Changed — pre-1.0 namespace coherence pass (breaking; `drang fmt --fix` migrates)
+A whole-namespace naming audit (six domain reviews + a law synthesis, recorded in DESIGN.md)
+pulled the last inconsistent names into line before 1.0 freezes them. Every rename ships with a
+`drang fmt --fix` rewrite rule — the first real rules in the edition mechanism — so migration is
+one mechanical command:
+- **`gsub` → `replace_all`, `replace` → `replace_all`, new `replace_first`.** One discoverable
+  pair replaces the literal/regex verb fork: the needle's TYPE picks the mode (a plain string is
+  a **literal**; a `qr//` / `re(...)` regex matches as a pattern, with `$1`/`${name}` backrefs) —
+  the Ruby `gsub` convention. The bare-form polarity now matches `find`/`find_all` (bare = first,
+  `_all` = every); old `gsub` string patterns are auto-wrapped in `re(...)` by `--fix` to keep
+  their regex semantics.
+- **`each_line` → `stream_lines`** — the lone verb_noun compound in the bare process block, and
+  its `each` head falsely rhymed with the `each` collection HOF. Reads as the "stream vs buffer"
+  counterpart of `capture`.
+- **`strftime` → `format_time`** — the spelled-out inverse of `parse_time` (the `%`-codes are
+  unchanged).
+- **`url_encode`/`url_decode` → `to_url`/`from_url`** — joins the `to_hex`/`from_hex`,
+  `to_base64`/`from_base64` codec family (LOCKED `from_X`/`to_X` law).
+- **`slash` → `to_slash`** — names the conversion, not the character; same codec family.
+- **`index_of` → `find_index`** — "first occurrence" joins the `find`/`find_all` stem; drops the
+  lone `of`-connector.
+- **`abspath` → `abs_path`** — composed underscore form, matching its sibling `is_abs` and Perl's
+  `Cwd::abs_path` (Python's glued spelling was never on the blessed-abbreviation list).
+- **`sys_gc` → `drang_gc`** — `sys_` misread as the operating system; `drang_` marks knobs and
+  introspection on the drang interpreter itself (reserved siblings: `drang_version`, `drang_mem`),
+  unambiguous in orchestration scripts that steer OTHER runtimes.
+- **`tally` removed** — it was exactly `count_by` with the identity key; `--fix` rewrites
+  `tally($xs)` → `count_by($xs, |$e| $e)`.
+- Deliberately **kept** (documented exceptions): `uniq`/`uniq_by`, `rm`/`mkdir`/`cwd` (blessed
+  Unix muscle memory), `dirname`/`basename` (entrenched single words), `start` vs `spawn` (a real
+  Proc-vs-Task distinction), and polymorphic `await`.
+- **Not auto-migrated** (`--fix` leaves these to fail loudly rather than silently change
+  behavior): a FIRST-CLASS `gsub` reference (`$f := gsub`, `map($fs, gsub)`) — rewrite by hand to
+  `|$s, $p, $r| replace_all($s, re($p), $r)`; a FIRST-CLASS `tally` reference — rewrite to
+  `|$xs| count_by($xs, |$e| $e)`; and any gsub/tally call whose arity was already an error in 0.7.
+  Rewrites inside interpolating strings (`$"...${...}"`, `$qq{...}`) ARE migrated (the
+  interpolation is re-rendered canonically when its parts change).
 
 ### Testing & tooling
 - **Local preflight** ([tools/verify.dr](tools/verify.dr), `z verify`): one on-demand command —

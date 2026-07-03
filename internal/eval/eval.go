@@ -1489,7 +1489,7 @@ func resolveAndCall(name string, args []value.Value, env *Env, depth int) (value
 // builtins — skipping the env lookup. The VM emits a direct call to this (via
 // OpCallBuiltin) only when whole-program analysis proves the name is never bound by
 // the user, so env.get would always miss anyway. depth is the caller's user-call
-// depth, forwarded so a callback (HOF/each_line) is bounded by the recursion guard.
+// depth, forwarded so a callback (HOF/stream_lines) is bounded by the recursion guard.
 func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (value.Value, error) {
 	if name == "dispatch" {
 		return evalDispatch(args, env)
@@ -1497,8 +1497,8 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 	if name == "spawn" {
 		return evalSpawn(args)
 	}
-	if name == "each_line" {
-		return evalEachLine(args, depth)
+	if name == "stream_lines" {
+		return evalStreamLines(args, depth)
 	}
 	if name == "use" {
 		return evalUse(args, env)
@@ -1515,7 +1515,7 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 // isNonUserName reports whether name is a builtin, HOF, or special form (i.e. not
 // a user-defined function) — a candidate for direct dispatch when unshadowed.
 func isNonUserName(name string) bool {
-	if name == "dispatch" || name == "spawn" || name == "each_line" || name == "use" || hofNames[name] {
+	if name == "dispatch" || name == "spawn" || name == "stream_lines" || name == "use" || hofNames[name] {
 		return true
 	}
 	_, ok := builtins[name]
@@ -1725,8 +1725,8 @@ var builtins = map[string]builtin{
 	"basename":      builtinBasename,
 	"ext":           builtinExt,
 	"stem":          builtinStem,
-	"abspath":       builtinAbspath,
-	"slash":         builtinSlash,
+	"abs_path":      builtinAbsPath,
+	"to_slash":      builtinToSlash,
 	"is_abs":        builtinIsAbs,
 	"clean":         builtinClean,
 	"rel":           builtinRel,
@@ -1742,7 +1742,7 @@ var builtins = map[string]builtin{
 	"mtime":    builtinMtime,
 	"newer":    builtinNewer,
 	"stale":    builtinStale,
-	// filesystem: file IO + atomic-swap family
+	// filesystem: file IO + file operations (only rename is atomic)
 	"read_file":  builtinReadFile,
 	"write_file": builtinWriteFile,
 	"tempfile":   builtinTempFile,
@@ -1752,18 +1752,20 @@ var builtins = map[string]builtin{
 	"copy":       builtinCopy,
 	"size":       builtinSize,
 
-	// text / strings
-	"split":       builtinSplit,
-	"replace":     builtinReplace,
-	"trim":        builtinTrim,
-	"upper":       builtinUpper,
-	"lower":       builtinLower,
-	"starts_with": builtinStartsWith,
-	"ends_with":   builtinEndsWith,
-	"format":      builtinFormat,
-	"lines":       builtinLines,
-	"repeat":      builtinRepeat,
-	"index_of":    builtinIndexOf,
+	// text / strings (replace_first/replace_all take a literal string OR a qr// regex
+	// needle — the bare form is the first/single one, _all is exhaustive, like find/find_all)
+	"split":         builtinSplit,
+	"replace_first": builtinReplaceFirst,
+	"replace_all":   builtinReplaceAll,
+	"trim":          builtinTrim,
+	"upper":         builtinUpper,
+	"lower":         builtinLower,
+	"starts_with":   builtinStartsWith,
+	"ends_with":     builtinEndsWith,
+	"format":        builtinFormat,
+	"lines":         builtinLines,
+	"repeat":        builtinRepeat,
+	"find_index":    builtinFindIndex,
 
 	// JSON (thin binding over encoding/json)
 	"from_json": builtinFromJSON,
@@ -1802,12 +1804,11 @@ var builtins = map[string]builtin{
 	"pi":    builtinPi,
 	"e":     builtinE,
 
-	// regex (RE2)
+	// regex (RE2; regex-needle replacement is replace_first/replace_all above)
 	"re":       builtinRe,
 	"matches":  builtinMatches,
 	"match":    builtinMatch,
 	"find_all": builtinFindAll,
-	"gsub":     builtinGsub,
 
 	// array ops (no callback)
 	"take": builtinTake,
@@ -1823,12 +1824,12 @@ var builtins = map[string]builtin{
 	"close":   builtinCloseChan,
 	"drain":   builtinDrain,
 
-	// date/time (epoch seconds, Perl-style; strftime %-codes, local time)
-	"now":        builtinNow,
-	"sleep":      builtinSleep,
-	"strftime":   builtinStrftime,
-	"parse_time": builtinParseTime,
-	"date_parts": builtinDateParts,
+	// date/time (epoch seconds, Perl-style; format_time/parse_time share %-codes, local time)
+	"now":         builtinNow,
+	"sleep":       builtinSleep,
+	"format_time": builtinFormatTime,
+	"parse_time":  builtinParseTime,
+	"date_parts":  builtinDateParts,
 
 	// hashing + text encodings (thin Go-stdlib bindings)
 	"sha256":      builtinSha256,
@@ -1838,8 +1839,8 @@ var builtins = map[string]builtin{
 	"from_base64": builtinFromBase64,
 	"to_hex":      builtinToHex,
 	"from_hex":    builtinFromHex,
-	"url_encode":  builtinURLEncode,
-	"url_decode":  builtinURLDecode,
+	"to_url":      builtinToURL,
+	"from_url":    builtinFromURL,
 
 	// randomness (math/rand/v2; uuid uses crypto/rand)
 	"rand":     builtinRand,
@@ -1848,8 +1849,8 @@ var builtins = map[string]builtin{
 	"sample":   builtinSample,
 	"uuid":     builtinUUID,
 
-	// runtime knobs + platform
-	"sys_gc":      builtinSysGC,
+	// drang-runtime knobs (drang_ = the interpreter itself) + platform facts (bare)
+	"drang_gc":    builtinDrangGC,
 	"cwd":         builtinCwd,
 	"env":         builtinEnv,
 	"os":          builtinOS,
@@ -1877,7 +1878,7 @@ var stderr io.Writer = os.Stderr
 var outMu sync.Mutex
 
 // lockedWriter serializes writes to a shared io.Writer through outMu, so the stdio-copier
-// goroutines that run/each_line/pipe spin up (one per child, and many at once under pmap) can't
+// goroutines that run/stream_lines/pipe spin up (one per child, and many at once under pmap) can't
 // race each other — or say — on a common sink. It is a value type on purpose: two independent
 // wraps of the same underlying writer compare == (via interfaceEqual), so childStderr's
 // "stderr==stdout => one descriptor" reuse still fires.

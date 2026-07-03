@@ -62,10 +62,15 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 > - **`sub f($a, $b)`** (§3.5) → named functions are `fn .name($a, $b)`; lambdas are `|$a, $b| …`.
 > - **`try`/`catch`** (§3.6) → **errors are values**: `?` propagates, `//` recovers. No exceptions, no `$@`.
 > - **Perl regex operators `=~` `!~` `m//` `s///` `tr//` and `$1..$n`** (§3.2/§3.3) → **rejected 2026-06-28**
->   (see "Decision: reject Perl's regex operators"). drang keeps `qr//` literals plus the `match`/`gsub`/
->   `matches` builtins and pipelines; named-capture→map is the ergonomics path.
+>   (see "Decision: reject Perl's regex operators"). drang keeps `qr//` literals plus the `match`/
+>   `replace_all`/`matches` builtins and pipelines; named-capture→map is the ergonomics path.
 > - **Multi-index slices `$a[1,3,5]` / `$h["x","y"]`** (§3.2) → shipped as inclusive **range** slices
 >   `$a[1..3]` (a single index or one range; comma-list slices were not built).
+> - **Builtin names in §3 examples** → several were renamed in the pre-1.0 namespace coherence pass
+>   (2026-07-03): `replace`→`replace_all`/`replace_first`, `gsub`→`replace_all`, `each_line`→
+>   `stream_lines`, `strftime`→`format_time`, `index_of`→`find_index`, `abspath`→`abs_path`,
+>   `slash`→`to_slash`, `url_encode`/`url_decode`→`to_url`/`from_url`, `sys_gc`→`drang_gc`,
+>   `tally`→`count_by` identity. See "Namespace coherence pass" for the laws and rationale.
 >
 > Still-`[LOCKED]`-but-not-yet-built (not superseded, just pending): lightweight structs/records, and
 > single-rune string ranges `'a'..'z'`. The MANUAL's "Not Yet" section is the honest live inventory.
@@ -1937,6 +1942,58 @@ concrete rename made in this pass was the brand-new, undocumented `max_procs` ex
 key → `max_job_procs` (it is job-scoped; the bare `max_` prefix wrongly implied
 per-process, breaking the symmetry with `max_memory`/`max_job_memory`).
 
+### Namespace coherence pass (2026-07-03) — the pre-1.0 name freeze
+
+A whole-namespace audit (six parallel domain reviews over every builtin/HOF/prelude name,
+then a law-synthesis pass) confirmed the surface obeys a small set of de-facto laws ~90%
+of the time and pulled the rest into line while renames are still cheap. The laws, stated
+positively (each already evidenced across the registry):
+
+1. **Hot core single-word; prefixes are earned** (L1819 above + the bare-when-unambiguous
+   amendment). 2. **Spell words out; abbreviations only from the blessed set.** 3. **`is_`
+   means exactly "returns bool".** 4. **Reversible codecs are `from_X`/`to_X`.** 5. **`_by`
+   = "derive a key via f(el)"; the bare stem is the identity form.** 6. **Bare verb = the
+   single/first form; `_all` = exhaustive; `_ok` = flagged.** 7. **Bare noun-accessors are
+   infallible reads; fallible ops get verbs; path transforms keep Go-stdlib bind-parity.**
+   8. **A prefix/group label must name a real shared property of ≥2 members** (no
+   singleton families).
+
+Renames applied (all with `fmt --fix` rules — the first REAL rules in the edition
+mechanism): `gsub`+`replace` → `replace_first`/`replace_all` (needle TYPE picks
+literal-vs-regex, Ruby's convention; bare-form polarity now matches `find`/`find_all`;
+`--fix` wraps old gsub string patterns in `re(...)` to preserve their regex semantics);
+`each_line` → `stream_lines` (lone verb_noun in the bare process block; false kinship
+with the `each` HOF); `strftime` → `format_time` (rhymes with `parse_time`);
+`url_encode`/`url_decode` → `to_url`/`from_url` (law 4); `slash` → `to_slash` (names the
+conversion, not the character); `index_of` → `find_index` (law 2 + the `find_` stem);
+`abspath` → `abs_path` (composed form, matching `is_abs` and Perl's `Cwd::abs_path` —
+the glued Python spelling was never blessed); `tally` → folded into `count_by` identity
+(law 5; also removes the `count`→int vs `count_by`→map prefix collision); `sys_gc` →
+`drang_gc`.
+
+**The `drang_` law (new):** facts about the MACHINE are bare accessors (`os`, `arch`,
+`home`, `exe`, `cwd`, ...); knobs and introspection on the drang INTERPRETER itself take
+`drang_` — `drang_gc` today, with `drang_version` (the reserved min-version guard) and
+`drang_mem` as the anticipated siblings. `sys_` was rejected because it misreads as the
+operating system, and `runtime_` because in zmal-land (and under a future sturm layer)
+drang scripts steer OTHER runtimes — `drang_` is the one spelling that cannot be misread.
+Precedent: Tcl's `tcl_platform`, Ruby's `RUBY_VERSION`, Erlang's `erlang:` module.
+
+**Blessed-abbreviation list revised:** `gsub` leaves (renamed); `uniq`/`uniq_by` join
+(Perl/Ruby/coreutils muscle memory beats `unique`); the FS trio `rm`/`mkdir`/`cwd` is
+locked as a stated rule ("an FS name with a canonical Unix spelling keeps it; everything
+else spells out"). **Left alone deliberately:** `dirname`/`basename` (entrenched single
+words), `start` vs `spawn` (a real Proc-vs-Task type distinction, unified by polymorphic
+`await`), `size` vs `len` and `read_dir` vs `read_file` (law 7), and the bare string
+predicates (`starts_with`/`matches`/`contains` read as assertions; `is_` stays a
+return-type promise).
+
+The process block stays BARE (`run`/`capture`/`capture_all`/`pipe`/`start`/`kill`/
+`stream_lines` + `status`/`send_stdin`/`close_stdin`), per L1819's own exemplar — a
+`proc_*` prefix family was considered and rejected: subprocess spawning is the beating
+heart of a glue language, precisely the hot core the law protects, and the block should
+mirror the bare concurrency verbs (`chan`/`send`/`recv`/`drain`/`await`) it composes with.
+
 ## Build progress: one-liner stream mode (2026-06-27)
 
 Phase 2 of the niche-definers: awk/perl/sed-style `-n`/`-p` stream processing, so
@@ -2243,7 +2300,9 @@ Adding `=~`/`s///` would be:
 Resolution of the tagline: **"thinks like Perl" = regexes first-class and text-munging
 easy (already true), NOT "looks like Perl."** The regex-ergonomics gap (capturing
 groups) is filled the drang way: **named-capture → a map** on `match`
-(`match($s, qr/(?P<y>\d+)/).y`), plus a `replace_first` to complement global `gsub`.
+(`match($s, qr/(?P<y>\d+)/).y`), plus a `replace_first` to complement global `gsub`
+(landed 2026-07-03 as the `replace_first`/`replace_all` pair — see the namespace
+coherence pass; `gsub` itself was renamed `replace_all` there).
 The one scenario that could reopen `s///`: a future push to be a drop-in sed/perl
 **one-liner** replacement, where `drang -pe 's/x/y/'` terseness matters — and even then
 scoped to one-liner mode, not the language. MANUAL + ROADMAP updated accordingly.

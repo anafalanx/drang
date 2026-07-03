@@ -116,7 +116,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~`pad`, `capitalize`, `reverse`~~ | string conveniences — **DONE** (prelude batch 1) | **drang prelude** | ✅ DONE |
 | ~~`clamp`/`sign`, `get_in`, `deep_merge`, `retry`, `dedent`~~ | ergonomic helpers — **DONE** (prelude finish-up) | **drang prelude** | ✅ DONE |
 | `indent`, `title`, array `reverse` | leftover string/array conveniences | **drang prelude** | 0.6 CANDIDATE |
-| `replace_first`, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits) | Go | 0.6 CANDIDATE |
+| ~~`replace_first`~~, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits). `replace_first` — **DONE** (landed with the pre-1.0 naming pass as `replace_first`/`replace_all`, literal-or-regex needle) | Go | 0.6 CANDIDATE |
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
 | ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
 | TOML / INI config parsing | no Go-stdlib parser → would need a third-party library (against the dependency-light pillar) | Go | GATED (decision-record first) |
@@ -141,7 +141,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | VM↔walker: bare `use "path"` statement not compiled | `compiler.go` `default: c.fail()` → whole program falls back to the tree-walker when a bare `use` is present (captured `use(...)` compiles fine). No `OpUseMerge` | M | PARTIAL |
 | VM↔walker: bare ident-as-value not compiled | forces walker fallback; minor | S | PARTIAL |
 | Startup benchmark + prelude precompile (go:generate bytecode) | reserved optimization; gate behind a real benchmark first | S / M | DEFERRED-BY-DESIGN |
-| `--profile` pprof output | called a freebie in §11; `sys_gc` exists, no flag | S | NOT-STARTED |
+| `--profile` pprof output | called a freebie in §11; `drang_gc` exists, no flag | S | NOT-STARTED |
 | Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
 | ~~Exhaustively test process supervision (`{supervise: true}`) on Unix~~ | **DROPPED (2026-07-01)** — superseded by the Windows-only decision (DESIGN §3.0). The Unix reaper (`supervise_unix.go` / `reap_unix.go`) is retired, not validated. On Windows-only, supervision now runs on **Job Objects** (`internal/winjob`: born-in-job `KILL_ON_JOB_CLOSE` → die-with-parent + race-free whole-tree kill) — the reaper side-car is deleted. | — | DROPPED |
 | ~~`is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check~~ | **FIXED (2026-07-01):** replaced with a real Windows isatty — `GetConsoleMode` plus the MSYS2/Cygwin pty-name heuristic (`internal/eval/terminal.go`, shared by `is_terminal()` and the REPL), so mintty / Git Bash now start the REPL and `is_terminal()` reports correctly there. Also added `SetConsoleOutputCP(CP_UTF8)` at startup so non-ASCII output isn't mojibake on a stock console. | S–M | ✅ DONE |
@@ -164,14 +164,15 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 Value-level immutability/freeze; modules (`use`); `qr//` regex literals;
 `q{}`/`qq{}`/heredocs; break/next; lambdas; integer-overflow→error; implicit
 return; two-var `for $k,$v in`; `//` defined-or; `<=>`; all Phase-1 path/fs/env wins;
-the prelude (`flatten`/`sum_by`/`tally`/`count_by`/`chunk`/`zip`); JSON; CSV;
+the prelude (`flatten`/`sum_by`/`count_by`/`chunk`/`zip` — `tally` was folded into
+`count_by` identity in the pre-1.0 naming pass); JSON; CSV;
 one-liner `-n`/`-p` + `BEGIN`/`END`; concurrency (`spawn`/`chan`/`pmap`, input-ordered).
 Must-use enforcement was deliberately dropped (`[LOCKED]`), not missing.
 
 ## Deliberately out of scope — not missing work
 
 Ternary `?:`, `**`, bitwise, `++`/`--`; classes/inheritance/`bless`/MOP; scalar-list
-context and the punctuation-variable zoo; **Perl's regex operators (`=~`, `s///`) and `$1..$n` capture variables** (drang keeps `qr//` + the `match`/`gsub`/`matches` builtins + pipelines; named-capture→map is the ergonomics path — `s///` reconsiderable only for one-liner mode); string `eval`; a package registry;
+context and the punctuation-variable zoo; **Perl's regex operators (`=~`, `s///`) and `$1..$n` capture variables** (drang keeps `qr//` + the `match`/`replace_all`/`matches` builtins + pipelines; named-capture→map is the ergonomics path — `s///` reconsiderable only for one-liner mode); string `eval`; a package registry;
 sandboxing; an HTTP *server* / web framework; bignum; GUI/Tk hosting;
 the ops/observability and distributed/multi-host growth verticals (locked to
 "personal daily-driver"). **YAML/TOML** is the one genuine judgment-call: no Go-stdlib

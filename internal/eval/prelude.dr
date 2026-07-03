@@ -19,15 +19,8 @@ fn sum_by($xs, $f) { sum(map($xs, $f)) }
 
 # (min_by / max_by / sort / flat_map are already HOF builtins, not prelude helpers.)
 
-# count occurrences: tally(["a", "a", "b"]) -> {a: 2, b: 1}
-fn tally($xs) {
-  reduce($xs, {}, |$acc, $x| {
-    $acc[$x] = ($acc[$x] // 0) + 1
-    $acc
-  })
-}
-
 # count by a key function: count_by(words, |$w| len($w)) -> {3: 5, 4: 2, ...}
+# (a plain histogram is the identity key: count_by($xs, |$x| $x) -> {a: 2, b: 1})
 fn count_by($xs, $f) {
   reduce($xs, {}, |$acc, $x| {
     $k := $f($x)

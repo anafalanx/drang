@@ -73,12 +73,12 @@ func TestSpawnArgAliasing(t *testing.T) {
 	}
 }
 
-// Bug 8 (MED): a returned/?-propagated Err from an each_line callback must surface as the
+// Bug 8 (MED): a returned/?-propagated Err from an stream_lines callback must surface as the
 // result and stop the child, not be silently dropped (the loop checked only Go errors).
 func TestEachLineCallbackErrSurfaces(t *testing.T) {
-	out := runWithEnv(t, NewEnv(), "$r := each_line(\"cmd\", \"/c\", \"echo a& echo b& echo c\", |$l| { if trim($l) == \"b\" { return fail(\"stop\") } 0 })\nsay(is_err($r), err_msg($r))")
+	out := runWithEnv(t, NewEnv(), "$r := stream_lines(\"cmd\", \"/c\", \"echo a& echo b& echo c\", |$l| { if trim($l) == \"b\" { return fail(\"stop\") } 0 })\nsay(is_err($r), err_msg($r))")
 	if !strings.Contains(out, "true") || !strings.Contains(out, "stop") {
-		t.Errorf("each_line must surface a callback Err: %q", out)
+		t.Errorf("stream_lines must surface a callback Err: %q", out)
 	}
 }
 

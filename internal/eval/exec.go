@@ -310,28 +310,29 @@ func builtinPid(args []value.Value) (value.Value, error) {
 	return value.MakeInt(int64(p.pid)), nil
 }
 
-// builtinEachLine runs a command and invokes a callback with each line of its
+// evalStreamLines runs a command and invokes a callback with each line of its
 // stdout AS IT STREAMS (not buffered) — for long-running or high-volume tools
-// (build logs, tails). Shape: each_line(cmd, args..., {opts}?, |$line| ...). It
-// returns true on success or a catchable Err (exit code / 124 timeout), after the
-// command finishes. stderr stays on the terminal. It is a special form (like spawn
-// and the HOFs) rather than a map builtin, because calling callFunction from a
-// builtins-map entry would form a package initialization cycle.
-func evalEachLine(args []value.Value, depth int) (value.Value, error) {
+// (build logs, tails); the "stream vs buffer" counterpart of capture. Shape:
+// stream_lines(cmd, args..., {opts}?, |$line| ...). It returns true on success or
+// a catchable Err (exit code / 124 timeout), after the command finishes. stderr
+// stays on the terminal. It is a special form (like spawn and the HOFs) rather
+// than a map builtin, because calling callFunction from a builtins-map entry
+// would form a package initialization cycle.
+func evalStreamLines(args []value.Value, depth int) (value.Value, error) {
 	if len(args) < 2 {
-		return value.MakeNil(), fmt.Errorf("each_line expects a command and a callback")
+		return value.MakeNil(), fmt.Errorf("stream_lines expects a command and a callback")
 	}
 	cb, ok := asFunction(args[len(args)-1])
 	if !ok {
-		return value.MakeNil(), fmt.Errorf("each_line: last argument must be a function, got %s", args[len(args)-1].TypeName())
+		return value.MakeNil(), fmt.Errorf("stream_lines: last argument must be a function, got %s", args[len(args)-1].TypeName())
 	}
-	argv, opts, err := splitExecArgs("each_line", args[:len(args)-1])
+	argv, opts, err := splitExecArgs("stream_lines", args[:len(args)-1])
 	if err != nil {
 		return value.MakeNil(), err
 	}
 	pr, pw, err := os.Pipe()
 	if err != nil {
-		return value.MakeErr(fmt.Sprintf("each_line: %v", err), 1), nil
+		return value.MakeErr(fmt.Sprintf("stream_lines: %v", err), 1), nil
 	}
 	c, err := newJobCmd(argv, opts, nil, pw, lockedShared(stderr)) // stdout -> a pipe we scan; stderr stays on the terminal (serialized)
 	if err != nil {
@@ -379,14 +380,14 @@ func evalEachLine(args []value.Value, depth int) (value.Value, error) {
 	case aborted:
 		return abortVal, nil
 	case scanErr != nil:
-		return value.MakeErr(fmt.Sprintf("each_line: %v", scanErr), 1), nil
+		return value.MakeErr(fmt.Sprintf("stream_lines: %v", scanErr), 1), nil
 	case timedOut:
 		return value.MakeErr(fmt.Sprintf("%s timed out after %s", argv[0], opts.timeout), 124), nil
 	case c.limitHit.Load() != nil:
 		b, _ := c.breachErr(argv[0])
 		return b, nil
 	case werr != nil:
-		return value.MakeErr(fmt.Sprintf("each_line: %v", werr), 1), nil
+		return value.MakeErr(fmt.Sprintf("stream_lines: %v", werr), 1), nil
 	case code != 0:
 		return execErrCode(argv[0], code, ""), nil
 	}
