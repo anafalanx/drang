@@ -40,14 +40,14 @@ func TestJobCmdExitCode(t *testing.T) {
 func TestJobCmdStdin(t *testing.T) {
 	exe, _ := resolveExe("cmd", execOpts{})
 	var out bytes.Buffer
-	c := &jobCmd{exe: exe, argv: []string{"cmd", "/c", "sort"}, stdin: strings.NewReader("b\na\n"), stdout: &out}
+	c := &jobCmd{exe: exe, argv: []string{"cmd", "/c", "sort"}, stdin: strings.NewReader("banana\napple\n"), stdout: &out}
 	if err := c.start(); err != nil {
 		t.Fatal(err)
 	}
 	c.wait()
 	got := strings.ReplaceAll(strings.TrimSpace(out.String()), "\r\n", "\n")
-	if got != "a\nb" {
-		t.Errorf("sorted stdin = %q, want a\\nb", got)
+	if got != "apple\nbanana" {
+		t.Errorf("sorted stdin = %q, want apple\\nbanana", got)
 	}
 }
 
