@@ -24,6 +24,8 @@ func TestMakeBatchCmdLine(t *testing.T) {
 		{"embedded quote is doubled", `C:\x.bat`, []string{`a"b`}, pre + `"C:\x.bat" "a""b""`},
 		{"ampersand is quoted, not live", `C:\x.bat`, []string{"a&b"}, pre + `"C:\x.bat" "a&b""`},
 		{"percent is neutralized", `C:\x.bat`, []string{"%FOO%"}, pre + `"C:\x.bat" "%%cd:~,%FOO%%cd:~,%""`},
+		{"percent in script path neutralized", `C:\a%b.bat`, nil, pre + `"C:\a%%cd:~,%b.bat""`},
+		{"var in script path cannot expand", `C:\%FOO%.bat`, nil, pre + `"C:\%%cd:~,%FOO%%cd:~,%.bat""`},
 		{"empty arg is quoted", `C:\x.bat`, []string{""}, pre + `"C:\x.bat" """`},
 		{"trailing backslash doubled", `C:\x.bat`, []string{`foo\`}, pre + `"C:\x.bat" "foo\\""`},
 		{"lone backslash needs no quote", `C:\x.bat`, []string{`a\b`}, pre + `"C:\x.bat" a\b"`},
@@ -52,6 +54,8 @@ func TestMakeBatchCmdLineRejects(t *testing.T) {
 		{"script with quote", `C:\a"b.bat`, nil},
 		{"script trailing backslash", `C:\x\`, nil},
 		{"script with NUL", "C:\\x\x00.bat", nil},
+		{"script with CR", "C:\\x\r.bat", nil},
+		{"script with LF", "C:\\x\n.bat", nil},
 		{"arg with NUL", `C:\x.bat`, []string{"a\x00b"}},
 		{"arg with CR", `C:\x.bat`, []string{"a\rb"}},
 		{"arg with LF", `C:\x.bat`, []string{"a\nb"}},
@@ -127,6 +131,49 @@ func TestLaunchBatchNoInjection(t *testing.T) {
 	}
 	if !strings.Contains(outB, "RAN") {
 		t.Errorf("batch did not run as expected; stdout=%q", outB)
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stdout=%q", code, outB)
+	}
+}
+
+// TestLaunchBatchPercentPath: a batch whose PATH contains a literal '%' (here %TEMP%, a real
+// environment variable) must still run. The %-neutralization stops cmd from EXPANDING the path
+// while preserving resolution of the actual file; unneutralized, cmd would expand %TEMP% and
+// fail to find the script. Guards against the fix over-correcting into a functional break.
+func TestLaunchBatchPercentPath(t *testing.T) {
+	dir := t.TempDir()
+	batPath := filepath.Join(dir, "e%TEMP%p.bat") // the literal filename contains %TEMP%
+	if err := os.WriteFile(batPath, []byte("@echo off\r\necho RAN_PCT\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	job := mustJob(t, false)
+	defer job.Close()
+
+	inR, inW, _ := os.Pipe()
+	outR, outW, _ := os.Pipe()
+	errR, errW, _ := os.Pipe()
+	p, err := LaunchExe(batPath, []string{batPath}, dir, childEnv(""), []*Job{job},
+		Stdio{Stdin: inR, Stdout: outW, Stderr: errW})
+	if err != nil {
+		for _, f := range []*os.File{inR, inW, outR, outW, errR, errW} {
+			f.Close()
+		}
+		t.Fatalf("LaunchExe: %v", err)
+	}
+	inR.Close()
+	outW.Close()
+	errW.Close()
+	inW.Close()
+
+	outB := readAllString(outR)
+	_ = readAllString(errR)
+	code, werr := p.Wait()
+	if werr != nil {
+		t.Fatalf("Wait: %v", werr)
+	}
+	if !strings.Contains(outB, "RAN_PCT") {
+		t.Errorf("batch at a %%-containing path did not run (neutralization broke resolution); stdout=%q", outB)
 	}
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stdout=%q", code, outB)

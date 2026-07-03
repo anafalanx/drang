@@ -394,6 +394,42 @@ func evalStreamLines(args []value.Value, depth int) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
+// maxCaptureBytes backstops the buffering exec forms (capture / capture_all / pipe), which
+// collect a child's output into memory. Without a bound, a child that streams without end
+// would grow the buffer until the process OOMs; past this the capture is a catchable Err (or
+// code 137 for capture_all). Generous (256 MiB) so it never trips on ordinary command output.
+const maxCaptureBytes = 256 << 20
+
+// capWriter buffers a captured stream up to limit bytes. Past the limit it keeps DRAINING the
+// child — Write still reports the full count, so the copier never blocks or errors and the
+// child runs to completion — but stops storing. overflowed() reports whether the cap was hit;
+// callers turn that into a catchable Err (or code 137) rather than silently returning a
+// truncated string. Each capWriter is written by a single copier goroutine, so it needs no lock.
+type capWriter struct {
+	buf   bytes.Buffer
+	limit int
+	over  bool
+}
+
+func newCapWriter() capWriter { return capWriter{limit: maxCaptureBytes} }
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if room := w.limit - w.buf.Len(); room > 0 {
+		if len(p) <= room {
+			w.buf.Write(p)
+		} else {
+			w.buf.Write(p[:room])
+			w.over = true
+		}
+	} else if len(p) > 0 {
+		w.over = true
+	}
+	return len(p), nil // always claim a full write so the child's stdio copier keeps draining
+}
+
+func (w *capWriter) String() string   { return w.buf.String() }
+func (w *capWriter) overflowed() bool { return w.over }
+
 // builtinCapture spawns a command capturing stdout, returning the trimmed stdout
 // string on success or a catchable Err (with the child's stderr folded into the
 // message) on failure.
@@ -402,7 +438,7 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	var out, errBuf bytes.Buffer
+	out, errBuf := newCapWriter(), newCapWriter()
 	c, err := newJobCmd(argv, opts, nil, &out, &errBuf)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
@@ -417,6 +453,8 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	case c.limitHit.Load() != nil:
 		b, _ := c.breachErr(argv[0])
 		return b, nil
+	case out.overflowed() || errBuf.overflowed():
+		return value.MakeErr(fmt.Sprintf("capture: %s output exceeded the %d-byte limit", argv[0], maxCaptureBytes), 137), nil
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("capture: %v", werr), 1), nil
 	case code != 0:
@@ -435,7 +473,7 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	var out, errBuf bytes.Buffer
+	out, errBuf := newCapWriter(), newCapWriter()
 	code := 0
 	c, cerr := newJobCmd(argv, opts, nil, &out, &errBuf)
 	if cerr != nil {
@@ -449,6 +487,8 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 			code = 124
 		case c.limitHit.Load() != nil:
 			code = 137 // a resource cap was breached
+		case out.overflowed() || errBuf.overflowed():
+			code = 137 // the output-size cap was breached (out/err are the capped prefix)
 		case werr != nil:
 			code = 127 // a wait/system failure
 		default:
@@ -505,12 +545,12 @@ func builtinPipe(args []value.Value) (value.Value, error) {
 func runPipeline(argvs [][]string, o execOpts) value.Value {
 	n := len(argvs)
 	stages := make([]*jobCmd, n)
-	var out, lastErr bytes.Buffer
+	out, lastErr := &capWriter{limit: maxCaptureBytes}, &capWriter{limit: maxCaptureBytes} // capped like capture, so a runaway final stage can't OOM
 
 	for i, av := range argvs {
 		stderrW := lockedShared(stderr) // intermediate diagnostics stay visible; serialize the shared sink
 		if i == n-1 {
-			stderrW = &lastErr // the last stage's stderr folds into its Err, like capture (a private buffer)
+			stderrW = lastErr // the last stage's stderr folds into its Err, like capture (a private buffer)
 		}
 		c, err := newJobCmd(av, o, nil, nil, stderrW)
 		if err != nil {
@@ -521,7 +561,7 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	if o.hasStdin {
 		stages[0].stdin = strings.NewReader(o.stdin)
 	}
-	stages[n-1].stdout = &out
+	stages[n-1].stdout = out
 
 	// Inter-stage pipes: stage[i].stdout -> stage[i+1].stdin, wired as raw files (used directly).
 	var pipes []*os.File
@@ -586,6 +626,8 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 	case breachStage >= 0:
 		b, _ := stages[breachStage].breachErr(argvs[breachStage][0])
 		return b
+	case out.overflowed() || lastErr.overflowed():
+		return value.MakeErr(fmt.Sprintf("pipe: %s output exceeded the %d-byte limit", argvs[n-1][0], maxCaptureBytes), 137)
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("pipe: stage %d (%s): %v", werrStage+1, argvs[werrStage][0], werr), 1)
 	case lastCode != 0:

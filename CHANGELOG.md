@@ -6,7 +6,31 @@ follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `
 ## [Unreleased]
 
 The single-process-control release: kernel-enforced resource limits and the process-control gaps
-filled, plus a first math/ergonomics batch and two robustness fixes. Still Windows-only.
+filled, plus a first math/ergonomics batch, a pre-1.0 vocabulary freeze, a defense-in-depth
+security pass, and two robustness fixes. Still Windows-only.
+
+### Security — defense-in-depth hardening
+A follow-up security review (no high-severity findings) closed a set of hardening gaps:
+- **Batch script-path `%`-neutralization.** Launching a `.bat`/`.cmd` already neutralized `%` in the
+  ARGUMENTS (so cmd cannot expand a `%VAR%` out of them); the same is now applied to the script
+  PATH, and a CR/LF in the path is rejected as it already is in arguments. An unneutralized `%VAR%`
+  in the path could otherwise redirect which file runs, or — if the variable's value carried a
+  quote — break out of the command-line quoting.
+- **Glob `**` can no longer hang.** The `**` matcher backtracked exponentially on a pattern with
+  several non-adjacent `**` (`a/**/b/**/c/**/d` against a deep tree). It now collapses adjacent `**`
+  and memoizes on position, so matching is polynomial regardless of `**` count.
+- **Bounded the compiled-regex cache** (~4096 patterns): a program compiling an unbounded stream of
+  DISTINCT dynamic patterns can no longer pin one compiled regex per pattern forever. Past the cap,
+  patterns still compile correctly — just uncached.
+- **`read_file` size cap (1 GiB).** read_file loads a whole file into one string; an unbounded
+  source (a huge file, or a pipe/device that never reaches EOF) is now a catchable Err, not an OOM.
+- **`capture` / `capture_all` / `pipe` output cap (256 MiB).** A child that streams without end can
+  no longer grow the capture buffer until the process OOMs; the overflow is a catchable Err (code
+  **137** for `capture_all`).
+- **`to_csv {sanitize}` — opt-in CSV-injection defense.** A cell beginning with `=`, `+`, `-`, `@`,
+  or a leading tab/CR/LF (the OWASP dangerous-lead set) can run as a formula when the file is opened
+  in Excel / Sheets; `{sanitize: true}` prefixes a `'` so such cells stay literal text. Opt-in,
+  because it changes the data (`-5` → `'-5`).
 
 ### Added — process control & resource limits
 - **Kernel-enforced resource caps** on every exec form (`run`/`capture`/`capture_all`/`stream_lines`/

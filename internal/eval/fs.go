@@ -376,29 +376,65 @@ func globBase(pat string) string {
 	return strings.Join(base, "/")
 }
 
-// matchSegs matches path segments where ** spans zero or more segments.
+// matchSegs reports whether path segments ns match pattern segments ps, where a `**`
+// pattern segment spans zero or more path segments. It memoizes on the (pi, ni) position
+// pair, so several `**` segments cost O(len(ps)*len(ns)) instead of exponential
+// backtracking — a pattern like a/**/b/**/c/**/d matched against a deep tree would
+// otherwise hang. Adjacent `**` are collapsed first (a/**/**/b is the same set as
+// a/**/b), which also caps the work a pattern padded with many `**` can demand.
 func matchSegs(ps, ns []string) bool {
-	for len(ps) > 0 {
-		if ps[0] == "**" {
-			if len(ps) == 1 {
-				return true
-			}
-			for i := 0; i <= len(ns); i++ {
-				if matchSegs(ps[1:], ns[i:]) {
-					return true
+	ps = collapseDoublestars(ps)
+	np, nn := len(ps), len(ns)
+	memo := make([]uint8, (np+1)*(nn+1)) // per (pi, ni): 0 unknown, 1 no, 2 yes
+	var rec func(pi, ni int) bool
+	rec = func(pi, ni int) bool {
+		idx := pi*(nn+1) + ni
+		if memo[idx] != 0 {
+			return memo[idx] == 2
+		}
+		var res bool
+		switch {
+		case pi == np:
+			res = ni == nn // pattern exhausted: match iff the path is too
+		case ps[pi] == "**":
+			if pi == np-1 {
+				res = true // a trailing ** absorbs the rest, including zero segments
+			} else {
+				for i := ni; i <= nn; i++ { // ** consumes zero or more path segments
+					if rec(pi+1, i) {
+						res = true
+						break
+					}
 				}
 			}
-			return false
+		case ni == nn:
+			res = false // a non-** segment remains but the path is spent
+		default:
+			if ok, _ := path.Match(ps[pi], ns[ni]); ok {
+				res = rec(pi+1, ni+1)
+			}
 		}
-		if len(ns) == 0 {
-			return false
+		if res {
+			memo[idx] = 2
+		} else {
+			memo[idx] = 1
 		}
-		if ok, _ := path.Match(ps[0], ns[0]); !ok {
-			return false
-		}
-		ps, ns = ps[1:], ns[1:]
+		return res
 	}
-	return len(ns) == 0
+	return rec(0, 0)
+}
+
+// collapseDoublestars drops redundant adjacent ** segments (they match the same set as a
+// single **), so a pattern padded with many ** cannot inflate the match work.
+func collapseDoublestars(segs []string) []string {
+	var out []string
+	for _, s := range segs {
+		if s == "**" && len(out) > 0 && out[len(out)-1] == "**" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // builtinReadDir lists a directory as an array of {name, path, is_dir} records
@@ -427,14 +463,32 @@ func builtinReadDir(args []value.Value) (value.Value, error) {
 
 // --- file IO ---
 
+// maxReadFileBytes backstops read_file, which loads the whole file into one string. Without
+// a bound an unbounded source — a multi-gigabyte file, or a named pipe / device that never
+// reaches EOF — could exhaust memory; past this the read is a catchable Err, not an OOM. The
+// limit is generous (1 GiB) so it never trips on ordinary data files. A var, not a const, only
+// so a test can lower it; production never reassigns it.
+var maxReadFileBytes int64 = 1 << 30
+
 func builtinReadFile(args []value.Value) (value.Value, error) {
 	p, err := oneString("read_file", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	b, e := os.ReadFile(p)
+	f, e := os.Open(p)
 	if e != nil {
 		return value.MakeErr("read_file "+p+": "+e.Error(), 1), nil
+	}
+	defer f.Close()
+	// Read at most maxReadFileBytes+1 so an over-limit file is detected without buffering it
+	// all: the +1 byte is the "too big" signal (LimitReader bounds memory regardless of the
+	// stat'd size, which lies for pipes/devices).
+	b, e := io.ReadAll(io.LimitReader(f, maxReadFileBytes+1))
+	if e != nil {
+		return value.MakeErr("read_file "+p+": "+e.Error(), 1), nil
+	}
+	if int64(len(b)) > maxReadFileBytes {
+		return value.MakeErr(fmt.Sprintf("read_file %s: file exceeds the %d-byte limit", p, maxReadFileBytes), 1), nil
 	}
 	return value.MakeStr(string(b)), nil
 }

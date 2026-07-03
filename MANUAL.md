@@ -2697,10 +2697,17 @@ Options (an optional trailing map):
 | `trim` | read | drop leading whitespace in each field |
 | `lazy_quotes` | read | tolerate stray quotes in malformed input |
 | `crlf` | write | line ending: `\r\n` (the default, RFC 4180) — set `false` for `\n` |
+| `sanitize` | write | prefix a `'` on any cell that begins with `=`, `+`, `-`, `@`, tab, CR, or LF, so a spreadsheet treats it as text, not a formula (default false) |
 
 As with JSON, option misuse (a bad type, a multi-character or invalid `sep`, an
 unknown option key) aborts; malformed CSV and unencodable rows are catchable `Err`
 values:
+
+**CSV injection.** A cell like `=cmd|'/c calc'!A1` becomes a live formula when the
+file is opened in Excel or Google Sheets. `to_csv` writes your data faithfully by
+default (a leading `-` on a number is preserved). When the output is destined for a
+spreadsheet, pass `{sanitize: true}` to prefix a `'` on every formula-leading cell —
+this is opt-in because it changes the data (a `-5` becomes `'-5`).
 
 ```drang
 say(is_err(from_csv("a,b\n1,2,3")))                          # true (ragged row, strict)
@@ -3212,7 +3219,7 @@ say(is_err(asin(2)))        # true  (outside [-1, 1])
 | `from_json` | `from_json(s)` | Parse JSON into drang values (object→map, array→array, number→int/float); malformed input → Err. |
 | `to_json` | `to_json(v, indent?)` | Render a value as JSON; `indent` (int spaces or whitespace string) pretty-prints, else compact. Non-encodable values → Err. |
 | `from_csv` | `from_csv(s, opts?)` | Parse RFC 4180 CSV into rows (arrays, or records with `{header: true}`); strict by default. Malformed input → Err. |
-| `to_csv` | `to_csv(rows, opts?)` | Render rows (arrays or records) as CSV; minimal quoting, `\r\n` lines (`{crlf: false}` for `\n`). Bad rows → Err. |
+| `to_csv` | `to_csv(rows, opts?)` | Render rows (arrays or records) as CSV; minimal quoting, `\r\n` lines (`{crlf: false}` for `\n`). `{sanitize: true}` neutralizes spreadsheet-formula cells. Bad rows → Err. |
 
 ### Collections & higher-order
 
@@ -3295,7 +3302,7 @@ a bool; the rest signal real I/O failures as Err.
 | `mtime` | `mtime(p)` | Modification time as float Unix seconds (sub-second); missing → Err. |
 | `newer` | `newer(a, b)` | True if `a` is newer than `b`; a missing path → Err. |
 | `stale` | `stale(target, sources)` | True if `target` is missing or older than any source; missing source → Err. |
-| `read_file` | `read_file(p)` | Read the whole file as a string; failure → Err. |
+| `read_file` | `read_file(p)` | Read the whole file as a string; failure → Err. A file over 1 GiB is a catchable Err (a memory backstop), not an OOM. |
 | `write_file` | `write_file(p, content, {append}?)` | Write (or append) `content` to `p`; returns `p`, failure → Err. |
 | `tempfile` | `tempfile(prefix?)` | Create a unique empty temp file; returns its path (remove with `rm`). |
 | `tempdir` | `tempdir(prefix?)` | Create a unique temp directory; returns its path (remove with `rm`). |
@@ -3322,7 +3329,7 @@ reference types; values are deep-copied on send and on `await`.
 | Builtin | Signature | Description |
 |---|---|---|
 | `run` | `run(cmd, args..., opts?)` | Run with inherited stdio; true on success, non-zero exit → Err (code = exit). |
-| `capture` | `capture(cmd, args..., opts?)` | Run and return trimmed stdout; failure → Err (stderr folded in). |
+| `capture` | `capture(cmd, args..., opts?)` | Run and return trimmed stdout; failure → Err (stderr folded in). Output past 256 MiB is a catchable Err (code 137), not an OOM. |
 | `capture_all` | `capture_all(cmd, args..., opts?)` | Run and return `{out, err, code, ok}`; non-zero exit is data, not an Err (124 timeout / 127 can't-start). |
 | `pipe` | `pipe([cmd,args..], ..., opts?)` | Stream a pipeline of `[cmd, args...]` stages; returns last stage's trimmed stdout. |
 | `start` | `start(cmd, args..., opts?)` | Launch detached (no wait); returns a process handle, can't-start → Err (127). |

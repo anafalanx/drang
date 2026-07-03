@@ -66,10 +66,18 @@ func makeBatchCmdLine(script string, args []string) (string, error) {
 	if strings.IndexByte(script, 0) >= 0 {
 		return "", fmt.Errorf("winjob: batch script path contains a NUL byte")
 	}
+	if strings.ContainsAny(script, "\r\n") {
+		// cmd truncates its line at a bare CR/LF, so a newline in the path could drop the
+		// closing quotes and leave trailing text live — reject it, as the arguments are.
+		return "", fmt.Errorf("winjob: batch script path %q may not contain a carriage return or newline", script)
+	}
 	var b strings.Builder
 	b.WriteString(`cmd.exe /e:ON /v:OFF /d /c "`) // opens the outer /c quote
-	b.WriteByte('"')                               // opens the script's own quote
-	b.WriteString(script)
+	b.WriteByte('"')                              // opens the script's own quote
+	// Neutralize '%' in the PATH too, not just in the arguments: cmd expands a %VAR% in the
+	// script token before it resolves the file, so an unneutralized path could redirect which
+	// file runs or, if the variable's value carried a quote, break out of the quoting entirely.
+	b.WriteString(neutralizeBatchPercent(script))
 	b.WriteByte('"') // closes the script's quote
 	for _, a := range args {
 		if strings.IndexByte(a, 0) >= 0 {
@@ -83,6 +91,26 @@ func makeBatchCmdLine(script string, args []string) (string, error) {
 	}
 	b.WriteByte('"') // closes the outer /c quote
 	return b.String(), nil
+}
+
+// neutralizeBatchPercent rewrites each '%' in s as %%cd:~,% — a zero-length substring of the
+// always-present %cd% that cmd renders back to a single literal '%' — so cmd cannot expand a
+// %VAR% reference out of s. appendBatchArg applies the identical trick to arguments; this is the
+// standalone form for the script path, which is quoted verbatim (its '"' and trailing '\' are
+// rejected up front, so it needs no backslash/quote doubling — only '%' neutralization).
+func neutralizeBatchPercent(s string) string {
+	if !strings.ContainsRune(s, '%') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' {
+			b.WriteString("%%cd:~,")
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // batchUnquoted is the set of ASCII symbols that do NOT force an argument to be quoted; every other

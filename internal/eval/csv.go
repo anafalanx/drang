@@ -35,7 +35,7 @@ var fromCSVOptKeys = map[string]bool{
 	"sep": true, "header": true, "comment": true, "trim": true, "lazy_quotes": true, "lenient": true,
 }
 var toCSVOptKeys = map[string]bool{
-	"sep": true, "header": true, "crlf": true, "lenient": true,
+	"sep": true, "header": true, "crlf": true, "lenient": true, "sanitize": true,
 }
 
 // builtinFromCSV parses CSV text into an array of rows.
@@ -188,11 +188,22 @@ func builtinToCSV(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
+	sanitize, err := optBool(opts, "sanitize", false) // opt-in CSV-injection defense (off = faithful data)
+	if err != nil {
+		return value.MakeNil(), err
+	}
 
 	rows := args[0].Obj().(*value.Array).Elems
 	records, derr := rowsToRecords(rows, writeHeader, lenient)
 	if derr != nil {
 		return value.MakeErr("to_csv: "+derr.Error(), 1), nil
+	}
+	if sanitize {
+		for _, rec := range records {
+			for i, f := range rec {
+				rec[i] = sanitizeCSVField(f)
+			}
+		}
 	}
 	var b strings.Builder
 	w := csv.NewWriter(&b)
@@ -202,6 +213,26 @@ func builtinToCSV(args []value.Value) (value.Value, error) {
 		return value.MakeErr("to_csv: "+err.Error(), 1), nil
 	}
 	return value.MakeStr(b.String()), nil
+}
+
+// sanitizeCSVField neutralizes a field a spreadsheet might execute as a formula. A cell that
+// begins with '=', '+', '-', '@', or a leading control-whitespace char — tab (0x09), carriage
+// return (0x0D), or line feed (0x0A) — can run as a formula in Excel / Google Sheets (CSV
+// injection; this is exactly the OWASP dangerous-lead set) because the leading whitespace is
+// stripped before the "=cmd|..." payload is evaluated. Prefixing a single quote forces the whole
+// cell to literal text. This is opt-in (to_csv {sanitize: true}) because it changes the data: a
+// leading '-' number like "-5" becomes "'-5", so it belongs only on output destined for a
+// spreadsheet, not on faithful data exchange. (A leading SPACE is deliberately not treated as
+// dangerous: unlike tab/CR/LF it is not stripped, so it already defeats formula evaluation.)
+func sanitizeCSVField(f string) string {
+	if f == "" {
+		return f
+	}
+	switch f[0] {
+	case '=', '+', '-', '@', '\t', '\r', '\n':
+		return "'" + f
+	}
+	return f
 }
 
 // rowsToRecords converts drang rows into [][]string, choosing array vs record mode

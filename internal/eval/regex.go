@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -46,6 +47,16 @@ func (r *regexObj) DeepCopy(map[value.Obj]value.Obj) value.Obj { return r }
 // the "compile once" win for both qr// literals and string-pattern builtins.
 var reCache sync.Map // pattern string -> *reCacheEntry
 
+// reCacheSize tracks the number of cached entries so the cache cannot grow without bound.
+// A program that compiles an unbounded stream of DISTINCT dynamic patterns (e.g. re() over
+// attacker-supplied strings) would otherwise pin one *regexp.Regexp per pattern forever.
+var reCacheSize atomic.Int64
+
+// maxReCache caps the memoized-pattern count. Past the cap, patterns still compile correctly
+// — they are just not cached — so the workload pays CPU to recompile rather than unbounded
+// memory. The cap is far above any real program's working set of distinct patterns.
+const maxReCache = 4096
+
 type reCacheEntry struct {
 	re  *regexp.Regexp
 	err error
@@ -57,7 +68,13 @@ func compilePattern(pat string) (*regexp.Regexp, error) {
 		return e.re, e.err
 	}
 	re, err := regexp.Compile(pat)
-	reCache.Store(pat, &reCacheEntry{re: re, err: err})
+	// Cache only while under the cap. Entries compiled before the cap (the hot working set)
+	// stay cached; a later flood of one-off patterns just recompiles each time.
+	if reCacheSize.Load() < maxReCache {
+		if _, loaded := reCache.LoadOrStore(pat, &reCacheEntry{re: re, err: err}); !loaded {
+			reCacheSize.Add(1)
+		}
+	}
 	return re, err
 }
 
