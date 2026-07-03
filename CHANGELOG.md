@@ -3,7 +3,7 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
 
-## [Unreleased]
+## [0.7] — 2026-07-04
 
 The single-process-control release: kernel-enforced resource limits and the process-control gaps
 filled, plus a first math/ergonomics batch, a pre-1.0 vocabulary freeze, a defense-in-depth

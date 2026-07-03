@@ -79,11 +79,13 @@ interpreter, and writes atomically. It produces a standalone Windows executable 
 
 ## Status
 
-**drang 0.6**: a genuine daily-driver, now Windows-native. (0.6 rebuilds process control on Windows
-Job Objects, fixes a batch-argument injection hole, and hardens the interpreter and the
-errors-as-values model — see [CHANGELOG.md](CHANGELOG.md).) See the *"Not Yet"* section of the manual
-for the remaining gaps: no structs (maps stand in as records), only daily-driver math (no trig), no
-character ranges, no implicit string↔number coercion, and no in-place one-liner mode (`-i`).
+**drang 0.7**: the resource-limits + pre-1.0-ratification release. Kernel-enforced memory / CPU /
+process caps on every exec form (Windows Job Objects), the process-control surface completed and
+frozen, trig + a small extended-math line, a defense-in-depth security pass, and a whole-namespace
+vocabulary freeze — the language is settled for 1.0 (see [CHANGELOG.md](CHANGELOG.md)). See the
+*"Not Yet"* section of the manual for the remaining gaps: no structs (maps stand in as records), no
+character ranges, no implicit string↔number coercion (deliberate), and no in-place one-liner mode
+(`-i`).
 
 ## License
 
