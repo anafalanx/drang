@@ -1,6 +1,6 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-02 — **drang 0.6 released** (see CHANGELOG.md).
+*Inventory refreshed 2026-07-04 — **drang 0.7 released** (see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -44,10 +44,21 @@ Ruby, thinks like Perl, runs like Go").*
   optional. **Remaining papercuts:** the `sturm`/ConPTY/resource-limit *decision record* (deferred, not
   built). *(Testing infra — the three fuzz targets and a local on-demand preflight — landed in 0.7; see
   below. Hosted CI is deliberately not adopted; the preflight is the release gate. See TESTING.md.)*
-- **0.6 candidates (triaged 2026-06-29 — build on real daily-driver need, not speculatively).**
-  Ordered by likely use: **`walk`** (recursive dir traversal) and **named-capture `match` →
-  map** are the two most likely to be hit and are genuine *powers*; then `replace_first`,
-  `parse_url`, `hmac`/`sha512`, `indent`, array `reverse`, `title`, `chmod`. Also parked:
+- **0.7 (2026-07-04) — RELEASED: resource limits + pre-1.0 ratification.** Full log in
+  CHANGELOG.md. Landed since 0.6: kernel-enforced Job-Object caps for memory / CPU / active
+  process count on every exec form; the frozen process-control surface (`status`, `stdin_file`,
+  `merge_stderr`, `stdin_pipe` + `send_stdin`/`close_stdin`, up-front `cwd` validation); trig and
+  small extended math; `%=` / `~=` / `//=`; defense-in-depth hardening (batch path `%`
+  neutralization, polynomial `**` globs, bounded regex cache, read/capture caps, CSV injection
+  sanitization); the pre-1.0 namespace vocabulary freeze plus real `fmt --fix` migration rules;
+  local preflight + fuzz targets; and two hang fixes (`reverse` on arrays, impossible channel
+  deadlock). Deferred past 0.7: `recv_stdout`/`stdout_pipe`, graceful `stop`/`signal`, ConPTY, and
+  the `sturm` tree.
+- **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-04 — build on real daily-driver need,
+  not speculatively).** Ordered by likely use: **`walk`** (recursive dir traversal) and
+  **named-capture `match` → map** are the two most likely to be hit and are genuine *powers*; then
+  `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed from the original list:
+  `replace_first` and array `reverse`. Also parked:
   one-liner in-place `-i`, char/string ranges, `match`/`switch`. **Decision (2026-06-29):
   stringy-numeric coercion is rejected** — `"5" + 3` stays a type error.
 - **Direction (2026-07-01): drang is Windows-only.** Targets **Windows 11 23H2+** and **Windows
@@ -60,14 +71,15 @@ Ruby, thinks like Perl, runs like Go").*
 
 ## State of the language
 
-With 0.4 shipped, drang is **a credible daily-driver**, and the *engine* is done:
+With 0.7 shipped, drang is **a credible Windows-native daily-driver**, and the *engine* is done:
 register VM + tree-walker fallback, closures/lambdas/pipelines, a full HOF toolkit,
 first-class functions *and builtins*, errors-as-values (`?` / `//`), first-class RE2
 regexes (`qr//`), real concurrency (`spawn` / channels / `pmap`), external-command
-orchestration, files/paths, JSON, CSV, an HTTP client, one-liner `-n`/`-p` mode with
-`BEGIN`/`END`, `dispatch` task-running, modules (`use`), value-level immutability (frozen
-constants + module exports), an expanded standard library (~120 builtins + a drang
-prelude), `drang fmt`, and standalone `build`. What remains is narrower than it was:
+orchestration with Job-Object tree kill and resource caps, process polling and live stdin,
+files/paths, JSON, CSV, an HTTP client, one-liner `-n`/`-p` mode with `BEGIN`/`END`,
+`dispatch` task-running, modules (`use`), value-level immutability (frozen constants + module
+exports), an expanded standard library (~120 builtins + a drang prelude), `drang fmt --fix`,
+local preflight/fuzz verification, and standalone `build`. What remains is narrower than it was:
 **(1)** a few `[LOCKED]`-in-DESIGN-but-unbuilt language features (char ranges, `match`/
 `switch`), and **(2)** stdlib edges a glue language occasionally reaches for. The earlier
 doc/reality drift is closed.
@@ -89,7 +101,7 @@ them (they're listed under "Not Yet"); building them is tracked here.
 | ~~Slices + string indexing/substring (`$a[1..3]`, `$s[2..5]`)~~ | core text moves — **DONE**: inclusive range slices on arrays + strings, rune-aware string indexing, negatives, clamping (read-only; slice-assignment deferred) | M | ✅ DONE |
 | Char ranges `'a'..'z'` (needs char literals) | lower frequency; `'a'` lexes as ILLEGAL | M | NOT-STARTED |
 | Stringy-numeric coercion (`"5" + 3`) | **DECIDED 2026-06-29: rejected.** drang will not coerce; `"5" + 3` stays a type error (convert with `int()`/`str()`). Keeps the "explicit over implicit, no surprises" stance | — | ✅ DECIDED |
-| Ratify provisional bits (truthiness, language name / `.dr`) | working but never formally locked; doc/decision close | S | PARTIAL |
+| ~~Ratify provisional bits (truthiness, language name / `.dr`)~~ | **DONE in 0.7**: contract surfaces settled as part of the pre-1.0 ratification pass | S | ✅ DONE |
 | `match`/`switch` multi-way dispatch | value/regex dispatch for text; `dispatch({...})` partly covers it | M | NOT-STARTED |
 
 ## (b) Standard library (builtins + prelude) — the biggest real gaps
@@ -107,16 +119,17 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~Hashing + encodings~~ | `sha*`/`md5`, base64, hex, url | Go | ✅ DONE |
 | ~~Random~~ | `rand`/`rand_int`/`shuffle`/`sample`/`uuid` | Go | ✅ DONE |
 | ~~Conversions `str`/`float`/`bool`/`type`~~ | only `int()` existed (asymmetric) — **DONE** | Go | ✅ DONE |
-| ~~Math `sqrt`/`pow`/`log`/`div`~~ | `/` is float-only — **DONE** (`%` already existed) | Go | ✅ DONE |
-| ~~`index_of`~~ | "where is X" — **DONE** (rune-indexed) | Go | ✅ DONE |
+| ~~Math `sqrt`/`pow`/`log`/`div` + trig~~ | `/` is float-only — **DONE** (`%` already existed; 0.7 added trig, `exp`, `pi`, and optional-base `log`) | Go | ✅ DONE |
+| ~~`index_of` / `find_index`~~ | "where is X" — **DONE** (rune-indexed; renamed to `find_index` in 0.7) | Go | ✅ DONE |
 | ~~`tempfile`/`tempdir` + file-append~~ | atomic-write / log-append — **DONE** (`write_file {append}`; binary already works since strings carry bytes) | Go | ✅ DONE |
 | ~~`os()`/`arch()`/`home`~~ | cross-platform branching — **DONE** | Go | ✅ DONE |
 | ~~UTC time option on `strftime`/`parse_time`/`date_parts`~~ | local-only is a cross-machine trap — **DONE** (`{utc: true}` flag) | Go | ✅ DONE |
 | ~~`group_by`, `partition`, `uniq_by`, `enumerate`, `mean`, `median`, set ops (`intersect`/`union`/`difference`)~~ | high-value ergonomic shaping — **DONE** (prelude batch 1) | **drang prelude** | ✅ DONE |
 | ~~`pad`, `capitalize`, `reverse`~~ | string conveniences — **DONE** (prelude batch 1) | **drang prelude** | ✅ DONE |
 | ~~`clamp`/`sign`, `get_in`, `deep_merge`, `retry`, `dedent`~~ | ergonomic helpers — **DONE** (prelude finish-up) | **drang prelude** | ✅ DONE |
-| `indent`, `title`, array `reverse` | leftover string/array conveniences | **drang prelude** | 0.6 CANDIDATE |
-| ~~`replace_first`~~, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits). `replace_first` — **DONE** (landed with the pre-1.0 naming pass as `replace_first`/`replace_all`, literal-or-regex needle) | Go | 0.6 CANDIDATE |
+| `indent`, `title` | leftover string conveniences | **drang prelude** | CANDIDATE |
+| ~~array `reverse`~~ | array convenience — **DONE in 0.7**; `reverse` now handles strings and arrays | Go | ✅ DONE |
+| ~~`replace_first`~~, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits). `replace_first` — **DONE** (landed with the pre-1.0 naming pass as `replace_first`/`replace_all`, literal-or-regex needle) | Go | MIXED |
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
 | ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
 | TOML / INI config parsing | no Go-stdlib parser → would need a third-party library (against the dependency-light pillar) | Go | GATED (decision-record first) |
@@ -127,9 +140,9 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
-| Rebuild + release/version discipline | the local `drang.exe` had silently fallen ~9h behind HEAD; add `z build` + version stamp + a release check | S | PARTIAL (binary now current) |
+| ~~Rebuild + release/version discipline~~ | **DONE in 0.7**: version-stamped binary, signed Windows release asset, and the local preflight is the release gate | S | ✅ DONE |
 | ~~`drang test`~~ | **DONE**: `example` assertions (`== `/ truthy / `fails`, a no-op in normal runs) + the runner (per-file pass/fail, non-zero exit) + **golden-output snapshots** (sibling `.golden`, captured-stdout diff, `--update` to re-bless) | M | ✅ DONE |
-| ~~`drang fmt` (+ `--fix` = the edition/migration mechanism)~~ | **DONE**: faithful canonical formatter (comments preserved + drop-guard, surface-faithful via AST provenance, width-100 wrapping); CLI `-w`/`--check`/`-l`/`-d`; `--fix` ships the AST-rewrite migration hook (empty rule set today) | L | ✅ DONE |
+| ~~`drang fmt` (+ `--fix` = the edition/migration mechanism)~~ | **DONE**: faithful canonical formatter (comments preserved + drop-guard, surface-faithful via AST provenance, width-100 wrapping); CLI `-w`/`--check`/`-l`/`-d`; `--fix` now ships real 0.7 migration rules for the vocabulary freeze | L | ✅ DONE |
 | `-i` in-place edit for one-liner mode | `perl -i -pe` is the canonical text-munge | S–M | DEFERRED |
 | REPL polish / editor support / LSP | real adoption infra, but one-user project — low priority | L | NOT-STARTED |
 
@@ -137,12 +150,12 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
-| Source positions in one-liner / stream errors | a `-pe` error with no line number is a daily papercut | M | DEFERRED |
+| ~~Source positions in one-liner / top-level propagation errors~~ | **DONE in 0.6**: `-n`/`-p` runtime errors and top-level `?` propagation carry source positions | M | ✅ DONE |
 | VM↔walker: bare `use "path"` statement not compiled | `compiler.go` `default: c.fail()` → whole program falls back to the tree-walker when a bare `use` is present (captured `use(...)` compiles fine). No `OpUseMerge` | M | PARTIAL |
 | VM↔walker: bare ident-as-value not compiled | forces walker fallback; minor | S | PARTIAL |
 | Startup benchmark + prelude precompile (go:generate bytecode) | reserved optimization; gate behind a real benchmark first | S / M | DEFERRED-BY-DESIGN |
 | `--profile` pprof output | called a freebie in §11; `drang_gc` exists, no flag | S | NOT-STARTED |
-| Parser/lexer unit-test coverage | only via eval integration tests today | M | NOT-STARTED |
+| ~~Parser / formatter / backend fuzz coverage~~ | **DONE in 0.7**: `FuzzParse`, `FuzzFmtRoundTrip`, and `FuzzBackendParity` run as seeds under ordinary tests and as bounded fuzz targets in the preflight | M | ✅ DONE |
 | ~~Exhaustively test process supervision (`{supervise: true}`) on Unix~~ | **DROPPED (2026-07-01)** — superseded by the Windows-only decision (DESIGN §3.0). The Unix reaper (`supervise_unix.go` / `reap_unix.go`) is retired, not validated. On Windows-only, supervision now runs on **Job Objects** (`internal/winjob`: born-in-job `KILL_ON_JOB_CLOSE` → die-with-parent + race-free whole-tree kill) — the reaper side-car is deleted. | — | DROPPED |
 | ~~`is_terminal()` / the REPL's `interactive()` use a coarse `os.ModeCharDevice` check~~ | **FIXED (2026-07-01):** replaced with a real Windows isatty — `GetConsoleMode` plus the MSYS2/Cygwin pty-name heuristic (`internal/eval/terminal.go`, shared by `is_terminal()` and the REPL), so mintty / Git Bash now start the REPL and `is_terminal()` reports correctly there. Also added `SetConsoleOutputCP(CP_UTF8)` at startup so non-ASCII output isn't mojibake on a stock console. | S–M | ✅ DONE |
 
@@ -151,7 +164,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | Item | Status |
 |------|--------|
 | Module privacy (every top-level `.foo` is exported) | NOT-STARTED |
-| Duplicate `fn .foo` in one file = silent last-wins (should warn/error) | NOT-STARTED |
+| ~~Duplicate `fn .foo` in one file = silent last-wins~~ | ✅ DONE — 0.7 warns on stderr while preserving last-definition-wins |
 | Extensionless path precedence (bare file shadows `<name>.dr`) | DEFERRED-BY-DESIGN |
 | Bare `use("x")` with parens as a discarded statement = silent no-op | DEFERRED-BY-DESIGN |
 | `pmap`/`spawn` mutable-`:=`-global caveat (only `::=` consts are frozen/pmap-safe; a static resolver to reject the rest is reserved) | DEFERRED-BY-DESIGN |

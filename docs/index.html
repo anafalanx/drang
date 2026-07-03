@@ -31,14 +31,14 @@
 <main id="main" class="wrap">
 
   <section class="hero">
-    <span class="pill">v0.6 · released</span>
+    <span class="pill">v0.7 · released</span>
     <h1 class="mark">drang</h1>
     <p class="tag">Your agents write the glue. You can read it.</p>
     <p class="lede">Reads like Ruby, thinks like Perl, runs like Go. A small, parallel
       scripting language for text, glue, and orchestration.</p>
     <p class="etym">drang: Dutch/German for drive, urge, momentum.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.6</a>
+      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.7</a>
       <a class="btn ghost" href="https://github.com/anafalanx/drang">View on GitHub</a>
     </div>
   </section>
@@ -74,7 +74,7 @@ say($"hi $user, you have $msgs new")   <span class="c"># hi ada, you have 3 new<
 $v := capture(exe(), "--version")
 say($"running $v")   <span class="c"># running drang 0.7</span></pre>
 <pre class="code slide" data-label="No orphaned processes" hidden><span class="c"># workers under {supervise: true} die with the parent:</span>
-<span class="c"># the whole tree, on every OS (clean exit, crash, or kill)</span>
+<span class="c"># the whole tree, on Windows (clean exit, crash, or kill)</span>
 ["api", "worker", "cron"]
     <span class="op">|&gt;</span> map(|$svc| start(exe(), "-e", "sleep(30)", {supervise: true}))
     <span class="op">|&gt;</span> len   <span class="c"># 3, all reaped when this script exits</span></pre>
