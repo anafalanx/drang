@@ -1871,12 +1871,7 @@ var builtins = map[string]builtin{
 	"atan":  builtinAtan,
 	"atan2": builtinAtan2,
 	"exp":   builtinExp,
-	"log2":  builtinLog2,
-	"log10": builtinLog10,
-	"hypot": builtinHypot,
-	"cbrt":  builtinCbrt,
 	"pi":    builtinPi,
-	"e":     builtinE,
 
 	// regex (RE2; regex-needle replacement is replace_first/replace_all above)
 	"re":       builtinRe,

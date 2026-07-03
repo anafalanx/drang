@@ -22,8 +22,8 @@ filled, plus a first math/ergonomics batch and two robustness fixes. Still Windo
   child's stdin.
 
 ### Added — language
-- **Trigonometry & extended math** (radians), the capability area the manual had promised:
-  `sin cos tan asin acos atan atan2 exp log2 log10 hypot cbrt`, plus the constants `pi()` / `e()`.
+- **Trigonometry & a small extended-math line** (radians), the capability area the manual had
+  promised: `sin cos tan asin acos atan atan2 exp`, plus `log(x, base?)` and the constant `pi()`.
   Thin bindings over Go's `math`; a domain or type error is a catchable Err, never a silent NaN.
 - **Compound assignment extended** to `%=`, `~=`, and `//=`. `~=` appends/concatenates (seeding a
   fresh slot with `""`); `//=` is defined-or in place — it takes the right-hand side only when the

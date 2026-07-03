@@ -43,14 +43,11 @@ say(recv($c))`, "7\n")
 // constants, domain errors, and type errors (catchable Err, not a silent NaN).
 func TestTrig(t *testing.T) {
 	assertBoth(t, `say(sin(0), cos(0), atan(0), exp(0))`, "0 1 0 1\n")
-	assertBoth(t, `say(cbrt(27), hypot(3, 4))`, "3 5\n")
-	assertBoth(t, `say(log2(8), log10(1000))`, "3 3\n")
-	assertBoth(t, `say(round(pi() * 1000000), round(e() * 1000000))`, "3141593 2718282\n")
+	assertBoth(t, `say(round(pi() * 1000000))`, "3141593\n")
 	assertBoth(t, `say(round(atan2(1, 1) * 4 / pi()))`, "1\n") // atan2(1,1) == pi/4
 	// domain / type errors are catchable Err values
 	assertBoth(t, `say(is_err(asin(2)), is_err(acos(-2)))`, "true true\n")
-	assertBoth(t, `say(is_err(log2(0)), is_err(log10(-1)))`, "true true\n")
-	assertBoth(t, `say(is_err(sin("x")), is_err(hypot(1, "y")))`, "true true\n")
+	assertBoth(t, `say(is_err(sin("x")), is_err(exp("y")))`, "true true\n")
 	// wrong arity still aborts (Go-error), so is_err can't catch it — the program fails
 	for _, vm := range []bool{false, true} {
 		if _, err := runBackend(t, `sin(1, 2)`, vm); err == nil {

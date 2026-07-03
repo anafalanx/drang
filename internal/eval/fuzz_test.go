@@ -49,8 +49,8 @@ var pureIdents = map[string]bool{
 	"abs": true, "sum": true, "min": true, "max": true, "floor": true, "ceil": true,
 	"round": true, "sqrt": true, "pow": true, "log": true, "div": true,
 	"sin": true, "cos": true, "tan": true, "asin": true, "acos": true, "atan": true,
-	"atan2": true, "exp": true, "log2": true, "log10": true, "hypot": true, "cbrt": true,
-	"pi": true, "e": true,
+	"atan2": true, "exp": true,
+	"pi": true,
 	// regex — compiling and matching are pure
 	"re": true, "matches": true, "match": true, "find_all": true,
 }

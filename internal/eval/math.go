@@ -8,8 +8,9 @@ import (
 )
 
 // Minimal numeric helpers — daily-driver math (byte sizes, counters, report math,
-// scaling, percentages), deliberately NOT a math/trig kitchen sink (no sin/cos, no
-// bignum). abs/sum/min/max preserve int vs float; floor/ceil/round and truncating-
+// scaling, percentages) plus a small trig/exp line, deliberately NOT a scientific stack
+// (no bignum, complex, or linear algebra; log2/log10/hypot/cbrt/e were dropped in 0.7 as
+// redundant/over-provisioned). abs/sum/min/max preserve int vs float; floor/ceil/round and truncating-
 // integer div return an int; sqrt/log return a float; pow returns an int when both
 // operands are ints and the exponent is non-negative, else a float. Following the
 // builtin convention: wrong arity aborts; a bad operand (non-number, sqrt of a negative,
@@ -292,23 +293,7 @@ func mathArcUnary(name string, f func(float64) float64, args []value.Value) (val
 	return value.MakeFloat(f(x)), nil
 }
 
-// mathPosUnary is mathUnary for functions defined only on positive reals (log2, log10).
-func mathPosUnary(name string, f func(float64) float64, args []value.Value) (value.Value, error) {
-	if len(args) != 1 {
-		return value.MakeNil(), fmt.Errorf("%s expects 1 argument, got %d", name, len(args))
-	}
-	a := args[0]
-	if !a.IsNumber() {
-		return value.MakeErr(name+": expected a number, got "+a.TypeName(), 1), nil
-	}
-	x := a.Num()
-	if math.IsNaN(x) || x <= 0 {
-		return value.MakeErr(name+": of NaN or a non-positive number", 1), nil
-	}
-	return value.MakeFloat(f(x)), nil
-}
-
-// mathBinary wraps a two-argument float64 function (atan2, hypot).
+// mathBinary wraps a two-argument float64 function (atan2).
 func mathBinary(name string, f func(float64, float64) float64, args []value.Value) (value.Value, error) {
 	if len(args) != 2 {
 		return value.MakeNil(), fmt.Errorf("%s expects 2 arguments, got %d", name, len(args))
@@ -328,29 +313,19 @@ func builtinCos(args []value.Value) (value.Value, error)  { return mathUnary("co
 func builtinTan(args []value.Value) (value.Value, error)  { return mathUnary("tan", math.Tan, args) }
 func builtinAtan(args []value.Value) (value.Value, error) { return mathUnary("atan", math.Atan, args) }
 func builtinExp(args []value.Value) (value.Value, error)  { return mathUnary("exp", math.Exp, args) }
-func builtinCbrt(args []value.Value) (value.Value, error) { return mathUnary("cbrt", math.Cbrt, args) }
 
 func builtinAsin(args []value.Value) (value.Value, error) { return mathArcUnary("asin", math.Asin, args) }
 func builtinAcos(args []value.Value) (value.Value, error) { return mathArcUnary("acos", math.Acos, args) }
 
-func builtinLog2(args []value.Value) (value.Value, error)  { return mathPosUnary("log2", math.Log2, args) }
-func builtinLog10(args []value.Value) (value.Value, error) { return mathPosUnary("log10", math.Log10, args) }
-
 func builtinAtan2(args []value.Value) (value.Value, error) { return mathBinary("atan2", math.Atan2, args) }
-func builtinHypot(args []value.Value) (value.Value, error) { return mathBinary("hypot", math.Hypot, args) }
 
-// builtinPi and builtinE are the two math constants as zero-arg builtins (bare names
-// are functions in drang; bind a constant if you prefer: $PI ::= pi()).
+// builtinPi is the constant pi as a zero-arg builtin (bare names are functions in drang;
+// bind a constant if you prefer: $PI ::= pi()). log2/log10 (use log(x, 2)/log(x, 10)),
+// hypot, cbrt, and the e() constant were dropped in 0.7 as over-provisioning for a glue
+// language (log2/log10 are redundant; hypot=sqrt(x*x+y*y); e=exp(1)).
 func builtinPi(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {
 		return value.MakeNil(), fmt.Errorf("pi expects no arguments, got %d", len(args))
 	}
 	return value.MakeFloat(math.Pi), nil
-}
-
-func builtinE(args []value.Value) (value.Value, error) {
-	if len(args) != 0 {
-		return value.MakeNil(), fmt.Errorf("e expects no arguments, got %d", len(args))
-	}
-	return value.MakeFloat(math.E), nil
 }

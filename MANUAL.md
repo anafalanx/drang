@@ -3153,7 +3153,7 @@ are evaluator special forms, not map builtins, and are documented elsewhere; `pm
 
 ### Numeric
 
-Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bignum). `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round`/`div` return an int; `sqrt`/`log` return a float; `pow` returns an int when it can. A bad operand (non-number, `sqrt` of a negative, `log` of a non-positive, divide-by-zero, overflow) is a catchable Err.
+Minimal daily-driver math plus a small trig/exp line — not a scientific stack (no bignum, complex, or linear algebra). `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round`/`div` return an int; `sqrt`/`log` return a float; `pow` returns an int when it can. A bad operand (non-number, `sqrt` of a negative, `log` of a non-positive, divide-by-zero, overflow) is a catchable Err.
 
 | Builtin | Signature | Description |
 |---|---|---|
@@ -3166,18 +3166,14 @@ Minimal daily-driver math (not a math/trig kitchen sink: no `sin`/`cos`, no bign
 | `round` | `round(n)` | Round to the nearest int (half away from zero). |
 | `sqrt` | `sqrt(n)` | Square root (float); negative → Err. |
 | `pow` | `pow(base, exp)` | base^exp; int when both are ints and exp ≥ 0 (overflow → Err), else float. |
-| `log` | `log(x, base?)` | Natural log, or log base `base`; non-positive `x` or bad base → Err. |
-| `log2` | `log2(x)` | Base-2 log; non-positive `x` → Err. |
-| `log10` | `log10(x)` | Base-10 log; non-positive `x` → Err. |
-| `exp` | `exp(x)` | e raised to `x` (float). |
-| `cbrt` | `cbrt(x)` | Cube root (float; defined for negatives). |
+| `log` | `log(x, base?)` | Natural log, or log base `base` (e.g. `log(x, 2)`, `log(x, 10)`); non-positive `x` or bad base → Err. |
+| `exp` | `exp(x)` | e raised to `x` (float; `exp(1)` is e). |
 | `div` | `div(a, b)` | Truncating integer division (toward zero, matching `%`); divide-by-zero → Err. |
 | `sin` `cos` `tan` | `sin(r)` | Trigonometric functions; the argument is in **radians**. |
 | `asin` `acos` | `asin(x)` | Inverse sine/cosine; argument outside `[-1, 1]` → Err. |
 | `atan` | `atan(x)` | Inverse tangent (radians). |
 | `atan2` | `atan2(y, x)` | Angle of the point `(x, y)` in radians, quadrant-correct. |
-| `hypot` | `hypot(x, y)` | `sqrt(x*x + y*y)` without overflow. |
-| `pi` `e` | `pi()` | The constants π and e as zero-arg builtins (`$PI ::= pi()` for a constant). |
+| `pi` | `pi()` | The constant π as a zero-arg builtin (`$PI ::= pi()` for a constant). |
 
 Trigonometry works in radians — `pi()` converts (a full turn is `2 * pi()`). A non-number or
 out-of-domain argument is a catchable Err, never a silent NaN:
@@ -3404,7 +3400,7 @@ drang is a personal daily-driver under active construction, not a finished langu
 
 ### Math is daily-driver-sized, not a scientific library
 
-The math family covers everyday needs — `abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round`/`sqrt`/`pow`/`log`/`log2`/`log10`/`exp`/`cbrt`/`div`, the trig set (`sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`/`hypot`, radians), and the constants `pi()`/`e()` — but it is not a scientific computing stack. There is no arbitrary-precision/bignum arithmetic (`int` is 64-bit and overflow is a loud Err, see below), no complex numbers, and no matrix/linear-algebra or statistics library (the prelude has `mean`/`median`; reach for a real tool beyond that). Everything else a glue script commonly reaches for *is* here: HTTP (`http_get`/`http_post`/`http`, see [HTTP client](#http-client)), date/time, hashing, encodings, and randomness. (The bare name `fetch` is not a builtin. Use `http_get`.)
+The math family covers everyday needs — `abs`/`sum`/`min`/`max`/`floor`/`ceil`/`round`/`sqrt`/`pow`/`log`/`exp`/`div`, the trig set (`sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`, radians), and the constant `pi()` — but it is not a scientific computing stack. There is no arbitrary-precision/bignum arithmetic (`int` is 64-bit and overflow is a loud Err, see below), no complex numbers, and no matrix/linear-algebra or statistics library (the prelude has `mean`/`median`; reach for a real tool beyond that). Everything else a glue script commonly reaches for *is* here: HTTP (`http_get`/`http_post`/`http`, see [HTTP client](#http-client)), date/time, hashing, encodings, and randomness. (The bare name `fetch` is not a builtin. Use `http_get`.)
 
 ### Missing operators
 
