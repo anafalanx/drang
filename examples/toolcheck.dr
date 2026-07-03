@@ -4,7 +4,7 @@
 #   run:  drang toolcheck.dr [project-root]
 
 $root ::= $ARGV[0] // "C:/zmal/_els"
-$tc ::= join($root, ".toolchain")
+$tc ::= path_join($root, ".toolchain")
 
 # Each component: where it lives, the probe path segments under it, whether it's
 # core, the wanted version ("" = any), and how to read its version.
@@ -24,7 +24,7 @@ fn .base_for($c) {
 }
 
 fn .probe_path($c) {
-  reduce($c.probe, .base_for($c), |$acc, $seg| join($acc, $seg))
+  reduce($c.probe, .base_for($c), |$acc, $seg| path_join($acc, $seg))
 }
 
 fn .version_of($c) {

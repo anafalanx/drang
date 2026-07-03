@@ -135,6 +135,7 @@ func runModule(canon string, importerEnv *Env) (value.Value, error) {
 	if errs := p.Errors(); len(errs) > 0 {
 		return value.MakeNil(), fmt.Errorf("parse error in %s: %s", canon, strings.Join(errs, "; "))
 	}
+	WarnDuplicateTopFns(prog, canon, stderr) // a module is a file too; surface last-wins shadowing in it
 	base := NewEnv()
 	// The module's functions charge overflow-guard fires to the IMPORTING run's
 	// counter, which the entry points reset — a module universe of its own would

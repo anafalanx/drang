@@ -203,7 +203,7 @@ say("after")`,
 	// regex: qr// literal + re() value, exercised by the builtins on both backends
 	`$d := qr/\d+/
 say(matches("a1b2", $d), matches("xyz", $d))
-say(find_all("a1 b2 c3", $d))
+say(match_all("a1 b2 c3", $d))
 say(match("k=9", qr{(\w+)=(\d+)})[2])
 say(replace_all("a1b2", re(q(\d)), "#"))
 say(qr/x/i == qr/x/i, qr/x/ == qr/x/i)`,

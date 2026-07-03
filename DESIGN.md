@@ -659,12 +659,12 @@ two verified sub-slices: core string builtins, then regex + an escape refinement
   `starts_with`/`ends_with`, `format` (`{}` placeholders rendered like `say`;
   `{{`/`}}` literal braces; missing arg → literal `{}`), `lines` (CRLF-normalized,
   one trailing newline dropped), `repeat` (negative count → `Err`).
-- **`join` made polymorphic:** `join(array, sep?)` joins strings — the universal
-  meaning, what a Perl/Python user reaches for — while `join(str, str, …)` still
-  joins path segments; disambiguated by first-arg type, so shipped path usage is
-  unaffected.
+- **`join` + `path_join` (split pre-1.0):** `join(array, sep?)` renders+joins an
+  array — the universal Perl/Python meaning — while `path_join(seg, …)` assembles
+  OS-native path segments. (Originally one first-arg-polymorphic `join`; split so each
+  name carries one meaning. See the 0.7 vocabulary-freeze note below.)
 - **Regex (Go RE2):** `matches` (bool), `match` (`[full, g1, …]` or nil),
-  `find_all` (all full matches), `gsub` (global replace, `$1`/`${name}` backrefs).
+  `match_all` (all full matches), `replace_all` (global replace, `$1`/`${name}` backrefs).
   A malformed pattern is a catchable `Err`. RE2 is linear-time with no
   backreferences-in-pattern and no lookaround — a deliberate safety trade.
 - ~30 new Go test cases (strings, regex, the escape policy).
@@ -1739,11 +1739,11 @@ the structural investments. Not yet started — captured here to act on later.
   unreliable on Windows (it may be exposed as `Path`); the `$ENV` map is built from
   `os.Environ()` with exact-case keys. `os.Getenv`/`os.LookupEnv` ARE case-insensitive
   on Windows, so a thin `env()` over them fixes it (return the default/`nil` when unset).
-- **More path builtins:** `is_abs(p)`, `clean(p)`, `rel(base, p)`, `within(base, p)`,
+- **More path builtins:** `is_abs(p)`, `clean(p)`, `rel(base, p)`, `is_within(base, p)`,
   `path_list_sep()` — thin `filepath` bindings (`IsAbs`/`Clean`/`Rel`, a no-`..`-escape
-  check for `within`, and `os.PathListSeparator`). Fit the existing path-helper family.
+  check for `is_within`, and `os.PathListSeparator`). Fit the existing path-helper family.
 - **`read_dir(path)`** → array of `{name, path, is_dir}` (`os.ReadDir`; not-found → a
-  catchable Err). Resolver code wants this rather than `glob(join(root, "*"))`.
+  catchable Err). Resolver code wants this rather than `glob(path_join(root, "*"))`.
 - **`run`/`capture`/`pipe` `{arg0: "make"}` option** — present a different argv[0]
   than the launched executable (needed for full `z` parity; Go can do this by setting
   `cmd.Args[0]` after building the command).
@@ -1960,7 +1960,7 @@ positively (each already evidenced across the registry):
 
 Renames applied (all with `fmt --fix` rules — the first REAL rules in the edition
 mechanism): `gsub`+`replace` → `replace_first`/`replace_all` (needle TYPE picks
-literal-vs-regex, Ruby's convention; bare-form polarity now matches `find`/`find_all`;
+literal-vs-regex, Ruby's convention; bare-form polarity now matches `match`/`match_all`;
 `--fix` wraps old gsub string patterns in `re(...)` to preserve their regex semantics);
 `each_line` → `stream_lines` (lone verb_noun in the bare process block; false kinship
 with the `each` HOF); `strftime` → `format_time` (rhymes with `parse_time`);
@@ -1970,6 +1970,18 @@ conversion, not the character); `index_of` → `find_index` (law 2 + the `find_`
 the glued Python spelling was never blessed); `tally` → folded into `count_by` identity
 (law 5; also removes the `count`→int vs `count_by`→map prefix collision); `sys_gc` →
 `drang_gc`.
+
+**Later — 0.7 vocabulary freeze (2026-07):** three more renames close the pre-1.0
+window (each with a `fmt --fix` rule, except the last, which cannot be auto-migrated):
+`find_all` → `match_all` (joins `match`/`matches` under one stem); `within` → `is_within`
+(the `is_` prefix marks the bool guard, and frees bare `within` for a future
+`within(5s){}` deadline construct); and the first-arg-polymorphic `join` **splits** into
+array-only `join` + `path_join` — which meaning a `join(...)` call had was a runtime-type
+decision the formatter can't see, so a stale path-join now fails loudly at `join` with a
+message pointing to `path_join` (silent mis-rewrite would be worse). Two clamps unified in
+the same pass: an explicit `exit(negative)` now maps to `1` (a failure), matching the
+Err-dispatch exit path (`exit(0)` is still a deliberate success); and a duplicate
+top-level `fn .foo` in one file now warns instead of silently taking the last definition.
 
 **The `drang_` law (new):** facts about the MACHINE are bare accessors (`os`, `arch`,
 `home`, `exe`, `cwd`, ...); knobs and introspection on the drang INTERPRETER itself take
@@ -2282,8 +2294,8 @@ package race-clean.
 Earlier design notes marked `=~` match / `s///` substitution (with `$1..$n` capture
 variables) as a `[LOCKED]` feature — "the Perl soul." On review, **reversed: these are
 now deliberately OUT OF SCOPE.** drang already expresses the Perl *power* through a
-cleaner idiom — `qr//` literals + the `match`/`gsub`/`matches`/`find_all` builtins +
-the `|>` pipeline (e.g. `$s |> gsub(qr/\s+/, " ")`, `if matches($line, qr/x/) {…}`).
+cleaner idiom — `qr//` literals + the `match`/`replace_all`/`matches`/`match_all` builtins +
+the `|>` pipeline (e.g. `$s |> replace_all(qr/\s+/, " ")`, `if matches($line, qr/x/) {…}`).
 Adding `=~`/`s///` would be:
 
 - **Pure sugar over `gsub`/`match`** — a second idiom for one job, against the curated-

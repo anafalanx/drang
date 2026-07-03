@@ -25,7 +25,9 @@ var fixRules = []func(ast.Node){
 //   - builtin renames: each_line→stream_lines, index_of→find_index, abspath→abs_path,
 //     slash→to_slash, strftime→format_time, url_encode→to_url, url_decode→from_url,
 //     sys_gc→drang_gc, replace→replace_all (bare replace WAS replace-all; the new
-//     bare-first form is replace_first)
+//     bare-first form is replace_first), find_all→match_all (joins the match/matches
+//     family under one stem), within→is_within (the is_ prefix marks the bool guard,
+//     and frees bare `within` for a future deadline construct)
 //   - gsub(s, pat, r) CALL SITES → replace_all(s, pat, r) when pat is a qr// literal,
 //     else replace_all(s, re(pat), r): old gsub compiled a STRING pattern as a regex,
 //     while replace_all treats a string needle as a literal — wrapping in re()
@@ -45,6 +47,11 @@ var fixRules = []func(ast.Node){
 //     (loud). Migrate by hand: |$xs| count_by($xs, |$e| $e).
 //   - a gsub/tally call whose arity matches NEITHER the plain nor the piped form — it
 //     was already an error in 0.7; the rewrite must not invent behavior for it.
+//   - the join SPLIT (polymorphic join → array-only join + new path_join) — which
+//     meaning a `join(...)` call had is decided by its first argument's RUNTIME type,
+//     which the formatter cannot see. A path-join site left as join now fails loudly
+//     ("join: first argument must be an array … use path_join") rather than being
+//     silently mis-rewritten; migrate those sites by hand to path_join.
 //
 // An interpolating string ($"...${...}", $qq{...}) whose ${...} parts are rewritten has
 // its Raw cleared, so the printer re-renders it from Parts instead of reprinting the
@@ -64,9 +71,12 @@ func fixNamespace08(n ast.Node) {
 		"url_decode": "from_url",
 		"sys_gc":     "drang_gc",
 		"replace":    "replace_all",
+		"find_all":   "match_all",
+		"within":     "is_within",
 		// gsub and tally are deliberately absent: their bare-reference rename would not
 		// preserve semantics (see the function comment); only their CALL SITES migrate,
-		// in the structural branch below.
+		// in the structural branch below. join is absent too: its split into join/path_join
+		// depends on a runtime arg type the formatter cannot see (see the function comment).
 	}
 
 	// Pass 1: collect map-literal KEY Idents — user data, never renamed.

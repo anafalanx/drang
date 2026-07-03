@@ -1794,7 +1794,7 @@ var builtins = map[string]builtin{
 	"contains":    builtinContains,
 
 	// filesystem: path helpers
-	"join":          builtinJoin,
+	"path_join":     builtinPathJoin,
 	"dirname":       builtinDirname,
 	"basename":      builtinBasename,
 	"ext":           builtinExt,
@@ -1804,7 +1804,7 @@ var builtins = map[string]builtin{
 	"is_abs":        builtinIsAbs,
 	"clean":         builtinClean,
 	"rel":           builtinRel,
-	"within":        builtinWithin,
+	"is_within":     builtinIsWithin,
 	"path_list_sep": builtinPathListSep,
 	// filesystem: stat guards
 	"exists": builtinExists,
@@ -1827,7 +1827,7 @@ var builtins = map[string]builtin{
 	"size":       builtinSize,
 
 	// text / strings (replace_first/replace_all take a literal string OR a qr// regex
-	// needle — the bare form is the first/single one, _all is exhaustive, like find/find_all)
+	// needle — the bare form is the first/single one, _all is exhaustive, like match/match_all)
 	"split":         builtinSplit,
 	"replace_first": builtinReplaceFirst,
 	"replace_all":   builtinReplaceAll,
@@ -1874,12 +1874,13 @@ var builtins = map[string]builtin{
 	"pi":    builtinPi,
 
 	// regex (RE2; regex-needle replacement is replace_first/replace_all above)
-	"re":       builtinRe,
-	"matches":  builtinMatches,
-	"match":    builtinMatch,
-	"find_all": builtinFindAll,
+	"re":        builtinRe,
+	"matches":   builtinMatches,
+	"match":     builtinMatch,
+	"match_all": builtinMatchAll,
 
 	// array ops (no callback)
+	"join": builtinJoin, // render elements + join with a separator (path_join is the path sibling)
 	"take": builtinTake,
 	"drop": builtinDrop,
 	"uniq": builtinUniq,

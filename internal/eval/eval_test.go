@@ -352,7 +352,7 @@ func TestOutput(t *testing.T) {
 		{"regex-no-match", `say(matches("foo", "\d+"))`, "false\n"},
 		{"regex-match-caps", `say(match("a1-b2", "(\w+)-(\w+)"))`, "[a1-b2, a1, b2]\n"},
 		{"regex-match-nil", `say(match("xyz", "\d+"))`, "nil\n"},
-		{"regex-find-all", `say(find_all("a1b2c3", "\d"))`, "[1, 2, 3]\n"},
+		{"regex-match-all", `say(match_all("a1b2c3", "\d"))`, "[1, 2, 3]\n"},
 		{"regex-replace-all", `say(replace_all("a1b2", re("\d"), "#"))`, "a#b#\n"},
 		{"regex-replace-all-backref", `say(replace_all("John Smith", re("(\w+) (\w+)"), "$2 $1"))`, "Smith John\n"},
 		{"regex-bad-pattern-caught", `say(matches("x", "(") // "bad")`, "bad\n"},

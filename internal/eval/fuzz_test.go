@@ -41,7 +41,8 @@ var pureIdents = map[string]bool{
 	"repeat": true, "find_index": true,
 	// path string manipulation (no disk access)
 	"dirname": true, "basename": true, "ext": true, "stem": true, "to_slash": true,
-	"is_abs": true, "clean": true, "rel": true, "within": true, "path_list_sep": true,
+	"is_abs": true, "clean": true, "rel": true, "is_within": true, "path_list_sep": true,
+	"path_join": true,
 	// encoding
 	"from_json": true, "to_json": true, "from_csv": true, "to_csv": true,
 	"to_hex": true, "from_hex": true, "to_url": true, "from_url": true,
@@ -52,7 +53,7 @@ var pureIdents = map[string]bool{
 	"atan2": true, "exp": true,
 	"pi": true,
 	// regex — compiling and matching are pure
-	"re": true, "matches": true, "match": true, "find_all": true,
+	"re": true, "matches": true, "match": true, "match_all": true,
 }
 
 // pureProgram reports whether prog uses only allowlisted operations, so both backends

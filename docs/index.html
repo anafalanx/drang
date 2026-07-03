@@ -80,7 +80,7 @@ say($"running $v")   <span class="c"># running drang 0.6</span></pre>
     <span class="op">|&gt;</span> len   <span class="c"># 3, all reaped when this script exits</span></pre>
 <pre class="code slide" data-label="RE2 regex" hidden><span class="c"># qr// literals, RE2-backed: no runaway backtracking</span>
 $line := "a1 b22 c333"
-find_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
+match_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
     </div>
     <div class="dots" id="demoDots" role="tablist" aria-label="Choose an example"></div>
   </div>

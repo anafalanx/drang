@@ -48,7 +48,7 @@ func TestExit(t *testing.T) {
 		{"not-recovered-by-defor", `exit(5) // 99`, 5},
 		{"die-is-1", `die("boom")`, 1},
 		{"clamp-high", `exit(300)`, 255},
-		{"clamp-negative", `exit(-1)`, 0},
+		{"clamp-negative", `exit(-1)`, 1}, // a negative status is a failure, not success
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

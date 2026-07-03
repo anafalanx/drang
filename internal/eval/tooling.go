@@ -125,10 +125,14 @@ func builtinParseArgs(args []value.Value) (value.Value, error) {
 	return out, nil
 }
 
+// clampExit coerces an explicit exit(code) into a valid process status. exit(0) is a
+// deliberate success, so 0 passes through; a NEGATIVE code is a failure, not success,
+// so it maps to 1 — the same negative→1 rule the Err-dispatch clampCode uses, so the
+// two exit paths agree.
 func clampExit(code int64) int {
 	switch {
 	case code < 0:
-		return 0
+		return 1
 	case code > 255:
 		return 255
 	default:

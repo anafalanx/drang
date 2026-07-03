@@ -462,7 +462,7 @@ These are deliberate omissions. Each is a parse error, not a missing feature you
 - **No exponent** `**`: there is no power operator.
 - **No bitwise** operators (`&`, `|`, `^`, `<<`, `>>`).
 - **No increment/decrement** `++` / `--`: use `+= 1` / `-= 1`.
-- **No Perl regex operators** (`=~`, `s///`) or `$1..$n` capture variables: drang uses `qr//` literals with the `match`/`replace_all`/`matches`/`find_all` builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.
+- **No Perl regex operators** (`=~`, `s///`) or `$1..$n` capture variables: drang uses `qr//` literals with the `match`/`replace_all`/`matches`/`match_all` builtins and pipelines; named captures come back as a map. This is a deliberate choice (keeping the clean three-sigil model), not a missing feature.
 
 ```drang
 say(2 ** 3)
@@ -789,7 +789,7 @@ ababab
 [a, b, c]
 ```
 
-Note `join` is polymorphic: `join(array, sep)` is the string join shown above, but `join` called on plain string arguments instead joins them as **path** components, see the filesystem section.
+`join` is array-only: `join(array, sep?)` renders each element and joins them with `sep`. To assemble filesystem **path** segments, use `path_join(seg, ...)` — see the filesystem section. (These were one polymorphic `join` before the pre-1.0 split; a path-join written as `join(...)` now fails loudly with a note pointing at `path_join`.)
 
 ### `format` and its placeholders
 
@@ -1837,7 +1837,7 @@ line 1: expected end of statement, got IDENT "x"
 ```drang
 say(matches("a/b", qr|/|))          # pattern contains a slash → use | delimiter
 say(match("ab", qr((a)(b))))        # ( ) nest around the groups
-say(find_all("aaa", qr{a{1}}))      # { } nest around the quantifier
+say(match_all("aaa", qr{a{1}}))     # { } nest around the quantifier
 ```
 
 ```
@@ -1866,13 +1866,13 @@ qr/(?i)x/
 
 ### The matching builtins
 
-For `matches`/`match`/`find_all`, the pattern is **either a string or a compiled `regex` value** — interchangeable. (`replace_first`/`replace_all` are the exception: a plain-string needle there is a LITERAL; see below.) Using a `qr//` value (or one from `re()`) reuses the compiled object instead of recompiling.
+For `matches`/`match`/`match_all`, the pattern is **either a string or a compiled `regex` value** — interchangeable. (`replace_first`/`replace_all` are the exception: a plain-string needle there is a LITERAL; see below.) Using a `qr//` value (or one from `re()`) reuses the compiled object instead of recompiling.
 
 | Builtin | Returns |
 |---|---|
 | `matches(s, p)` | bool: does `p` match anywhere in `s` |
 | `match(s, p)` | `[full, group1, group2, ...]`, or `nil` if no match |
-| `find_all(s, p)` | array of every (full) match, in order |
+| `match_all(s, p)` | array of every (full) match, in order |
 | `replace_first(s, needle, repl)` | `s` with the first match replaced by `repl` |
 | `replace_all(s, needle, repl)` | `s` with every match replaced by `repl` |
 
@@ -1880,7 +1880,7 @@ For `matches`/`match`/`find_all`, the pattern is **either a string or a compiled
 say(matches("Hello World", qr/world/i))
 say(match("2026-06-26", qr/(\d{4})-(\d{2})-(\d{2})/))
 say(match("nope", qr/\d+/))
-say(find_all("a1 b22 c333", qr/\d+/))
+say(match_all("a1 b22 c333", qr/\d+/))
 ```
 
 ```
@@ -1890,11 +1890,11 @@ nil
 [1, 22, 333]
 ```
 
-For `matches`/`match`/`find_all`, string and `qr//` pattern arguments are equivalent (a string is compiled as a pattern), but note the string form needs the backslash that the literal form does not:
+For `matches`/`match`/`match_all`, string and `qr//` pattern arguments are equivalent (a string is compiled as a pattern), but note the string form needs the backslash that the literal form does not:
 
 ```drang
-say(find_all("a1b2", "\d"))
-say(find_all("a1b2", qr/\d/))
+say(match_all("a1b2", "\d"))
+say(match_all("a1b2", qr/\d/))
 ```
 
 ```
@@ -2412,18 +2412,18 @@ cleans up:
 
 ```drang
 # A scratch dir under the system temp, cleaned up at the end.
-$dir := join($ENV["TEMP"], "drang_fs_tour")
+$dir := path_join($ENV["TEMP"], "drang_fs_tour")
 rm($dir)              # idempotent: no error if absent
 mkdir($dir)          # mkdir -p semantics
 
-$f := join($dir, "notes.txt")
+$f := path_join($dir, "notes.txt")
 write_file($f, "alpha\nbeta\ngamma\n")
 
 say("exists : " ~ exists($f))
 say("size   : " ~ size($f))
 say("lines  : " ~ len(lines(read_file($f))))
 
-for $m in glob(join($dir, "*.txt")) {
+for $m in glob(path_join($dir, "*.txt")) {
   say("glob   : " ~ basename($m))
 }
 
@@ -2439,7 +2439,7 @@ glob   : notes.txt
 gone   : true
 ```
 
-Two conventions show up throughout: `join(...)` assembles path segments
+Two conventions show up throughout: `path_join(...)` assembles path segments
 OS-correctly, and `~` concatenates strings. Use `:=` to declare a variable.
 
 ### Error model
@@ -2509,19 +2509,19 @@ say(len(lines("a\nb")))    # 2
 - `size(p)` → file size in bytes as an int, or `Err` if the path is missing.
 
 ```drang
-$dir := join($ENV["TEMP"], "drang_fs_demo2")
+$dir := path_join($ENV["TEMP"], "drang_fs_demo2")
 rm($dir)
 mkdir($dir)
 
-$src := join($dir, "src.txt")
+$src := path_join($dir, "src.txt")
 write_file($src, "hello")
 
-copy($src, join($dir, "copy.txt"))
-rename(join($dir, "copy.txt"), join($dir, "renamed.txt"))
+copy($src, path_join($dir, "copy.txt"))
+rename(path_join($dir, "copy.txt"), path_join($dir, "renamed.txt"))
 
 say("orig  : " ~ exists($src))                       # orig  : true
-say("copy  : " ~ exists(join($dir, "copy.txt")))     # copy  : false  (renamed away)
-say("moved : " ~ exists(join($dir, "renamed.txt")))  # moved : true
+say("copy  : " ~ exists(path_join($dir, "copy.txt")))     # copy  : false  (renamed away)
+say("moved : " ~ exists(path_join($dir, "renamed.txt")))  # moved : true
 rm($dir)
 ```
 
@@ -2529,7 +2529,7 @@ rm($dir)
 is never yielded):
 
 ```drang
-$all := glob(join($dir, "**", "*.go"))
+$all := glob(path_join($dir, "**", "*.go"))
 for $m in $all { say(to_slash($m)) }
 ```
 
@@ -2577,10 +2577,10 @@ These power the classic "rebuild only if stale" pattern.
   path or an array of paths. A *missing source* is a real `Err`.
 
 ```drang
-$dir := join($ENV["TEMP"], "drang_fresh")
+$dir := path_join($ENV["TEMP"], "drang_fresh")
 mkdir($dir)
-$src := join($dir, "main.c")
-$obj := join($dir, "main.o")
+$src := path_join($dir, "main.c")
+$obj := path_join($dir, "main.o")
 write_file($src, "int main(){}")
 
 say(stale($obj, $src))   # true  (target missing, build it)
@@ -3189,6 +3189,7 @@ say(is_err(asin(2)))        # true  (outside [-1, 1])
 | Builtin | Signature | Description |
 |---|---|---|
 | `split` | `split(s, sep?)` | Split `s`; no `sep` splits on whitespace runs, `""` splits into runes. |
+| `join` | `join(array, sep?)` | Inverse of `split`: render each element and join with `sep` (default `""`). Array-only; for path segments use `path_join`. |
 | `replace_first` | `replace_first(s, needle, repl)` | Replace the first `needle` (a string is literal; a `qr//` regex matches as a pattern, `$1`/`${name}` backrefs). |
 | `replace_all` | `replace_all(s, needle, repl)` | Replace every `needle` — same needle dispatch as `replace_first`. |
 | `trim` | `trim(s, cutset?)` | Trim whitespace, or the given `cutset` characters, from both ends. |
@@ -3264,7 +3265,7 @@ cached) or a compiled regex value (a `qr/.../` literal or `re(...)`).
 | `re` | `re(pattern)` | Compile a string pattern into a reusable regex value; bad pattern → Err. |
 | `matches` | `matches(s, pattern)` | True if `pattern` matches anywhere in `s`. |
 | `match` | `match(s, pattern)` | First match as `[full, group1, ...]`, or undef if no match. |
-| `find_all` | `find_all(s, pattern)` | Array of every (full) match, in order. |
+| `match_all` | `match_all(s, pattern)` | Array of every (full) match, in order. |
 | `replace_first` / `replace_all` | `replace_all(s, needle, repl)` | Replace the first / every match with `repl` (`$1`/`${name}` backrefs). A plain-string needle is a LITERAL — write `qr//` or `re(...)` when a pattern is meant. |
 
 ### Filesystem & paths
@@ -3274,7 +3275,7 @@ a bool; the rest signal real I/O failures as Err.
 
 | Builtin | Signature | Description |
 |---|---|---|
-| `join` | `join(seg, ...)` | Join path segments (OS-native). Also `join(arr, sep?)` to render+join an array. |
+| `path_join` | `path_join(seg, ...)` | Join path segments into one OS-native path. (To render+join an array, use `join` — see Strings.) |
 | `dirname` | `dirname(p)` | Directory portion of a path. |
 | `basename` | `basename(p)` | Final path element. |
 | `ext` | `ext(p)` | Extension including the dot (`.txt`), or `""`. |
@@ -3284,7 +3285,7 @@ a bool; the rest signal real I/O failures as Err.
 | `is_abs` | `is_abs(p)` | True if `p` is an absolute path. |
 | `clean` | `clean(p)` | Lexically simplify a path (resolve `.`/`..`). |
 | `rel` | `rel(base, p)` | Relative path from `base` to `p`; uncomparable → Err. |
-| `within` | `within(base, p)` | True if `p` is inside (or equal to) `base`. |
+| `is_within` | `is_within(base, p)` | True if `p` is inside (or equal to) `base`. |
 | `path_list_sep` | `path_list_sep()` | PATH-list separator (`;`). |
 | `exists` | `exists(p)` | True if the path exists. |
 | `is_dir` | `is_dir(p)` | True if the path exists and is a directory. |

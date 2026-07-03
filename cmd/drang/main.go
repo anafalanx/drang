@@ -274,6 +274,7 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 	if reportParseErrors(p, origin) {
 		os.Exit(1)
 	}
+	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
 	env := eval.NewEnv()
 	env.SetModuleDir(baseDir)
 	if err := eval.RunProgramWithArgs(prog, env, argv); err != nil {
@@ -293,6 +294,7 @@ func runStream(src, origin string, argv []string, autoPrint, autoSplit bool) {
 	if reportParseErrors(p, origin) {
 		os.Exit(1)
 	}
+	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
 	opts := eval.StreamOpts{AutoPrint: autoPrint, AutoSplit: autoSplit, Files: argv}
 	if err := eval.RunStream(prog, argv, opts); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {

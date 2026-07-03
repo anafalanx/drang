@@ -39,17 +39,31 @@ func twoStrings(name string, args []value.Value) (string, string, error) {
 
 // --- path helpers: pure string transforms (never touch the disk); a non-string arg is a catchable Err ---
 
-// builtinJoin is polymorphic: join(array, sep?) joins the array's elements into
-// a string (the universal meaning of join), while join(str, str, ...) joins path
-// segments. The first-argument type disambiguates (a path part is never an array).
+// builtinJoin renders an array's elements and joins them with a separator:
+// join(array, sep?) → string. This is the universal meaning of join that a
+// Perl/Python/Ruby user reaches for. It is array-only by design; to assemble
+// filesystem path segments use path_join (the type-dispatched polymorphism that
+// used to fold both meanings into join was retired pre-1.0).
 func builtinJoin(args []value.Value) (value.Value, error) {
-	if len(args) >= 1 && args[0].Tag() == value.Arr {
-		return joinStrings(args)
+	if len(args) == 0 || args[0].Tag() != value.Arr {
+		got := "no arguments"
+		if len(args) > 0 {
+			got = args[0].TypeName()
+		}
+		return value.MakeNil(), typeErrf("join: first argument must be an array, got %s (to join path segments use path_join)", got)
 	}
+	return joinStrings(args)
+}
+
+// builtinPathJoin joins its string arguments into one OS-native path:
+// path_join(seg, ...) → string, e.g. path_join($root, "out.txt"). A non-string
+// argument is a catchable Err. (join renders+joins an array; path_join is the path
+// sibling — the two were one polymorphic builtin before the pre-1.0 split.)
+func builtinPathJoin(args []value.Value) (value.Value, error) {
 	parts := make([]string, len(args))
 	for i, a := range args {
 		if a.Tag() != value.Str {
-			return value.MakeNil(), typeErrf("join: argument %d must be a string, got %s", i+1, a.TypeName())
+			return value.MakeNil(), typeErrf("path_join: argument %d must be a string, got %s", i+1, a.TypeName())
 		}
 		parts[i] = a.AsStr()
 	}
@@ -145,11 +159,11 @@ func builtinRel(args []value.Value) (value.Value, error) {
 	return value.MakeStr(r), nil
 }
 
-// builtinWithin reports whether target is inside base (or equal to it). It is a
-// guard (always a bool): uncomparable paths or any "../"-escaping relative path
-// are simply not within.
-func builtinWithin(args []value.Value) (value.Value, error) {
-	base, target, err := twoStrings("within", args)
+// builtinIsWithin reports whether target is inside base (or equal to it). The is_
+// prefix marks it a guard (always a bool, never a fallible op): uncomparable paths
+// or any "../"-escaping relative path are simply not within.
+func builtinIsWithin(args []value.Value) (value.Value, error) {
+	base, target, err := twoStrings("is_within", args)
 	if err != nil {
 		return value.MakeNil(), err
 	}
@@ -157,8 +171,8 @@ func builtinWithin(args []value.Value) (value.Value, error) {
 	if e != nil {
 		return value.MakeBool(false), nil
 	}
-	within := r == "." || (r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)))
-	return value.MakeBool(within), nil
+	inside := r == "." || (r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)))
+	return value.MakeBool(inside), nil
 }
 
 // builtinPathListSep returns the OS PATH-list separator (";" on Windows, ":" on

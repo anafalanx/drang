@@ -9,8 +9,9 @@ import (
 )
 
 // builtinFindIndex returns the index of the first occurrence of needle, or -1 if absent —
-// the "where" sibling of find/find_all. For a string subject the index is in runes (to
-// match chars()/slicing), not bytes, and an empty needle matches at 0. For an array subject
+// the "where" sibling of find (find returns the element, this returns its position). For a
+// string subject the index is in runes (to match chars()/slicing), not bytes, and an empty
+// needle matches at 0. For an array subject
 // it returns the first element index whose value structurally equals needle — the sibling
 // of the polymorphic contains(). A subject that is neither a string nor an array aborts
 // (the string-builtin convention).
@@ -267,8 +268,8 @@ func builtinRepeat(args []value.Value) (value.Value, error) {
 	return value.MakeStr(strings.Repeat(s, int(n))), nil
 }
 
-// joinStrings implements the array form of the polymorphic join builtin:
-// join(array, sep?) renders each element (like say) and joins them with sep.
+// joinStrings implements the join builtin: join(array, sep?) renders each element
+// (like say) and joins them with sep.
 func joinStrings(args []value.Value) (value.Value, error) {
 	if len(args) > 2 {
 		return value.MakeNil(), fmt.Errorf("join(array, sep) takes at most 2 arguments, got %d", len(args))

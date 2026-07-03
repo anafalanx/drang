@@ -94,6 +94,9 @@ func TestFixNamespace08Renames(t *testing.T) {
 		{"url", `say(url_encode(url_decode($s)))`, `say(to_url(from_url($s)))`},
 		{"slash", `slash($p)`, `to_slash($p)`},
 		{"sys-gc", `sys_gc("off")`, `drang_gc("off")`},
+		{"find-all", `find_all($s, qr/\d/)`, `match_all($s, qr/\d/)`},
+		{"within", `within($base, $p)`, `is_within($base, $p)`},
+		{"within-first-class", `filter($ps, within)`, `filter($ps, is_within)`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -108,8 +111,8 @@ func TestFixNamespace08Renames(t *testing.T) {
 // TestFixNamespace08MapKeysProtected: a bare map-literal KEY that happens to spell a
 // legacy builtin name is user data and must never be renamed.
 func TestFixNamespace08MapKeysProtected(t *testing.T) {
-	got := fixup(t, "$m := {replace: 1, tally: 2, slash: gsub($s, qr/x/, \"y\")}\n")
-	for _, key := range []string{"replace:", "tally:", "slash:"} {
+	got := fixup(t, "$m := {replace: 1, tally: 2, within: 3, find_all: 4, slash: gsub($s, qr/x/, \"y\")}\n")
+	for _, key := range []string{"replace:", "tally:", "within:", "find_all:", "slash:"} {
 		if !strings.Contains(got, key) {
 			t.Errorf("map key was renamed away, want %q preserved in:\n%s", key, got)
 		}

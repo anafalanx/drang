@@ -48,6 +48,28 @@ func TestModuleFlatMerge(t *testing.T) {
 	}
 }
 
+// A `use`d module is a file too, so a duplicate top-level fn in it must warn on the
+// import path — not only when the module is run directly (the runProgram CLI path).
+func TestModuleDuplicateFnWarns(t *testing.T) {
+	dir := t.TempDir()
+	writeMod(t, dir, "dup.dr", "fn .helper() { 1 }\nfn .helper() { 2 }")
+	var errBuf bytes.Buffer
+	oldErr := stderr
+	stderr = &errBuf
+	defer func() { stderr = oldErr }()
+	out, err := runMod(t, dir, "use \"./dup\"\nsay(.helper())")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2" { // last definition still wins (behavior unchanged)
+		t.Errorf("last-wins broken: got stdout %q, want 2", out)
+	}
+	warn := errBuf.String()
+	if !strings.Contains(warn, "defined more than once") || !strings.Contains(warn, "dup.dr") {
+		t.Errorf("module dup-fn warning missing; stderr=%q", warn)
+	}
+}
+
 func TestModuleIsolated(t *testing.T) {
 	dir := t.TempDir()
 	writeMod(t, dir, "util.dr", "fn .shout($s) { upper($s) ~ \"!\" }\n$G ::= \"hi\"")

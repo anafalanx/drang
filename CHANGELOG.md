@@ -53,6 +53,11 @@ filled, plus a first math/ergonomics batch and two robustness fixes. Still Windo
 - **Namespace:** the (brand-new, undocumented) `max_procs` exec option is renamed `max_job_procs` — it
   is job-scoped, and the bare `max_` prefix wrongly implied per-process. The builtin-naming rule is
   amended in DESIGN.md to "bare when unambiguous, `domain_` prefix only on collision."
+- **`exit(negative)` now exits with status `1`**, not `0` — a negative status is a failure, so the
+  explicit-exit path now matches the Err-dispatch path (both map a negative code to 1). `exit(0)`
+  remains a deliberate success.
+- **A duplicate top-level `fn .foo` in one file now warns** (on stderr) instead of silently keeping
+  only the last definition. Last-definition-wins is unchanged — it is just no longer silent.
 
 ### Changed — pre-1.0 namespace coherence pass (breaking; `drang fmt --fix` migrates)
 A whole-namespace naming audit (six domain reviews + a law synthesis, recorded in DESIGN.md)
@@ -62,7 +67,7 @@ one mechanical command:
 - **`gsub` → `replace_all`, `replace` → `replace_all`, new `replace_first`.** One discoverable
   pair replaces the literal/regex verb fork: the needle's TYPE picks the mode (a plain string is
   a **literal**; a `qr//` / `re(...)` regex matches as a pattern, with `$1`/`${name}` backrefs) —
-  the Ruby `gsub` convention. The bare-form polarity now matches `find`/`find_all` (bare = first,
+  the Ruby `gsub` convention. The bare-form polarity now matches `match`/`match_all` (bare = first,
   `_all` = every); old `gsub` string patterns are auto-wrapped in `re(...)` by `--fix` to keep
   their regex semantics.
 - **`each_line` → `stream_lines`** — the lone verb_noun compound in the bare process block, and
@@ -73,8 +78,8 @@ one mechanical command:
 - **`url_encode`/`url_decode` → `to_url`/`from_url`** — joins the `to_hex`/`from_hex`,
   `to_base64`/`from_base64` codec family (LOCKED `from_X`/`to_X` law).
 - **`slash` → `to_slash`** — names the conversion, not the character; same codec family.
-- **`index_of` → `find_index`** — "first occurrence" joins the `find`/`find_all` stem; drops the
-  lone `of`-connector.
+- **`index_of` → `find_index`** — "first occurrence" joins the `find_` stem (`find`/`find_index`);
+  drops the lone `of`-connector.
 - **`abspath` → `abs_path`** — composed underscore form, matching its sibling `is_abs` and Perl's
   `Cwd::abs_path` (Python's glued spelling was never on the blessed-abbreviation list).
 - **`sys_gc` → `drang_gc`** — `sys_` misread as the operating system; `drang_` marks knobs and
@@ -82,13 +87,23 @@ one mechanical command:
   unambiguous in orchestration scripts that steer OTHER runtimes.
 - **`tally` removed** — it was exactly `count_by` with the identity key; `--fix` rewrites
   `tally($xs)` → `count_by($xs, |$e| $e)`.
+- **`find_all` → `match_all`** — the exhaustive regex matcher joins the `match`/`matches` family
+  under one shared stem (the array-HOF `find` is unrelated and stays as is).
+- **`within` → `is_within`** — the `is_` prefix marks it a bool guard, like `is_abs`/`is_dir`, and
+  frees the bare word `within` for a planned `within(5s){}` deadline construct.
+- **`join` split into array-only `join` + new `path_join`** — one builtin quietly meant two things
+  (render-and-join an array, *or* assemble path segments), told apart only by the first argument's
+  runtime type. Each name now has one job: `join(array, sep?)` renders and joins; `path_join(seg, …)`
+  builds an OS-native path.
 - Deliberately **kept** (documented exceptions): `uniq`/`uniq_by`, `rm`/`mkdir`/`cwd` (blessed
   Unix muscle memory), `dirname`/`basename` (entrenched single words), `start` vs `spawn` (a real
   Proc-vs-Task distinction), and polymorphic `await`.
 - **Not auto-migrated** (`--fix` leaves these to fail loudly rather than silently change
   behavior): a FIRST-CLASS `gsub` reference (`$f := gsub`, `map($fs, gsub)`) — rewrite by hand to
   `|$s, $p, $r| replace_all($s, re($p), $r)`; a FIRST-CLASS `tally` reference — rewrite to
-  `|$xs| count_by($xs, |$e| $e)`; and any gsub/tally call whose arity was already an error in 0.7.
+  `|$xs| count_by($xs, |$e| $e)`; any gsub/tally call whose arity was already an error in 0.7; and
+  a path-join written as `join(...)` — the split's meaning is a runtime-type decision `--fix` cannot
+  make, so such a call now fails loudly at `join` with a note pointing to `path_join`.
   Rewrites inside interpolating strings (`$"...${...}"`, `$qq{...}`) ARE migrated (the
   interpolation is re-rendered canonically when its parts change).
 

@@ -152,9 +152,11 @@ func builtinMatch(args []value.Value) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-// builtinFindAll returns every (full) match of the pattern in s, in order.
-func builtinFindAll(args []value.Value) (value.Value, error) {
-	s, re, errv, abort := reArgs("find_all", args)
+// builtinMatchAll returns every (full) match of the pattern in s, in order. It is
+// the exhaustive sibling of match (which returns the first match with its groups);
+// the shared "match" stem keeps matches/match/match_all one coherent family.
+func builtinMatchAll(args []value.Value) (value.Value, error) {
+	s, re, errv, abort := reArgs("match_all", args)
 	if abort != nil {
 		return value.MakeNil(), abort
 	}
@@ -196,7 +198,7 @@ func replaceArgs(name string, args []value.Value) (s, repl string, re *regexp.Re
 }
 
 // builtinReplaceAll replaces EVERY occurrence of needle in s (the _all marks
-// exhaustiveness, mirroring find/find_all; replace_first is the single-shot form).
+// exhaustiveness, mirroring match/match_all; replace_first is the single-shot form).
 func builtinReplaceAll(args []value.Value) (value.Value, error) {
 	s, repl, re, err := replaceArgs("replace_all", args)
 	if err != nil {

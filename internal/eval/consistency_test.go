@@ -75,7 +75,8 @@ func TestStringFamilyTypeErrorsCatchable(t *testing.T) {
 		`say(is_err(split(5)))`,
 		`say(is_err(replace_all(5, "a", "b")))`,
 		`say(is_err(basename(5)))`,       // path helper (former carve-out) now catchable too
-		`say(is_err(join(5, "x")))`,      // path-join form
+		`say(is_err(join(5, "x")))`,      // join is array-only: a non-array first arg is a catchable Err
+		`say(is_err(path_join(5, "x")))`, // path_join: a non-string segment is a catchable Err
 		`say(is_err(read_file(5)))`,
 		`say(is_err(sha256(5)))`,
 		`say(is_err(to_base64(5)))`,
