@@ -74,6 +74,10 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 >
 > Still-`[LOCKED]`-but-not-yet-built (not superseded, just pending): lightweight structs/records, and
 > single-rune string ranges `'a'..'z'`. The MANUAL's "Not Yet" section is the honest live inventory.
+>
+> **For the settled end-state** — every remaining `[OPEN]`/`[PROPOSED]` resolved, and the exit-code /
+> exec-option / result-record contracts locked — see **"Ratification — pre-1.0 close-out (2026-07-04)"**
+> at the end of this document.
 
 ### 3.0 Platform & portability
 - **Windows-only.** drang targets **Windows 11 23H2 and later**, plus **Windows Server releases that shipped with or after client 23H2** (in practice, Windows Server 2025 and later). Non-Windows builds are dropped. `[LOCKED 2026-07-01]`
@@ -85,28 +89,28 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 ### 3.1 Variables & scope
 - **One sigil `$`** on every variable; type comes from the value, not the name. Unifies regular vars with the already-`$` magic vars; keeps `$"$x"` interpolation trivial. `[LOCKED]` *(revised from an earlier "three invariant sigils" choice.)*
 - **No scalar/list context**; every function returns one well-defined thing. `[LOCKED]`
-- **Lexical declaration only**, keyword `let`. Enables slot resolution and goroutine-local safety. No dynamic scoping. `[LOCKED]`
+- **Lexical declaration only**; goroutine-local safety, no dynamic scoping. `[LOCKED]` — but the keyword `let` was **`[SUPERSEDED]`** by `:=` (mutable) / `::=` (const); see the §3 preface.
 - **Curated magic vars:** `$_`, `$1..$n`, `$ARGV`, `$ENV` — held as per-goroutine state. The punctuation globals (`$/ $\ $,`) are dropped. `[LOCKED]`
 - **Top-level bindings are constants** — frozen after init, so they're shareable across goroutines for free. Mutable state must be lexical or passed. `[LOCKED]`
 
 ### 3.2 Types & data
 - **Scalars:** `int64`, `float64`, immutable `string`, `bool`, `undef`. `[LOCKED]`
 - **Numbers:** `int64` + `float64` with auto-promotion; arbitrary-precision **deferred**. `[LOCKED]`
-- **Strings are immutable**; `$x =~ s/a/b/` rebinds the lvalue (sugar for `$x = replace($x, …)`). `[LOCKED]`
+- **Strings are immutable**. `[LOCKED]` (The `$x =~ s/a/b/` rebind sugar shown here is **`[SUPERSEDED]`** — no `s///`; use `$x = replace_all($x, …)`.)
 - **No stringy-numeric coercion** (decided 2026-06-29, reversing the earlier locked idea): `"5" + 3` is a type error, not `8` — convert explicitly with `int()`/`str()`. Distinct numeric vs string operators; `~` concatenates. `[DECIDED]`
 - **Arrays & hashes**, with **transparent nesting** — reach in with `.` chains (`$data.users[0].name`); no explicit `\`-refs or deref gymnastics. `[LOCKED]`
 - **`[]` indexes both** arrays and hashes (`$x[0]`, `$x["k"]`). `[LOCKED]`
 - **Write-side autovivification** — deep *writes* create intermediate containers; deep *reads* of missing keys do not. `[LOCKED]`
-- **Slices** (`$a[1,3,5]`, `$h["x","y"]`). `[LOCKED]`
+- **Slices.** `[LOCKED]` — but the comma-list form `$a[1,3,5]` shown here is **`[SUPERSEDED]`**: slices ship as inclusive **ranges**, `$a[1..3]`.
 - **Ranges** — integers ship; `'a'..'z'` is re-specced as a single-rune **string** range (char *literals* are abandoned; `'...'` is now a raw string), **deferred**. `[LOCKED v2]`
 - **Lightweight structs/records** with named fields and methods — no inheritance. `[LOCKED]` Default field values: `[PROPOSED]`
-- **Truthiness:** clean rule — falsy = `undef`/`false`/`0`/`""`/empty collection; drops Perl's `"0"`-is-false wart. Exact rule `[OPEN]`
+- **Truthiness:** falsy = `undef`/`false`/`0`/`0.0`/`""`/empty collection; drops Perl's `"0"`-is-false wart. Everything else — including a non-empty `"0"`, functions, and **error values** — is truthy (test errors with `is_err`, not truthiness). `[LOCKED]` *(see Ratification, 2026-07-04)*
 
 ### 3.3 Regex (the core)
 - **RE2 dialect** (Go-native): linear-time, ReDoS-proof, zero C dependency. No backreferences/lookaround (upgrade path: `regexp2`). `[LOCKED]`
-- **Operators:** `=~`, `!~`, `m//`, `s///`, `tr//`. `[LOCKED]`
-- **`s///` computed replacement via callback** (`s/pat/<fn>/`); no `/e`. Plain flags `/g /i /m /s /x` stay. `[LOCKED]`
-- **Captures:** `$1..$n` and named captures (per-goroutine); whole/pre/post-match via a returned **match object**, not `$& $' $\``. `[LOCKED]`
+- **Operators:** `=~`, `!~`, `m//`, `s///`, `tr//`. **`[SUPERSEDED]`** — the Perl regex operators were rejected (2026-06-28); drang uses `qr//` literals + the `match`/`matches`/`match_all`/`replace_all`/`replace_first` builtins.
+- **`s///` computed replacement via callback.** **`[SUPERSEDED]`** — `replace_all(s, qr//, repl)` with `$1`/`${name}` backrefs; no callback-replace form.
+- **Captures:** `$1..$n` and match object. **`[SUPERSEDED]`** — named captures come back as a **map**; there are no `$1..$n` globals.
 - **Regex literals are first-class values**, compiled once and cached. `[LOCKED]`
 
 ### 3.4 Syntax & control flow
@@ -115,62 +119,66 @@ The frozen-constants idea is borrowed directly from Starlark's frozen-values mod
 - **Paren-free conditions, mandatory braces** (`if $x > 0 { … }`). `[LOCKED]`
 - **Block loops: `for`-in and `while` only**; ranges replace C-style `for`; no `foreach`/block-`until`. `[LOCKED]`
 - **Postfix modifiers:** `if`/`unless`/`while`/`until`/`for`. `[LOCKED]`
-- **`last`/`next` + loop labels**; no `redo`. `[LOCKED]`
+- **`break`/`next`** — innermost loop only; no labels, no `redo`. `[LOCKED]` *(the earlier `last` spelling is `[SUPERSEDED]` by `break`)*
 - **`:` for pairs** (over `=>`); **`#` line comments**. `[LOCKED]`
 - **String interpolation is opt-in:** plain `"..."`/`qq{}`/`<<TAG` are escaped but do **not** interpolate (a `$` is literal); you opt in with `$"..."`, `$qq{}`, or a `<<$TAG` heredoc. Inside an interpolating form: bare `$var`; `${ expr }` blocks for anything complex; lists interpolate space-joined; `\$` suppresses interpolation. `[LOCKED v2]`
 - **Quote operators: full set** — `qw// q// qq//` with custom delimiters (the one place we spend lexer complexity, for slash/quote-heavy text); `'...'` is a raw string (alias of `q//`), and each escaped form has a `$`-prefixed interpolating cousin (`$"..."`, `$qq//`). `[LOCKED]`
 - **`-n`/`-p` autoloop** binding `$_` per input line. `[LOCKED]`
-- **`BEGIN`/`END`** blocks as the autoloop's pre/post companions. `[PROPOSED]`
-- **Implicit return** (value of last expression). `[OPEN]`
+- **`BEGIN`/`END`** blocks as the autoloop's pre/post companions. `[LOCKED]`
+- **Implicit return** (value of last expression; `return` for early exit). `[LOCKED]`
 
 ### 3.5 Subs & modules
-- **Named subs with signatures:** `sub f($a, $b) { … }`. `[LOCKED]`
+- **Named functions with signatures.** `[LOCKED]` — but the `sub f(…)` spelling is **`[SUPERSEDED]`**: user functions are `fn .name($a, $b) { … }` (leading dot; bare names are builtins).
 - **Closures.** `[LOCKED]`
-- **Lambda syntax:** `|$a, $b| expr-or-block` (terse; every combinator takes one). `[PROPOSED]`
+- **Lambda syntax:** `|$a, $b| expr-or-block` (terse; every combinator takes one). `[LOCKED]`
 - **File modules:** one file = one module, explicit exports, import by path; loaded once and frozen (build-then-freeze). `[LOCKED]`
 
 ### 3.6 Errors & the impure side
-- **`try`/`catch`** blocks; no `$@` global. Maps onto Go error returns underneath. `[LOCKED]`
+- **`try`/`catch`** blocks; no `$@` global. **`[SUPERSEDED]`** (try/catch retired 2026-06-25) — **errors are values**: a fallible call returns an `Err`, `?` propagates it, `//` recovers it, `is_err`/`err_code`/`err_msg` inspect it. Still maps onto Go error returns underneath.
 - **No string `eval`** — preserves compile-then-freeze and closes an injection hole. `[LOCKED]`
 - **External commands via `os/exec` builtins** (`run`/`capture`), explicit args, no shell by default. `[LOCKED]`
 
 ### 3.7 Concurrency
 - **Real multi-core** execution, goroutine-backed (no GIL). `[LOCKED]`
 - **Transfer semantics:** copy-on-send by default + an explicit **`freeze()`** hatch for big read-only data. (Immutable strings make the common copy nearly free.) `[LOCKED]`
-- **Surface:** high-level **data-parallel combinators** (`pmap`/`pfor`, a `-P` parallel autoloop) over **exposed `spawn` + channels** for power users. Model `[LOCKED]`; exact combinator API `[PROPOSED]`
+- **Surface:** high-level **data-parallel combinators** (`pmap`, ordered by default) over **exposed `spawn` + channels** for power users. Model `[LOCKED]`; combinator API `[LOCKED]` *(pfor / `-P` autoloop not built — see MANUAL "Not Yet")*
 
 ---
 
 ## 4. Cheat-sheet
 
 ```
-$x                 one sigil for everything
-let $x = 1         lexical declaration
-$user.name         field / method access
-$a ~ $b            string concat
-$arr[0]  $h["k"]   indexing (arrays and hashes both use [])
-$h{a: 1, b: 2}     hash literal (':' pairs)
+$x                 one sigil for every variable
+$x := 1            declare (mutable);   $x ::= 1  declare a frozen constant
+$user.name         field / member access
+$a ~ $b            string concat (numbers and strings never auto-coerce)
+$arr[0]  $h["k"]   indexing (arrays and maps both use [])
+{a: 1, b: 2}       map literal (':' pairs)
 [1, 2, 3]          array literal
-1..10  'a'..'z'    ranges (int; string ranges 'a'..'z' deferred)
+1..10              integer range (inclusive);   $a[1..3]  range slice
 "$x literal"       "..." is escaped, NOT interpolated ($ is literal)
 $"$x and ${expr}"  opt-in interpolation (bare var; ${} for complex; space-joined)
 'raw $x \n'        single-quote raw string (alias of q//)
-qw(a b c)          word list (full q// qq// $qq// quote ops available)
-/pat/  $s =~ /…/   regex literal + match (RE2); $1.. and match object
-$s =~ s/a/b/       in-place-feel substitution (rebinds; strings immutable)
+qw{a b c}          word list (full q// qq// $qq// quote ops available)
+qr/pat/            first-class regex literal (RE2), compiled once + cached
+match($s, qr/…/)   -> [full, g1, …]; also matches / match_all / replace_all; named caps -> map
 if $c { … }        paren-free, braces mandatory
-do() if $c         postfix modifier
-for $x in $xs { }  / while $c { }   (only block loops)
-sub f($a, $b) { }  signatures
-|$a, $b| $a + $b   lambda                          [PROPOSED]
-try { } catch ($e) { }
-run("git", "log")  / capture(...)   external commands, no shell
-pmap($xs, |$x| …)  parallel map                    [PROPOSED API]
+do() if $c         postfix modifier (if / unless / while / until / for)
+for $x in $xs { }  / while $c { }   (only block loops; break / next, innermost only)
+fn .f($a, $b) { }  named function (leading dot; last expression is the return)
+|$a, $b| $a + $b   lambda (every combinator takes one)
+risky()?           ? propagates an Err;   risky() // dflt   recovers it
+run("git","log")   / capture(...)   external commands, no shell
+pmap($xs, |$x| …)  parallel map (ordered by default)
 ```
 
 ---
 
 ## 5. Worked example — access-log analyzer
+
+> **Note:** the sketch below is the ORIGINAL 2026-06 strawman and uses pre-freeze syntax (`let`,
+> `sub`, `=~`, `s///`). It is kept as a design illustration; for runnable current-drang examples see
+> `examples/*.dr` and the MANUAL's worked examples.
 
 ```ruby
 #!/usr/bin/env drang
@@ -261,6 +269,10 @@ Why the parallel version is race-free: `scan_file` touches no shared mutable sta
 
 ## 8. Open questions — the "evaluate further" agenda
 
+> **All resolved.** Every `[OPEN]`/`[PROPOSED]` below was decided by 0.7 — see "Ratification —
+> pre-1.0 close-out (2026-07-04)" for the settled answers. This agenda is kept as the historical
+> record of what was once open.
+
 Ratify or revise:
 - Lambda syntax `|…|` — `[PROPOSED]`
 - Combinator API: `map`/`pmap`/`reduce`/`sort`/`filter` signatures; `pmap` ordering (ordered by default?) — `[PROPOSED]`
@@ -294,25 +306,25 @@ Still open:
 |---|---|---|
 | Sigil | One `$` for everything | LOCKED |
 | Context | None | LOCKED |
-| Scope | Lexical `let` only | LOCKED |
+| Scope | Lexical `:=` (mutable) / `::=` (const); no `let` | LOCKED |
 | Magic vars | Curated, per-goroutine | LOCKED |
 | Globals | Frozen constants only | LOCKED |
-| Numbers | int64 + float64, defer bignum | LOCKED |
-| Strings | Immutable, `s///` rebinds | LOCKED |
+| Numbers | int64 + float64, defer bignum; overflow errors | LOCKED |
+| Strings | Immutable; no `s///` (use `replace_all`) | LOCKED |
 | Nesting | Transparent `.`; `[]` for all indexing | LOCKED |
 | Autoviv | Write-side only | LOCKED |
-| Regex | RE2; callbacks; match object; literals as values | LOCKED |
+| Regex | RE2; string replacement (`$1`/`${name}`); match object; literals as values | LOCKED |
 | Syntax | `.` `~` `[]`; newline-term; paren-free braces | LOCKED |
 | Loops | `for`-in + `while`; postfix modifiers; labels | LOCKED |
 | Quotes | `qw// q// qq//`; `'...'` raw; opt-in interp `$"..." $qq// <<$TAG` | LOCKED v2 |
-| Subs | Signatures; closures; file modules | LOCKED |
-| Errors | `try`/`catch`; no string eval | LOCKED |
+| Subs | `fn .name` signatures; closures; file modules | LOCKED |
+| Errors | Errors as values (`?` / `//`); no `try`/`catch`; no string eval | LOCKED |
 | Exec | `os/exec` builtins, no shell | LOCKED |
 | Parallelism | Real multi-core; copy-on-send + `freeze()` | LOCKED |
 | Engine | Tagged value; slot resolution; register bytecode VM | LOCKED |
 | Packaging | Stub + appended frozen image; static PE; Win11+ | LOCKED |
-| Lambda / combinators / BEGIN-END | — | PROPOSED |
-| Truthiness / implicit-return / overflow / operators | — | OPEN |
+| Lambda / combinators / BEGIN-END | `\|…\|`; `pmap` ordered; autoloop blocks | LOCKED (see Ratification) |
+| Truthiness / implicit-return / overflow / operators | errors truthy; last-expr; overflow errors; `//` `<=>` | LOCKED (see Ratification) |
 
 ---
 
@@ -2603,3 +2615,61 @@ the suite is `-race` clean.
   nodes to make equality linear. A concrete mismatch still returns false and unwinds, so an
   optimistic revisit can never turn an unequal result equal. The memo is per-call, so concurrent
   `Equal` on shared frozen values does not race.
+
+## Ratification — pre-1.0 close-out (2026-07-04)
+
+The 0.7 "settle the vocabulary, ratify everything" pass. Every `[OPEN]`/`[PROPOSED]`/`[PROVISIONAL]`
+marker that a *shipped* feature still carried is resolved here, and the small contract surfaces are
+locked so future change is additive-only (add names, never repurpose them). Nothing is truly
+immutable — sole developer — but everything below is **decided**: no dangling questions remain.
+**MANUAL.md is the authoritative user-facing spec; this section is the design-side record of what
+became final.**
+
+### Resolved open questions (supersedes the §8 agenda and the §10 "OPEN" row)
+- **Truthiness `[LOCKED]`.** Falsy is exactly: `undef`, `false`, `0` (int), `0.0` (float), `""`, and
+  an empty array / map / range. Everything else is truthy — including a non-empty string like `"0"`
+  (Perl's `"0"`-is-false wart is dropped), a function, a regex, a process/task/channel, and **an
+  error value**. Errors being truthy is deliberate and load-bearing: `if risky() { … }` takes the
+  true branch even when `risky()` failed, so failure is tested with `is_err()` and recovered with
+  `//`, never with bare truthiness. (Every higher-order function `is_err`-checks a callback's result
+  before testing truthiness, for the same reason.)
+- **Implicit return `[LOCKED]`.** A function/lambda body's value is its last expression; `return` is
+  available for early exit. No explicit-return requirement.
+- **Integer overflow `[LOCKED]`.** `int64` `+`/`-`/`*` that overflows raises an error rather than
+  silently wrapping or auto-promoting to `float64`. Opt into float math with an explicit `float(...)`.
+- **Operator set `[LOCKED]`.** Kept: `//` (defined-or / error-recover) and `<=>` (three-way compare,
+  over numbers *and* strings). NOT adopted: Perl's `x` (repeat — use the `repeat()` builtin) and
+  `cmp` (a separate string spaceship — `<=>` already covers strings). The Perl regex operators
+  (`=~`/`!~`/`m//`/`s///`/`tr//`) were rejected earlier (2026-06-28).
+- **`for`-destructuring `[LOCKED]`.** Shipped: `for $k, $v in $h` binds key then value over a map
+  (index then element over an array); with a single variable you get each value (map) or element
+  (array). `pairs($h)`/`keys`/`values` remain for when you want the pairs as data.
+- **File extension & name `[LOCKED]`.** Scripts are `.dr`; the language and CLI are `drang`.
+
+### Ratified `[PROPOSED]` → shipped
+Lambdas `|$a, $b| …`; the higher-order combinator family (`map`/`filter`/`reduce`/`sort`/`sort_by`/…
+and the parallel `pmap`, **ordered by default** — its result array is in input order); `BEGIN`/`END`
+blocks for the `-n`/`-p` autoloop; examples-as-tests (`example EXPR == want`, plus `example EXPR` and
+`example EXPR fails`, run by `drang test`); and the
+dev-vs-run image split (mutable REPL vs the frozen, goroutine-shareable build image). All built, all
+in the MANUAL.
+
+### Locked contract surfaces (additive-only from here)
+- **Process exit codes.** `0` success; `1` a generic caught `Err` or `die`; `2` an unknown-command
+  dispatch; `124` a timeout; `127` a command that could not start; `137` a resource-cap breach or a
+  `kill()`. `exit(n)` clamps a negative `n` to `1` and `n>255` to `255`; `exit(0)` is a deliberate
+  success. These numbers are frozen, and `err_code(e)` mirrors them.
+- **Exec option keys.** The `{…}` option set is closed: `cwd`, `stdin`, `stdin_file`, `stdin_pipe`
+  (start-only), `arg0`, `timeout`, `merge_stderr`, `env_exact`, `env_add`, `supervise` (start-only),
+  and the caps `max_memory` / `max_job_memory` / `max_cpu` / `max_job_cpu` / `max_job_procs`. String
+  options (`cwd`/`stdin`/`arg0`) require a string; an unknown key is an error, never silently ignored.
+  Reserved for a later release (**not in 0.7**): `recv_stdout` / `{stdout_pipe}` and `stop` / `signal`.
+- **Result-record shapes.** `capture_all` always returns `{out, err, code, ok}`; `status(p)` always
+  returns `{running, ok, code, pid}` (while alive, `code` is the `-1` sentinel and `ok` is false).
+  A caller never has to test for a missing key.
+
+### Superseded §3 strawmen (restated so the summary is self-consistent)
+The §3 preface already lists these; repeated here for the record: `let` → `:=` (mutable) / `::=`
+(const); `sub f()` → `fn .f()`; `try`/`catch` → errors-as-values (`?` propagates, `//` recovers); the
+Perl regex operators → `qr//` literals + `match` / `matches` / `match_all` / `replace_all` /
+`replace_first`; comma-list slices → inclusive range slices `$a[1..3]`.
