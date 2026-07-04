@@ -79,13 +79,16 @@ interpreter, and writes atomically. It produces a standalone Windows executable 
 
 ## Status
 
-**drang 0.7**: the resource-limits + pre-1.0-ratification release. Kernel-enforced memory / CPU /
-process caps on every exec form (Windows Job Objects), the process-control surface completed and
-frozen, trig + a small extended-math line, a defense-in-depth security pass, and a whole-namespace
-vocabulary freeze — the language is settled for 1.0 (see [CHANGELOG.md](CHANGELOG.md)). See the
-*"Not Yet"* section of the manual for the remaining gaps: no structs (maps stand in as records), no
-character ranges, no implicit string↔number coercion (deliberate), and no in-place one-liner mode
-(`-i`).
+**drang 0.8**: a speed release — *change nothing except the speed*. Behavior is identical to 0.7
+(verified program-for-program against the 0.7 binary; the only observable difference is that
+`drang_gc()` reports the relaxed startup baseline). The register VM gained int-specialized
+arithmetic, comparison, compound-assignment, and index/slot compound; `while` loops are now
+bottom-testing (no per-iteration back-edge jump); and one-shot runs relax the GC. Pure numeric
+loops now run about as fast as CPython 3.14. See [CHANGELOG.md](CHANGELOG.md). The 0.7 feature set —
+kernel-enforced resource caps, the frozen process-control surface, and the pre-1.0 vocabulary freeze
+— is unchanged. See the *"Not Yet"* section of the manual for the remaining gaps: no structs (maps
+stand in as records), no character ranges, no implicit string↔number coercion (deliberate), and no
+in-place one-liner mode (`-i`).
 
 ## License
 

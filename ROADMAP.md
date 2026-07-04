@@ -1,6 +1,6 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-04 — **drang 0.7 released** (see CHANGELOG.md).
+*Inventory refreshed 2026-07-04 — **drang 0.8 released** (a speed-only release; see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*

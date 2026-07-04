@@ -3,6 +3,49 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
 
+## [0.8] — 2026-07-04
+
+A speed release: *change nothing except the speed.* Every program produces byte-identical output,
+errors, and exit codes to 0.7 — verified program-for-program against the 0.7 binary across the
+benchmark corpus, the examples, and a targeted differential over every changed path. The single
+observable difference is that `drang_gc()` reports the relaxed startup baseline (see below), an
+honest reflection of the new GC policy. Still Windows-only.
+
+### Faster
+- **Relaxed GC on one-shot runs.** A `drang script.dr` / `-e` / `-n`/`-p` run now relaxes the
+  garbage collector (a higher GOGC, so it collects less often) and installs a soft memory limit
+  sized from available RAM as an OOM backstop. Short-lived scripts do fewer collections — ~9% faster
+  geomean across the benchmark suite. The REPL keeps the default GC. The policy is skipped entirely
+  if `GOGC` or `GOMEMLIMIT` is set in the environment. Turning the GC fully off was measured *slower*
+  on garbage-heavy work (the working set falls out of CPU cache), so it collects less, not never.
+  One program-visible consequence: `drang_gc()` reports the relaxed baseline instead of Go's default
+  on a one-shot run, so the documented `$old := drang_gc(...); ...; drang_gc($old)` idiom still works.
+- **Int-specialized VM arithmetic and comparison.** The register VM's binary arithmetic (`+ - * %`
+  and their constant-operand forms) and ordered comparisons take an inline integer fast path,
+  falling through to the shared implementation for non-int operands, overflow, modulo-by-zero, and
+  `/` (always float). Integer comparisons stay exact above 2^53. ~22% faster on a recursive integer
+  benchmark's inner loop.
+- **Int-specialized compound-assignment and loop conditions.** `$x += 1`, `$total += $v * $k`, the
+  index/slot forms `$a[i] += n` / `$m[k] += n`, and the fused `if`/`while` comparison branches take
+  the same integer fast path. ~23% faster on a map-counting glue loop and ~33% on a builtin-in-a-loop;
+  behaviour (overflow/modulo-zero aborts, `//=`/`~=`/`/=`, nil-slot seeding, frozen-target errors) is
+  unchanged.
+- **Bottom-testing `while` loops.** Register-mode `while` loops were inverted so the fused condition
+  test *is* the loop back-edge, removing the unconditional per-iteration jump. Up to ~15% faster on a
+  pure spin loop (less as the body grows). Zero-iteration, `break`, `next`, nested loops,
+  side-effecting conditions, and while-as-nil-value all behave exactly as before.
+
+Net: pure numeric loops now run about as fast as CPython 3.14 (previously several times slower),
+while staying byte-for-byte compatible with 0.7.
+
+### Fixed
+- **Indexing an error with an erroring index.** `errBase[0%0]` — an out-of-range error indexed by a
+  modulo-by-zero — aborted on the compiled backend but flowed the base error on the tree-walker
+  (found by the backend-parity fuzzer). The two backends now agree: the index is always evaluated
+  (matching the compiled backend and drang's binary operators, which evaluate both operands then
+  short-circuit an error at the value level), so a hard error in the index aborts on both; an error
+  base with a valid index still flows the base error.
+
 ## [0.7] — 2026-07-04
 
 The single-process-control release: kernel-enforced resource limits and the process-control gaps
