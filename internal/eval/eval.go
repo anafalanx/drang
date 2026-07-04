@@ -969,14 +969,16 @@ func evalIndexRead(n *ast.Index, env *Env) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	if c.IsErr() {
-		return c, nil // pass the original error through unchanged
-	}
+	// Evaluate the index even when the base is an Err, matching the VM (which computes
+	// the index into a register before OpIndex) and drang's binary ops (both operands
+	// evaluate, then the Err short-circuits at the VALUE level in indexRead). Returning
+	// early on an Err base here skipped the index expression, so `errBase[0%0]` flowed the
+	// base error on the walker but aborted (modulo by zero) on the VM — a parity gap.
 	k, err := evalExpr(n.Idx, env)
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	return indexRead(c, k), nil
+	return indexRead(c, k), nil // indexRead returns c unchanged when c is an Err
 }
 
 // indexRead is the container[key] lookup, on already-evaluated values. Shared by
