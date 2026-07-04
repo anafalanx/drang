@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>drang: a small, parallel, Perl-inspired scripting language</title>
-<meta name="description" content="Your agents write the glue. You can read it. drang is a small, parallel, Perl-inspired scripting language for text, glue, and orchestration. Reads like Ruby, thinks like Perl, runs like Go.">
+<meta name="description" content="Your agents write the glue. You can read it. drang is a small, Perl-inspired scripting language with real parallelism and process orchestration, that ships as a single binary. Windows-native.">
 <link rel="canonical" href="https://drang.dev/">
 <meta name="theme-color" content="#fcfcfd" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e0f13" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://drang.dev/">
 <meta property="og:title" content="drang: a small, parallel scripting language">
-<meta property="og:description" content="Your agents write the glue. You can read it. A small, parallel, Perl-inspired scripting language for text, glue, and orchestration.">
+<meta property="og:description" content="Your agents write the glue. You can read it. Real parallelism and process orchestration in a scripting language that ships as a single binary.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f46e5'/%3E%3Ctext x='16' y='23' font-family='ui-monospace,monospace' font-size='21' font-weight='600' fill='white' text-anchor='middle'%3Ed%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -34,8 +34,8 @@
     <span class="pill">v0.8 · released</span>
     <h1 class="mark">drang</h1>
     <p class="tag">Your agents write the glue. You can read it.</p>
-    <p class="lede">Reads like Ruby, thinks like Perl, runs like Go. A small, parallel
-      scripting language for text, glue, and orchestration.</p>
+    <p class="lede">Real parallelism and process orchestration in a scripting language
+      that ships as a single binary.</p>
     <p class="etym">drang: Dutch/German for drive, urge, momentum.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.8</a>
@@ -94,6 +94,16 @@ match_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
         work, not against a lock.</p>
     </div>
     <div class="feat">
+      <h3>Glue built in</h3>
+      <p><code>run</code> / <code>capture</code> / <code>pipe</code> with timeouts and
+        process-tree kill, line streaming, channels, and a minimal HTTP client.</p>
+    </div>
+    <div class="feat">
+      <h3>One static binary</h3>
+      <p>No runtime, nothing to install, fast startup. Format with <code>drang fmt</code>, test
+        with <code>drang test</code>, ship with <code>drang build</code>.</p>
+    </div>
+    <div class="feat">
       <h3>Errors are values</h3>
       <p>Failures are ordinary values: <code>?</code> propagates, <code>//</code> recovers. A
         dropped error is a deliberate choice, not an accident.</p>
@@ -104,19 +114,9 @@ match_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
         literals, and <code>|&gt;</code> pipelines.</p>
     </div>
     <div class="feat">
-      <h3>Glue built in</h3>
-      <p><code>run</code> / <code>capture</code> / <code>pipe</code> with timeouts and
-        process-tree kill, line streaming, channels, and a minimal HTTP client.</p>
-    </div>
-    <div class="feat">
       <h3>Batteries, curated</h3>
       <p>Modules, frozen immutability, ~120 builtins and a prelude, JSON &amp; CSV, dates,
         hashing. Broad, not a kitchen sink.</p>
-    </div>
-    <div class="feat">
-      <h3>One static binary</h3>
-      <p>No runtime, nothing to install, fast startup. Format with <code>drang fmt</code>, test
-        with <code>drang test</code>, ship with <code>drang build</code>.</p>
     </div>
   </div>
 
