@@ -212,6 +212,7 @@ $lines := lines($md)
 $nl := len($lines)
 $out := []
 $para := []
+$seen := {}   # heading-id -> true, for GitHub-style slug de-duplication
 $i := 0
 while $i < $nl {
 	$line := $lines[$i]
@@ -291,7 +292,14 @@ while $i < $nl {
 		if $level < len($ca) {
 			$htext = trim(join($ca[$level..len($ca) - 1], ""))
 		}
-		$id := .slug($htext)
+		$base := .slug($htext)
+		$id := $base
+		$k := 0
+		while has($seen, $id) {   # duplicate heading text -> -1, -2, ... like GitHub
+			$k = $k + 1
+			$id = $base ~ "-" ~ str($k)
+		}
+		$seen[$id] = true
 		$hn := str($level)
 		push($out, "<h" ~ $hn ~ " id=\"" ~ $id ~ "\">" ~ .inline($htext) ~ "</h" ~ $hn ~ ">")
 		$i = $i + 1
