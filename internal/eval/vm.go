@@ -200,31 +200,66 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 		case OpMove:
 			regs[in.A] = regs[in.B]
 		case OpAdd:
-			v, err := arith(token.PLUS, regs[in.B], regs[in.C])
+			// Inline int+int fast path (mirrors arith's int branch): skips the arith call and its
+			// 56-byte-by-value copies + redundant checks. Non-int operands, an Err (its tag is not
+			// Int), or an int overflow all fall through to the canonical arith for identical results.
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !addOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a + b)
+					break
+				}
+			}
+			v, err := arith(token.PLUS, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpSub:
-			v, err := arith(token.MINUS, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !subOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a - b)
+					break
+				}
+			}
+			v, err := arith(token.MINUS, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpMul:
-			v, err := arith(token.STAR, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !mulOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a * b)
+					break
+				}
+			}
+			v, err := arith(token.STAR, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpDiv:
+			// Not specialized: '/' is float division even for two ints (10/4 == 2.5).
 			v, err := arith(token.SLASH, regs[in.B], regs[in.C])
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpMod:
-			v, err := arith(token.PERCENT, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if b := r.AsInt(); b != 0 { // b==0 falls through to arith's "modulo by zero"
+					regs[in.A] = value.MakeInt(l.AsInt() % b)
+					break
+				}
+			}
+			v, err := arith(token.PERCENT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -232,31 +267,63 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 		case OpConcat:
 			regs[in.A] = value.MakeStr(regs[in.B].Display() + regs[in.C].Display())
 		case OpAddK:
-			v, err := arith(token.PLUS, regs[in.B], p.Consts[in.C])
+			l, r := regs[in.B], p.Consts[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !addOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a + b)
+					break
+				}
+			}
+			v, err := arith(token.PLUS, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpSubK:
-			v, err := arith(token.MINUS, regs[in.B], p.Consts[in.C])
+			l, r := regs[in.B], p.Consts[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !subOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a - b)
+					break
+				}
+			}
+			v, err := arith(token.MINUS, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpMulK:
-			v, err := arith(token.STAR, regs[in.B], p.Consts[in.C])
+			l, r := regs[in.B], p.Consts[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				a, b := l.AsInt(), r.AsInt()
+				if !mulOverflows(a, b) {
+					regs[in.A] = value.MakeInt(a * b)
+					break
+				}
+			}
+			v, err := arith(token.STAR, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpDivK:
+			// Not specialized: '/' is float division even for two ints.
 			v, err := arith(token.SLASH, regs[in.B], p.Consts[in.C])
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpModK:
-			v, err := arith(token.PERCENT, regs[in.B], p.Consts[in.C])
+			l, r := regs[in.B], p.Consts[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if b := r.AsInt(); b != 0 {
+					regs[in.A] = value.MakeInt(l.AsInt() % b)
+					break
+				}
+			}
+			v, err := arith(token.PERCENT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -268,25 +335,47 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 		case OpNe:
 			regs[in.A] = value.MakeBool(!equal(regs[in.B], regs[in.C]))
 		case OpLt:
-			v, err := compare(token.LT, regs[in.B], regs[in.C])
+			// Inline int<int (mirrors threeway's int64 case, so >2^53 stays exact). Non-int / Err
+			// operands fall through to the canonical compare.
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				regs[in.A] = value.MakeBool(l.AsInt() < r.AsInt())
+				break
+			}
+			v, err := compare(token.LT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpLe:
-			v, err := compare(token.LE, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				regs[in.A] = value.MakeBool(l.AsInt() <= r.AsInt())
+				break
+			}
+			v, err := compare(token.LE, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpGt:
-			v, err := compare(token.GT, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				regs[in.A] = value.MakeBool(l.AsInt() > r.AsInt())
+				break
+			}
+			v, err := compare(token.GT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = v
 		case OpGe:
-			v, err := compare(token.GE, regs[in.B], regs[in.C])
+			l, r := regs[in.B], regs[in.C]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				regs[in.A] = value.MakeBool(l.AsInt() >= r.AsInt())
+				break
+			}
+			v, err := compare(token.GE, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
