@@ -1,0 +1,20 @@
+# CSV group-by report: generate N CSV rows, parse, group-by category summing amount.
+$cats := ["A", "B", "C", "D", "E", "F"]
+$n := 200000
+$seed := 12345
+$groups := {}
+for $c in $cats { $groups[$c] = 0 }
+for $i in 1..$n {
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  $cat := $cats[int($seed / 256) % 6]
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  $amount := $seed % 1000
+  $row := $cat ~ "," ~ str($amount)
+  $parts := split($row, ",")
+  $k := $parts[0]
+  $v := int($parts[1])
+  $groups[$k] = $groups[$k] + $v
+}
+for $c in $cats {
+  say($c, $groups[$c])
+}

@@ -1,3 +1,0 @@
-$sum := 0
-for $i in 1..3000000 { $sum = $sum + $i }
-say($sum)

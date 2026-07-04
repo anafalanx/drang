@@ -1,0 +1,13 @@
+# Functional data pipeline: generate N ints via LCG,
+# then filter (x%3==0) -> map (x*x %1000000) -> sum.
+$n := 800000
+$data := []
+$seed := 12345
+for $i in 1..$n {
+  $seed = ($seed * 1103515245 + 12345) % 2147483648
+  push($data, $seed % 1000000)
+}
+$kept := filter($data, |$x| $x % 3 == 0)
+$squared := map($kept, |$x| ($x * $x) % 1000000)
+$total := sum($squared)
+say($total)

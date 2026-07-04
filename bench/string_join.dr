@@ -1,3 +1,0 @@
-$parts := []
-for $i in 1..200000 { push($parts, "" ~ $i) }
-say(len(join($parts, ",")))
