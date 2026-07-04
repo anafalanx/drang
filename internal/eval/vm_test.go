@@ -430,6 +430,13 @@ $x %= 0`, // OpCompoundVar mod-zero falls through to arith's "modulo by zero"
   $x
 }
 say(.f())`, // OpCompoundLocalK overflow inside a RegLocals function body
+	// Slot-compound (assignSlot) int fast-path fallthrough locks:
+	`$c ::= [1, 2]
+$c[0] += 1`, // frozen array slot: freeze check fires before fastCompound
+	`$a := [9223372036854775807]
+$a[0] += 1`, // slot overflow falls through to arith's aborting "integer overflow"
+	`$a := [10]
+$a[0] %= 0`, // slot mod-zero falls through to arith's "modulo by zero"
 }
 
 func mustParseProg(tb testing.TB, src string) *ast.Program {

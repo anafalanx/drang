@@ -65,3 +65,43 @@ say($x)`, "3.5\n")
 $x += 1.5
 say($x)`, "4.5\n")
 }
+
+// TestSlotCompoundIntSpec locks the int fast path added to the index/slot compound path
+// (assignSlot's array + map branches, reached via OpAssignSlot). assignSlot is SHARED by
+// both backends, so the VM-vs-walker parity net cannot independently check this fast path
+// (both move together — see fastCompound); these assertBoth cases assert hand-computed
+// values as the independent oracle, and rely on the fastCompoundInt==compound equivalence
+// already proven by TestCompoundCompareIntSpec. Error-outcome locks live in vmParityErr.
+func TestSlotCompoundIntSpec(t *testing.T) {
+	// Array slot int += : existing element updated in place via the fast path.
+	assertBoth(t, `$a := [10, 20, 30]
+$a[1] += 5
+say($a[1])`, "25\n")
+	// Map slot int += : first use seeds (nil cur falls through), second hits the fast path.
+	assertBoth(t, `$m := {}
+$m["k"] += 1
+$m["k"] += 2
+say($m["k"])`, "3\n")
+	// Negative array index is normalized before the fast path runs.
+	assertBoth(t, `$a := [1, 2, 3]
+$a[-1] += 10
+say($a[2])`, "13\n")
+	// Compound at the end index appends (i == length): nil cur seeds 0, then + 5 = 5.
+	assertBoth(t, `$a := [1]
+$a[1] += 5
+say($a[1])`, "5\n")
+	// Negative-operand modulo in a slot keeps Go truncated-division sign.
+	assertBoth(t, `$a := [0 - 17]
+$a[0] %= 5
+say($a[0])`, "-2\n")
+	// Non-arith / float slot ops fall through (never the int fast path):
+	assertBoth(t, `$a := [10]
+$a[0] /= 4
+say($a[0])`, "2.5\n") // /= is float division
+	assertBoth(t, `$m := {}
+$m["s"] ~= "x"
+say($m["s"])`, "x\n") // ~= seeds "" then concatenates
+	assertBoth(t, `$m := {}
+$m["k"] //= 7
+say($m["k"])`, "7\n") // //= (defined-or) takes rhs on a fresh nil slot
+}

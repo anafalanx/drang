@@ -840,7 +840,7 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 			if i >= 0 && i < length {
 				cur = a.Elems[i]
 			}
-			nv, err := compound(op, cur, rhs)
+			nv, err := fastCompound(op, cur, rhs)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -866,7 +866,7 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 		newv := rhs
 		if op != token.ILLEGAL {
 			cur, _ := m.Get(key)
-			nv, err := compound(op, cur, rhs)
+			nv, err := fastCompound(op, cur, rhs)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -1394,6 +1394,24 @@ func fastCompoundInt(op token.Kind, a, b int64) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// fastCompound is compound() with the inline int fast path folded in: when cur and rhs
+// are both ints and op is arithmetic (+ - * %, non-overflowing, non-mod-zero) it computes
+// the result via fastCompoundInt, skipping compound()'s op dispatch, nil-seed check, and
+// the arith() call with its Value copies. Every other case (nil/float/str/bool/Err
+// operands, //=, ~=, /=, overflow, mod-zero) falls through to the UNCHANGED compound() for
+// an identical result and error. Used on the index/slot compound path (assignSlot), which
+// both backends share — so this speeds the walker too; correctness rests on the
+// fastCompoundInt == compound equivalence already proven byte-for-byte by the VM
+// OpCompound* parity tests, plus the slot-compound cases in TestCompoundCompareIntSpec.
+func fastCompound(op token.Kind, cur, rhs value.Value) (value.Value, error) {
+	if cur.Tag() == value.Int && rhs.Tag() == value.Int {
+		if n, ok := fastCompoundInt(op, cur.AsInt(), rhs.AsInt()); ok {
+			return value.MakeInt(n), nil
+		}
+	}
+	return compound(op, cur, rhs)
 }
 
 func arith(op token.Kind, l, r value.Value) (value.Value, error) {
