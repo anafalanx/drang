@@ -45,22 +45,22 @@
 
   <div class="demo" id="demo" aria-roledescription="carousel" aria-label="drang code examples">
     <div class="demo-bar">
-      <span class="demo-label" id="demoLabel">Pipelines</span>
+      <span class="demo-label" id="demoLabel">Real parallelism, no GIL</span>
       <span class="demo-ctl">
         <button class="cnav" id="demoPrev" type="button" aria-label="Previous example">&lsaquo;</button>
         <button class="cnav" id="demoNext" type="button" aria-label="Next example">&rsaquo;</button>
       </span>
     </div>
     <div class="demo-view">
-<pre class="code slide" data-label="Pipelines"><span class="c"># square the evens, then sum them</span>
+<pre class="code slide" data-label="Real parallelism, no GIL"><span class="c"># map -> pmap and the same work fans out across</span>
+<span class="c"># every core, lock-free — no GIL, no pool to wire up</span>
+[1, 2, 3, 4]
+    <span class="op">|&gt;</span> pmap(|$n| $n * $n)   <span class="c"># [1, 4, 9, 16]</span></pre>
+<pre class="code slide" data-label="Pipelines" hidden><span class="c"># square the evens, then sum them</span>
 $xs := [1, 2, 3, 4, 5, 6]
 $xs <span class="op">|&gt;</span> filter(|$x| $x % 2 == 0)
     <span class="op">|&gt;</span> map(|$x| $x * $x)
     <span class="op">|&gt;</span> reduce(0, |$a, $b| $a + $b)   <span class="c"># 56</span></pre>
-<pre class="code slide" data-label="Effortless parallelism" hidden><span class="c"># rename map to pmap and the same work</span>
-<span class="c"># fans out across every core, lock-free</span>
-[1, 2, 3, 4]
-    <span class="op">|&gt;</span> pmap(|$n| $n * $n)   <span class="c"># [1, 4, 9, 16]</span></pre>
 <pre class="code slide" data-label="Errors are values" hidden><span class="c"># ? propagates failures, // recovers</span>
 $cfg  := read_file("app.json") <span class="op">//</span> "{}"
 $port := from_json($cfg).port <span class="op">//</span> 8080
@@ -85,12 +85,30 @@ match_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
     <div class="dots" id="demoDots" role="tablist" aria-label="Choose an example"></div>
   </div>
 
+  <h2 class="sec">By the numbers</h2>
+  <div class="stats">
+    <div class="stat">
+      <div class="num">~3&times;</div>
+      <div class="lab">faster than Python's <code>multiprocessing</code> on parallel CPU work &mdash; goroutines, lock-free, no GIL and no pool setup or pickling.</div>
+    </div>
+    <div class="stat">
+      <div class="num">~1.6&times;</div>
+      <div class="lab">of CPython 3.14's time on real log &amp; glue workloads &mdash; within reach of a mature C-tuned interpreter, and quicker to start.</div>
+    </div>
+    <div class="stat">
+      <div class="num">11</div>
+      <div class="lab">head-to-head benchmarks against Python you can rerun yourself &mdash; <code>bench/run.py</code>.</div>
+    </div>
+  </div>
+  <p class="statnote">Measured against CPython 3.14 on the log-processing, orchestration, and scripting benchmarks in the repo. drang wins on parallelism &mdash; where a GIL forces Python into heavyweight processes.</p>
+
   <h2 class="sec">Why drang</h2>
   <div class="grid">
     <div class="feat">
-      <h3>Effortless parallelism</h3>
-      <p>Change <code>map</code> to <code>pmap</code> and the work runs lock-free across every
-        core, with no GIL. Quick for an interpreter, and it scales when you need it.</p>
+      <h3>Real parallelism, no GIL</h3>
+      <p>Change <code>map</code> to <code>pmap</code> and the work fans out lock-free across every
+        core. On parallel CPU work that lands about <strong>3&times; faster than Python's</strong>
+        <code>multiprocessing</code> &mdash; none of the process-pool or pickling overhead.</p>
     </div>
     <div class="feat">
       <h3>Errors are values</h3>
