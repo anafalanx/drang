@@ -85,30 +85,13 @@ match_all($line, qr/[0-9]+/)   <span class="c"># [1, 22, 333]</span></pre>
     <div class="dots" id="demoDots" role="tablist" aria-label="Choose an example"></div>
   </div>
 
-  <h2 class="sec">By the numbers</h2>
-  <div class="stats">
-    <div class="stat">
-      <div class="num">~3&times;</div>
-      <div class="lab">faster than Python's <code>multiprocessing</code> on parallel CPU work &mdash; goroutines, lock-free, no GIL and no pool setup or pickling.</div>
-    </div>
-    <div class="stat">
-      <div class="num">~1.6&times;</div>
-      <div class="lab">of CPython 3.14's time on real log &amp; glue workloads &mdash; within reach of a mature C-tuned interpreter, and quicker to start.</div>
-    </div>
-    <div class="stat">
-      <div class="num">11</div>
-      <div class="lab">head-to-head benchmarks against Python you can rerun yourself &mdash; <code>bench/run.py</code>.</div>
-    </div>
-  </div>
-  <p class="statnote">Measured against CPython 3.14 on the log-processing, orchestration, and scripting benchmarks in the repo. drang wins on parallelism &mdash; where a GIL forces Python into heavyweight processes.</p>
-
   <h2 class="sec">Why drang</h2>
   <div class="grid">
     <div class="feat">
       <h3>Real parallelism, no GIL</h3>
-      <p>Change <code>map</code> to <code>pmap</code> and the work fans out lock-free across every
-        core. On parallel CPU work that lands about <strong>3&times; faster than Python's</strong>
-        <code>multiprocessing</code> &mdash; none of the process-pool or pickling overhead.</p>
+      <p>Change <code>map</code> to <code>pmap</code> and the same code fans out lock-free across
+        every core &mdash; goroutine-backed, no GIL, no thread pool to wire up. It scales with the
+        work, not against a lock.</p>
     </div>
     <div class="feat">
       <h3>Errors are values</h3>

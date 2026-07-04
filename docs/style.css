@@ -82,15 +82,6 @@ h2.sec{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--
 .feat h3{margin:0 0 6px;font-size:16px;color:var(--accent);font-weight:600}
 .feat p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.6}
 .feat code{font-size:13px;color:var(--fg)}
-.feat strong{color:var(--fg);font-weight:600}
-
-/* headline numbers */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
-.stat .num{font-family:var(--mono);font-size:30px;font-weight:600;color:var(--accent);line-height:1.05;letter-spacing:-1px}
-.stat .lab{margin-top:9px;font-size:14px;color:var(--muted);line-height:1.55}
-.stat .lab code{font-size:12.5px;color:var(--fg)}
-.statnote{font-size:13px;color:var(--muted);text-align:center;max-width:600px;margin:16px auto 0}
 
 .install{margin:14px 0 0}
 .install pre{background:var(--code);border:1px solid var(--border);border-radius:12px;
