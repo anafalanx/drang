@@ -1362,6 +1362,40 @@ func mulOverflows(a, b int64) bool {
 	return a*b/a != b
 }
 
+// fastCompoundInt computes an int-only compound-assignment op (+= -= *= %=) inline,
+// mirroring arith's int branch and reusing its exact overflow / mod-zero guards. It
+// returns ok=false — telling the VM caller to fall through to the full compound() — for
+// any op it does not handle (//= and ~= are not plain arithmetic; /= is always float,
+// like OpDiv) and for the edge cases compound()/arith() must own: integer overflow (so
+// the identical "integer overflow: a op b" error is raised there) and modulo by zero.
+// Callers pass operands already known to be ints and wrap the result with value.MakeInt.
+// Returning a raw int64 rather than a 56-byte value.Value keeps the call cheap on the hot
+// path (the helper itself is a hair too large to inline once the overflow guards are folded
+// in, but a 16-byte return copy still measurably beats a 56-byte one). This is a VM-only
+// fast path; the tree-walker keeps calling compound() unchanged, so both backends stay in
+// lockstep.
+func fastCompoundInt(op token.Kind, a, b int64) (int64, bool) {
+	switch op {
+	case token.PLUS:
+		if !addOverflows(a, b) {
+			return a + b, true
+		}
+	case token.MINUS:
+		if !subOverflows(a, b) {
+			return a - b, true
+		}
+	case token.STAR:
+		if !mulOverflows(a, b) {
+			return a * b, true
+		}
+	case token.PERCENT:
+		if b != 0 {
+			return a % b, true
+		}
+	}
+	return 0, false
+}
+
 func arith(op token.Kind, l, r value.Value) (value.Value, error) {
 	if l.IsErr() {
 		return l, nil // errors flow as values: an unhandled Err operand passes through, not a hard abort

@@ -484,13 +484,35 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			}
 			regs[in.A] = cont
 		case OpCompoundLocal:
-			nv, err := compound(token.Kind(in.C), regs[in.A], regs[in.B])
+			// Inline int compound-arith fast path (mirrors fastCompoundInt / arith's int
+			// branch). Non-int operands, a nil cur (Tag not Int — so compound() still seeds
+			// it), //=, ~=, /=, overflow, and mod-zero all fall through to the canonical
+			// compound() for byte-identical results.
+			op := token.Kind(in.C)
+			cur, rhs := regs[in.A], regs[in.B]
+			if cur.Tag() == value.Int && rhs.Tag() == value.Int {
+				if n, ok := fastCompoundInt(op, cur.AsInt(), rhs.AsInt()); ok {
+					regs[in.A] = value.MakeInt(n)
+					break
+				}
+			}
+			nv, err := compound(op, cur, rhs)
 			if err != nil {
 				return value.MakeNil(), err
 			}
 			regs[in.A] = nv
 		case OpCompoundLocalK:
-			nv, err := compound(token.Kind(in.C), regs[in.A], p.Consts[in.B])
+			// The K operand is a folded literal const; gating on rhs.Tag() == Int means a
+			// folded Float/Str/Bool const (e.g. $x += 1.5) correctly falls through.
+			op := token.Kind(in.C)
+			cur, rhs := regs[in.A], p.Consts[in.B]
+			if cur.Tag() == value.Int && rhs.Tag() == value.Int {
+				if n, ok := fastCompoundInt(op, cur.AsInt(), rhs.AsInt()); ok {
+					regs[in.A] = value.MakeInt(n)
+					break
+				}
+			}
+			nv, err := compound(op, cur, rhs)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -498,9 +520,23 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 		case OpCompoundVar:
 			name := p.Consts[in.A].AsStr()
 			cur, _ := env.get(name)
-			nv, err := compound(token.Kind(in.C), cur, regs[in.B])
-			if err != nil {
-				return value.MakeNil(), err
+			op := token.Kind(in.C)
+			rhs := regs[in.B]
+			// Only the value computation is specialized; env.set (and its frozen/undefined
+			// error handling below) must always run, so this must NOT early-break like the
+			// local forms — a frozen `$c ::= 5; $c += 1` still has to reach env.set to error.
+			nv, ok := value.MakeNil(), false
+			if cur.Tag() == value.Int && rhs.Tag() == value.Int {
+				if n, hit := fastCompoundInt(op, cur.AsInt(), rhs.AsInt()); hit {
+					nv, ok = value.MakeInt(n), true
+				}
+			}
+			if !ok {
+				var err error
+				nv, err = compound(op, cur, rhs)
+				if err != nil {
+					return value.MakeNil(), err
+				}
 			}
 			set, frozen := env.set(name, nv)
 			if !set {
@@ -546,7 +582,17 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 				ip = int(in.B)
 			}
 		case OpJmpFalseLt:
-			res, err := compare(token.LT, regs[in.A], regs[in.B])
+			// Inline int<int (int64 via AsInt, so >2^53 stays exact — mirrors threeway).
+			// Jump-if-FALSE semantics: jump when the exact op is false. Float (incl. NaN),
+			// Str, Bool, Err, and mixed pairs fall through to the unchanged compare().
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if !(l.AsInt() < r.AsInt()) {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.LT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -554,7 +600,14 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 				ip = int(in.C)
 			}
 		case OpJmpFalseLe:
-			res, err := compare(token.LE, regs[in.A], regs[in.B])
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if !(l.AsInt() <= r.AsInt()) {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.LE, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -562,7 +615,14 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 				ip = int(in.C)
 			}
 		case OpJmpFalseGt:
-			res, err := compare(token.GT, regs[in.A], regs[in.B])
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if !(l.AsInt() > r.AsInt()) {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.GT, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}
@@ -570,7 +630,14 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 				ip = int(in.C)
 			}
 		case OpJmpFalseGe:
-			res, err := compare(token.GE, regs[in.A], regs[in.B])
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if !(l.AsInt() >= r.AsInt()) {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.GE, l, r)
 			if err != nil {
 				return value.MakeNil(), err
 			}

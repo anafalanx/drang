@@ -417,6 +417,19 @@ $k = 2`,
 	`say(1 % 0)`,
 	`say("a" + 1)`,
 	`say(int("x")?)`, // top-level ? propagation -> program aborts (both backends)
+	// Compound-assign int fast-path fallthrough locks (both backends must abort identically):
+	`$c ::= 5
+$c += 1`, // frozen compound: OpCompoundVar computes the value but must still reach env.set and error
+	`$x := 9223372036854775807
+$x += 1`, // OpCompoundVar overflow falls through to arith's aborting "integer overflow"
+	`$x := 10
+$x %= 0`, // OpCompoundVar mod-zero falls through to arith's "modulo by zero"
+	`fn .f() {
+  $x := 9223372036854775807
+  $x += 1
+  $x
+}
+say(.f())`, // OpCompoundLocalK overflow inside a RegLocals function body
 }
 
 func mustParseProg(tb testing.TB, src string) *ast.Program {
