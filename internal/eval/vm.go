@@ -652,6 +652,79 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			if equal(regs[in.A], regs[in.B]) {
 				ip = int(in.C)
 			}
+		// Jump-if-TRUE fused compare-branch (inverted-loop back-edge): the exact mirror
+		// of the OpJmpFalse* block, jumping to C when the comparison is TRUE. Same int
+		// fast path (int64 via AsInt, exact >2^53); float/NaN/Str/Err fall through to
+		// compare() and, since the op is computed exactly (not inverted), NaN never
+		// branches back — identical to the walker.
+		case OpJmpTrueLt:
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if l.AsInt() < r.AsInt() {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.LT, l, r)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			if res.Truthy() {
+				ip = int(in.C)
+			}
+		case OpJmpTrueLe:
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if l.AsInt() <= r.AsInt() {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.LE, l, r)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			if res.Truthy() {
+				ip = int(in.C)
+			}
+		case OpJmpTrueGt:
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if l.AsInt() > r.AsInt() {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.GT, l, r)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			if res.Truthy() {
+				ip = int(in.C)
+			}
+		case OpJmpTrueGe:
+			l, r := regs[in.A], regs[in.B]
+			if l.Tag() == value.Int && r.Tag() == value.Int {
+				if l.AsInt() >= r.AsInt() {
+					ip = int(in.C)
+				}
+				break
+			}
+			res, err := compare(token.GE, l, r)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			if res.Truthy() {
+				ip = int(in.C)
+			}
+		case OpJmpTrueEq:
+			if equal(regs[in.A], regs[in.B]) {
+				ip = int(in.C)
+			}
+		case OpJmpTrueNe:
+			if !equal(regs[in.A], regs[in.B]) {
+				ip = int(in.C)
+			}
 		case OpPushScope:
 			env = env.child()
 		case OpPopScope:

@@ -765,3 +765,32 @@ func benchBuiltin(b *testing.B, vm bool) {
 // loop (the direct-dispatch target).
 func BenchmarkBuiltinVM(b *testing.B)     { benchBuiltin(b, true) }
 func BenchmarkBuiltinWalker(b *testing.B) { benchBuiltin(b, false) }
+
+// benchWhile is a near-pure spin loop (minimal body) that isolates the per-iteration
+// loop-control overhead — the target of register-mode while inversion (the removed
+// unconditional back-edge OpJump). BenchmarkGlue dilutes this with map/slot work.
+func benchWhile(b *testing.B, vm bool) {
+	prog := mustParseProg(b, `fn .spin($n) {
+  $s := 0
+  $i := 0
+  while $i < $n {
+    $s += $i
+    $i += 1
+  }
+  $s
+}
+.spin(2000000)`)
+	oldVM, oldOut := vmEnabled, stdout
+	vmEnabled, stdout = vm, io.Discard
+	defer func() { vmEnabled, stdout = oldVM, oldOut }()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := RunProgram(prog, NewEnv()); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWhileVM(b *testing.B)     { benchWhile(b, true) }
+func BenchmarkWhileWalker(b *testing.B) { benchWhile(b, false) }

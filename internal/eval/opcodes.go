@@ -72,6 +72,16 @@ const (
 	OpJmpFalseGe
 	OpJmpFalseEq
 	OpJmpFalseNe
+	// Mirror of the fused compare-branch, but jump to C when the comparison is TRUE.
+	// The back-edge of an inverted (bottom-testing) register-mode while loop: the
+	// condition test IS the back-edge, so there is no separate unconditional jump per
+	// iteration. Must stay a contiguous, ordered block (patchBranchTo ranges over it).
+	OpJmpTrueLt
+	OpJmpTrueLe
+	OpJmpTrueGt
+	OpJmpTrueGe
+	OpJmpTrueEq
+	OpJmpTrueNe
 	OpPushScope   // env = env.child()
 	OpPopScope    // env = env.parent
 	OpCall        // R[A] = call(Consts[C], R[A : A+B])   (B = argc; result over the arg base)

@@ -54,6 +54,7 @@ type compiler struct {
 type loopCtx struct {
 	continueTarget int32
 	breakJumps     []int
+	nextJumps      []int // OpJumps emitted by `next`, patched to continueTarget in popLoop
 	scopeDepth     int
 }
 
@@ -71,6 +72,13 @@ func (c *compiler) popLoop(exitTarget int32) {
 	c.loops = c.loops[:len(c.loops)-1]
 	for _, j := range lp.breakJumps {
 		c.code[j].B = exitTarget
+	}
+	// `next` jumps are back-patched to continueTarget here rather than inline, so an
+	// inverted while (whose bottom-test continueTarget is only known after the body
+	// compiles) resolves the same way as a top-testing loop (continueTarget known up
+	// front) — the final OpJump target is identical either way.
+	for _, j := range lp.nextJumps {
+		c.code[j].B = lp.continueTarget
 	}
 }
 
@@ -250,8 +258,15 @@ func (c *compiler) patchJump(idx int) { c.code[idx].B = int32(len(c.code)) }
 // depends on the opcode (B for a plain jump-if-falsy, C for a fused compare-branch
 // whose A and B hold the operands).
 func (c *compiler) patchBranch(idx int) {
-	target := int32(len(c.code))
-	if op := c.code[idx].Op; op >= OpJmpFalseLt && op <= OpJmpFalseNe {
+	c.patchBranchTo(idx, int32(len(c.code)))
+}
+
+// patchBranchTo points a jump emitted by compileBranchFalse/compileBranchTrue at an
+// explicit target, which may be BACKWARD (an inverted loop's back-edge to the body top).
+// The target field is C for a fused compare-branch (OpJmpFalse*/OpJmpTrue*, whose A and B
+// hold the operands) and B for a plain OpJumpIf{Falsy,Truthy}.
+func (c *compiler) patchBranchTo(idx int, target int32) {
+	if op := c.code[idx].Op; (op >= OpJmpFalseLt && op <= OpJmpFalseNe) || (op >= OpJmpTrueLt && op <= OpJmpTrueNe) {
 		c.code[idx].C = target
 	} else {
 		c.code[idx].B = target
@@ -297,6 +312,50 @@ func branchFalseOp(op token.Kind) (Op, bool) {
 		return OpJmpFalseEq, true
 	case token.NE:
 		return OpJmpFalseNe, true
+	}
+	return 0, false
+}
+
+// compileBranchTrue emits a jump (target unset; patch with patchBranchTo) taken when
+// cond is TRUE — the bottom-test back-edge of an inverted loop. A comparison condition
+// fuses into a single jump-if-true compare-branch (the exact mirror of compileBranchFalse);
+// anything else materializes the value and uses OpJumpIfTruthy.
+func (c *compiler) compileBranchTrue(cond ast.Expr) int {
+	if b, ok := cond.(*ast.Binary); ok {
+		if op, ok := branchTrueOp(b.Op); ok {
+			rL, lt := c.compileOperand(b.L)
+			rR, rt := c.compileOperand(b.R)
+			idx := c.emit(op, rL, rR, 0)
+			if rt {
+				c.release(1)
+			}
+			if lt {
+				c.release(1)
+			}
+			return idx
+		}
+	}
+	condReg := c.reserve()
+	c.compileExpr(cond, condReg)
+	c.release(1)
+	return c.emit(OpJumpIfTruthy, condReg, 0, 0)
+}
+
+// branchTrueOp maps a comparison token to the fused jump-if-true opcode.
+func branchTrueOp(op token.Kind) (Op, bool) {
+	switch op {
+	case token.LT:
+		return OpJmpTrueLt, true
+	case token.LE:
+		return OpJmpTrueLe, true
+	case token.GT:
+		return OpJmpTrueGt, true
+	case token.GE:
+		return OpJmpTrueGe, true
+	case token.EQ:
+		return OpJmpTrueEq, true
+	case token.NE:
+		return OpJmpTrueNe, true
 	}
 	return 0, false
 }
@@ -393,7 +452,8 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 		}
 		lp := c.loops[len(c.loops)-1]
 		c.emitScopePops(lp.scopeDepth)
-		c.emit(OpJump, 0, lp.continueTarget, 0)
+		j := c.emit(OpJump, 0, 0, 0) // target (continueTarget) patched in popLoop
+		lp.nextJumps = append(lp.nextJumps, j)
 	case *ast.FnDecl:
 		// Register-eligible functions never contain a nested FnDecl, so this only
 		// runs in Env mode (where OpDeclVar binds into the per-call/global env).
@@ -679,14 +739,38 @@ func (c *compiler) compileWhile(n *ast.WhileStmt, resultReg int32) {
 	if resultReg >= 0 {
 		c.emit(OpLoadNil, resultReg, 0, 0) // a while loop yields nil
 	}
-	loopStart := int32(len(c.code))
-	jexit := c.compileBranchFalse(n.Cond) // cond runs in the outer scope, like the walker
-	c.pushLoop(loopStart)                 // next -> re-check the condition
-	c.enterBlockScope()                   // a fresh scope per iteration
+	if !c.regMode {
+		// Env mode: keep the top-testing form. Its per-iteration fresh scope emits real
+		// OpPushScope/OpPopScope, and a one-time entry jump would skip the first push;
+		// inverting is not worth re-proving that balance for cold Env-mode loops.
+		loopStart := int32(len(c.code))
+		jexit := c.compileBranchFalse(n.Cond) // cond runs in the outer scope, like the walker
+		c.pushLoop(loopStart)                 // next -> re-check the condition
+		c.enterBlockScope()                   // a fresh scope per iteration
+		c.compileBlock(n.Body, -1)
+		c.leaveBlockScope()
+		c.emit(OpJump, 0, loopStart, 0)
+		c.patchBranch(jexit)
+		c.popLoop(int32(len(c.code))) // break -> loop exit
+		return
+	}
+	// Register mode: invert to a bottom-testing loop so the fused condition test IS the
+	// back-edge — no separate unconditional OpJump per iteration. A one-time entry jump
+	// lands on the bottom test first, so a false-on-entry condition skips the body
+	// entirely (zero-iteration and side-effecting conditions behave exactly as the
+	// top-testing walker). enterBlockScope/leaveBlockScope emit no runtime scope ops in
+	// register mode, so the entry jump bypasses nothing that would unbalance scope.
+	jentry := c.emit(OpJump, 0, 0, 0) // one-time entry jump to the bottom test
+	bodyTop := int32(len(c.code))
+	lp := c.pushLoop(-1) // continueTarget (the bottom test) is only known after the body
+	c.enterBlockScope()
 	c.compileBlock(n.Body, -1)
 	c.leaveBlockScope()
-	c.emit(OpJump, 0, loopStart, 0)
-	c.patchBranch(jexit)
+	testLabel := int32(len(c.code))
+	lp.continueTarget = testLabel // next re-tests the condition (nextJumps patched in popLoop)
+	c.code[jentry].B = testLabel
+	jback := c.compileBranchTrue(n.Cond) // back-edge: jump to bodyTop while cond is true
+	c.patchBranchTo(jback, bodyTop)
 	c.popLoop(int32(len(c.code))) // break -> loop exit
 }
 
