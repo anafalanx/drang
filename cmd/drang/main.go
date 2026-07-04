@@ -269,6 +269,7 @@ func dumpAST(src, origin string) {
 }
 
 func runProgram(src, origin string, argv []string, baseDir string) {
+	eval.ApplyStartupGCPolicy() // one-shot run: relaxed GC + a soft memory backstop (see mempolicy.go)
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if reportParseErrors(p, origin) {
@@ -289,6 +290,7 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 // runStream parses src and runs it in one-liner stream mode (-n/-p): once per input
 // line, with the post-program args (argv) used as input files (stdin if none).
 func runStream(src, origin string, argv []string, autoPrint, autoSplit bool) {
+	eval.ApplyStartupGCPolicy() // one-shot run: relaxed GC + a soft memory backstop (see mempolicy.go)
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if reportParseErrors(p, origin) {
