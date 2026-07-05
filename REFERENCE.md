@@ -14,6 +14,16 @@ the binary and the older design notes disagree, this reference follows the binar
 - **Error convention:** a wrong argument *count* aborts the program (uncatchable). A wrong argument *type* or a runtime failure in a **builtin** returns a first-class `error` value, catchable with `//` (recover on Err-or-nil) or `?` (propagate); a type mismatch on an **operator** aborts. Each builtin is marked `err:` with its failure mode.
 - **Sigils / namespaces:** `$name` is a variable, `.name` a user-defined function, a bare `name` a builtin or keyword — three disjoint namespaces.
 
+### Surprises
+
+The rules a first reader is most likely to get wrong (each is verified against the binary, not a bug):
+
+- **Operators abort; builtins return an Err.** A type mismatch on an operator (`"5" + 1`), integer overflow, or divide-by-zero **aborts the program uncatchably** — `//` and `?` cannot recover it, because the failure is below the level where error values exist. A builtin handed a bad-type argument instead returns a catchable Err (`int("x")` is recoverable). A wrong argument *count* — to a builtin *or* a user function — also aborts. Rule of thumb: an operator failing is a *bug* (fix the types); a builtin failing is a *condition* (handle it with `//` / `?`).
+- **There is no `nil` literal.** You cannot write `nil` in source. Nil arises only as a value — an absent map key, a `store_get` miss, `recv` on a drained channel. Test presence with `has`, not `== nil`.
+- **String interpolation is opt-in.** `"..."` and `'...'` are literal; only `$"..."` interpolates, and it interpolates a bare `$name` only (no `${expr}`). Join strings with `~`, never `+` (`"a" + "b"` aborts — see the first rule).
+- **`/` is always float division**, even on two ints (`10 / 4` is `2.5`); use `div()` for truncating integer division. A whole-valued float prints with no trailing `.0`, so `6 / 2` prints `3` although its type is `float`.
+- **A user function is always `.name`.** Define with `fn .f(...)`, call as `.f(...)`; a bare `f` is a builtin/keyword, `$f` is a variable holding a value. The three never collide.
+
 ---
 
 ## Grammar
