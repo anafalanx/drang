@@ -1,0 +1,157 @@
+# check_examples.dr — verify every runnable example in a Markdown doc against the
+# interpreter. drang checking its own manual.
+#
+#   drang tools/check_examples.dr              # checks MANUAL.md
+#   drang tools/check_examples.dr REFERENCE.md
+#
+# Run from the repo root. A runnable example is a ```drang fenced block; when it is
+# immediately followed by a plain ``` block, that block is its expected output and
+# is compared byte-for-byte (CRLF- and trailing-whitespace-normalized) against what
+# drang actually prints — stdout, stderr, or the two combined, since an error demo
+# shows stderr. Exit 0 iff every deterministic example with shown output matches.
+#
+#   - Non-deterministic examples (now()/rand/uuid/…) are run but NOT compared — their
+#     output legitimately varies from run to run.
+#   - Shell-invocation examples (drang -ne '…', printf | drang) document command-line
+#     usage, not a drang program, so they are skipped.
+#   - A ```drang block with no shown output is run only to surface an unexpected abort.
+#
+# Each example runs in a throwaway ./.drang_examples/ working directory, so any file
+# or store side effects it creates stay contained and are removed at the end.
+$doc := $ARGV[0] // "MANUAL.md"
+$src := read_file($doc)?
+$lines := split(replace_all($src, "\r\n", "\n"), "\n")
+$n := len($lines)
+$work ::= ".drang_examples"  # throwaway cwd for each example's side effects
+capture_all("cmd", "/c", "rmdir", "/s", "/q", $work)  # clear any stale copy
+mkdir($work) // true
+
+fn .norm($s) {
+	trim(replace_all($s, "\r", ""))
+}
+
+fn .first_code_line($code) {
+	for $l in split($code, "\n") {
+		if trim($l) != "" and !starts_with(trim($l), "#") {
+			return trim($l)
+		}
+	}
+	""
+}
+
+# A shell-invocation example documents command-line usage, not a drang program.
+fn .is_shell($code) {
+	$first := .first_code_line($code)
+	for $p in ["drang ", "printf ", "echo ", "$ "] {
+		if starts_with($first, $p) {
+			return true
+		}
+	}
+	contains($code, "| drang") or contains($code, "&& drang")
+}
+
+# An example whose output cannot be reproduced byte-for-byte (wall-clock, randomness).
+fn .is_nondet($code) {
+	for $m in ["now(", "rand(", "rand_int(", "uuid(", "sample(", "shuffle(", "tempfile(", "tempdir("] {
+		if contains($code, $m) {
+			return true
+		}
+	}
+	false
+}
+
+# --- collect (code, expected?, line) triples -----------------------------------
+$cases := []
+$i := 0
+while $i < $n {
+	if trim($lines[$i]) == "```drang" {
+		$start := $i + 1
+		$j := $start
+		while $j < $n and trim($lines[$j]) != "```" {
+			$j = $j + 1
+		}
+		$code := join($lines[$start..$j - 1], "\n")
+		$k := $j + 1
+		if $k < $n and trim($lines[$k]) == "```" {
+			$ostart := $k + 1
+			$m := $ostart
+			while $m < $n and trim($lines[$m]) != "```" {
+				$m = $m + 1
+			}
+			push(
+				$cases,
+				{code: $code, expected: join($lines[$ostart..$m - 1], "\n"), hasout: true, line: $start}
+			)
+			$i = $m + 1
+		} else {
+			push($cases, {code: $code, expected: "", hasout: false, line: $start})
+			$i = $j + 1
+		}
+	} else {
+		$i = $i + 1
+	}
+}
+say($"Checking ${len($cases)} drang example blocks in ${doc}")
+say("")
+$pass := 0
+$fail := 0
+$nondet := 0
+$shell := 0
+$noout := 0
+for $c in $cases {
+	if .is_shell($c.code) {
+		$shell = $shell + 1
+		next
+	}
+	write_file($work ~ "/prog.dr", $c.code)
+	$r := capture_all(exe(), "prog.dr", {cwd: $work})  # cwd -> the child sees prog.dr and writes here
+	if !$c.hasout {
+		$noout = $noout + 1
+		if !$r.ok and $r.code != 0 {
+			say($"INFO  no-output block at ${doc}:${c.line} exits ${r.code}")
+		}
+		next
+	}
+	if .is_nondet($c.code) {
+		$nondet = $nondet + 1
+		say($"SKIP  non-deterministic at ${doc}:${c.line}")
+		next
+	}
+	$want := .norm($c.expected)
+	$cands := [.norm($r.out), .norm($r.err), .norm($r.out ~ $r.err), .norm($r.out ~ "\n" ~ $r.err)]
+	if contains($cands, $want) {
+		$pass = $pass + 1
+	} else {
+		$fail = $fail + 1
+		say($"FAIL  ${doc}:${c.line} (exit ${r.code})")
+		say("--- code ---")
+		say($c.code)
+		say("--- expected ---")
+		say($want)
+		say("--- actual (stdout) ---")
+		say(.norm($r.out))
+		if trim($r.err) != "" {
+			say("--- actual (stderr) ---")
+			say(.norm($r.err))
+		}
+		say("")
+	}
+}
+capture_all("cmd", "/c", "rmdir", "/s", "/q", $work)  # remove the throwaway dir + all example artifacts
+say("")
+say("=== summary ===")
+say($"  blocks:            ${len($cases)}")
+say($"  checked (output):  ${$pass + $fail}")
+say($"  passed:            ${pass}")
+say($"  mismatches:        ${fail}")
+say($"  non-deterministic: ${nondet} (run, not compared)")
+say($"  shell-skipped:     ${shell}")
+say($"  no-output:         ${noout} (run to catch an unexpected abort)")
+say("")
+if $fail == 0 {
+	say("EXAMPLES OK")
+	exit(0)
+} else {
+	say($"EXAMPLES FAILED — ${fail} mismatch(es)")
+	exit(1)
+}

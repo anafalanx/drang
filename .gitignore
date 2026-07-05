@@ -4,3 +4,7 @@
 # Scratch dirs and large test fixtures (not part of the source)
 /bigline.txt
 /_*/
+
+# check_examples.dr throwaway working dir + store artifacts from running examples
+/.drang_examples/
+*.store*
