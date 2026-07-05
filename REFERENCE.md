@@ -627,6 +627,8 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 
 `recv_stdout(p: process) -> string | nil` — reads the next available chunk of stdout (raw bytes, untrimmed) from a child launched with `{stdout_pipe: true}`; **blocks** until the child writes, and returns `nil` once the child has closed its stdout (exited and drained). Pairs with `send_stdin` to steer a live child (write a prompt, read the reply, repeat). The read is direct — the script is the drainer, so a child that outruns the read pace back-pressures, and awaiting a child with a large *unread* output blocks (drain to `nil` first, or `kill`). Note many programs block-buffer stdout when it is a pipe, so their output appears only when they flush or exit (a pty/ConPTY is not provided). **err:** returns Err if the child was not started with `{stdout_pipe: true}` or the read fails; aborts on wrong arity.
 
+`recv_stderr(p: process) -> string | nil` — the same as `recv_stdout`, but reads the child's **stderr** as a stream **distinct** from stdout, from a child launched with `{stderr_pipe: true}` (raw chunks, `nil` at EOF, same direct-read back-pressure). To read *both* streams from one child, **drain them concurrently** (e.g. read one in a `spawn`ed task): stdout and stderr are independent pipes, so draining only one while the child fills the other can back-pressure the child and stall. Use `{merge_stderr}` instead when you just want stderr folded into stdout in one stream; `{stderr_pipe}` and `{merge_stderr}` are mutually exclusive. **err:** returns Err if the child was not started with `{stderr_pipe: true}` or the read fails; aborts on wrong arity.
+
 #### Tasks
 
 `spawn(fn: function, args...: any) -> task` — *special form*; runs a drang function on its own goroutine (args deep-copied in, copy-on-send), returns a `task` immediately. **err:** aborts on wrong arity (needs a function). An error raised inside the task (returned, `?`-propagated, or panicked) is captured and surfaced by `await`.
@@ -663,8 +665,9 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 | `stdin` | string | Feeds this string as the child's stdin. Mutually exclusive with `stdin_file`. |
 | `stdin_file` | string (path) | Pipes a file straight into stdin (no copy through drang; good for large inputs). Cannot combine with `stdin`. |
 | `stdin_pipe` | bool | **`start`-only**: opens a live stdin pipe driven by `send_stdin`/`close_stdin`. Rejected on synchronous forms. |
-| `stdout_pipe` | bool | **`start`-only**: keeps the child's stdout on a pipe drained by `recv_stdout` (raw chunks; `nil` at EOF). Combine with `{merge_stderr}` to fold stderr in. Rejected on synchronous forms. |
-| `merge_stderr` | bool | Folds the child's stderr into its stdout (like shell `2>&1`). |
+| `stdout_pipe` | bool | **`start`-only**: keeps the child's stdout on a pipe drained by `recv_stdout` (raw chunks; `nil` at EOF). Combine with `{merge_stderr}` to fold stderr in, or `{stderr_pipe}` to read stderr separately. Rejected on synchronous forms. |
+| `stderr_pipe` | bool | **`start`-only**: keeps the child's stderr on its **own** pipe drained by `recv_stderr` (raw chunks; `nil` at EOF), separate from stdout. Mutually exclusive with `{merge_stderr}`. Rejected on synchronous forms. |
+| `merge_stderr` | bool | Folds the child's stderr into its stdout (like shell `2>&1`). Mutually exclusive with `{stderr_pipe}`. |
 | `arg0` | string | Presents a different argv[0] than the launched executable. Rejected for a `.bat`/`.cmd` target (launched via `cmd.exe`, which owns argv[0]) → catchable Err. |
 | `timeout` | int (ms) | Wall-clock cap; `0` = no limit. On breach the whole process **tree** is killed → Err 124. **Rejected on `start`** (detached, unbounded) → catchable Err. |
 | `supervise` | bool | **`start`-only**: ties a detached child's lifetime to drang's job (dies with drang, kernel-enforced, even on clean exit). **Rejected** on the synchronous forms (they always die-with-parent while waiting) → catchable Err. |

@@ -16,6 +16,15 @@ follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `
   many programs block-buffer stdout when it is a pipe, so their output appears only on flush/exit
   (a pty/ConPTY is not provided). Additive and backward-compatible; VM↔walker parity + `-race` tested.
   (Graceful `stop`/`signal` remains reserved and deferred — see DESIGN.md.)
+- **Live child stderr reading (`recv_stderr`).** Fills the last gap in the single-process surface:
+  `start(cmd, …, {stderr_pipe: true})` keeps a started child's stderr on its **own** pipe, and
+  `recv_stderr(p)` reads it as a stream distinct from stdout (same raw-chunks / nil-at-EOF / direct-read
+  contract as `recv_stdout`). It is the counterpart to `{merge_stderr}` (which folds stderr into
+  stdout); the two are **mutually exclusive** — asking for both is rejected rather than silently
+  merging. To read both streams from one child, drain them **concurrently** (read one in a `spawn`ed
+  task), since they are independent pipes and draining only one can back-pressure the child. This is
+  a genuinely new name (never reserved in the 0.7 freeze), added under the additive-only contract.
+  VM↔walker parity + `-race` tested (separate-streams and cross-reader concurrency covered).
 
 ## [0.9] — 2026-07-05
 

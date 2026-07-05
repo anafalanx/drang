@@ -31,6 +31,7 @@ type execOpts struct {
 	hasStdinFile   bool
 	stdinPipe      bool   // start() only: keep a writable stdin so send_stdin/close_stdin can drive the child
 	stdoutPipe     bool   // start() only: keep a readable stdout so recv_stdout can read the child live
+	stderrPipe     bool   // start() only: keep a readable stderr so recv_stderr can read it (distinct from stdout)
 	mergeStderr    bool   // route the child's stderr to its stdout (2>&1)
 	arg0           string // present a different argv[0] than the launched executable
 	hasArg0        bool
@@ -102,6 +103,10 @@ type Proc struct {
 	stdoutMu     sync.Mutex // guards the readable-stdout handle below
 	stdoutR      *os.File   // readable stdout, set when started with {stdout_pipe: true}; nil otherwise
 	stdoutClosed bool
+
+	stderrMu     sync.Mutex // guards the readable-stderr handle below
+	stderrR      *os.File   // readable stderr, set when started with {stderr_pipe: true}; nil otherwise
+	stderrClosed bool
 }
 
 // writeStdin feeds s to a process started with {stdin_pipe: true}. It errors if the process has no
@@ -171,6 +176,48 @@ func (p *Proc) closeStdout() {
 	if p.stdoutR != nil && !p.stdoutClosed {
 		p.stdoutClosed = true
 		p.stdoutR.Close()
+	}
+}
+
+// readStderr reads the next chunk of stderr from a process started with {stderr_pipe: true}, with
+// the same semantics as readStdout: it blocks until the child writes, reports EOF once the child
+// has closed its stderr, and errors if the process has no readable stderr. Because stdout and
+// stderr are independent pipes, a script that wants both must drain them concurrently (e.g. read
+// one in a spawned task) — leaving one undrained can back-pressure the child and stall the other.
+func (p *Proc) readStderr() (string, bool, error) {
+	p.stderrMu.Lock()
+	r, closed := p.stderrR, p.stderrClosed
+	p.stderrMu.Unlock()
+	if r == nil {
+		return "", false, fmt.Errorf("process was not started with {stderr_pipe: true}")
+	}
+	if closed {
+		return "", true, nil // already drained to EOF
+	}
+	buf := make([]byte, 64*1024)
+	n, err := r.Read(buf)
+	if n > 0 {
+		return string(buf[:n]), false, nil
+	}
+	if err != nil {
+		p.closeStderr() // stream ended (or closed under us): release the read end
+		if err == io.EOF || errors.Is(err, os.ErrClosed) {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	return "", false, nil
+}
+
+// closeStderr closes the readable stderr end. Idempotent, and a no-op when the process has no
+// readable stderr. Like closeStdout, the reaper does NOT call it, so stderr written just before
+// exit survives until the script drains it.
+func (p *Proc) closeStderr() {
+	p.stderrMu.Lock()
+	defer p.stderrMu.Unlock()
+	if p.stderrR != nil && !p.stderrClosed {
+		p.stderrClosed = true
+		p.stderrR.Close()
 	}
 }
 
@@ -249,11 +296,33 @@ func builtinStart(args []value.Value) (value.Value, error) {
 		if perr != nil {
 			if stdinW != nil {
 				stdinW.Close()
+				c.ownedStdin.Close() // release the stdin read end too: start() never ran to adopt it
 			}
 			return execError(argv[0], perr, ""), nil
 		}
 		c.stdout = pw
 		stdoutR, stdoutW = pr, pw
+	}
+	// {stderr_pipe}: keep a readable pipe from the child's stderr so recv_stderr can read it as a
+	// stream distinct from stdout — same discipline as {stdout_pipe} (close our write-end copy after
+	// launch so the read end EOFs). {merge_stderr} is rejected alongside it (splitExecArgs), since
+	// merging would fold stderr into the stdout descriptor and leave this pipe with no writer.
+	var stderrR, stderrW *os.File
+	if opts.stderrPipe {
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			if stdinW != nil {
+				stdinW.Close()
+				c.ownedStdin.Close() // release the stdin read end too: start() never ran to adopt it
+			}
+			if stdoutW != nil {
+				stdoutR.Close()
+				stdoutW.Close()
+			}
+			return execError(argv[0], perr, ""), nil
+		}
+		c.stderr = pw
+		stderrR, stderrW = pr, pw
 	}
 	c.killOnClose = opts.supervise // supervise:true ties it to drang's life; else it outlives drang
 	if startErr := c.start(); startErr != nil {
@@ -264,12 +333,19 @@ func builtinStart(args []value.Value) (value.Value, error) {
 			stdoutR.Close()
 			stdoutW.Close()
 		}
+		if stderrW != nil {
+			stderrR.Close()
+			stderrW.Close()
+		}
 		return execError(argv[0], startErr, ""), nil
 	}
 	if stdoutW != nil {
 		stdoutW.Close() // close our copy of the child's write end so the read end can EOF on child exit
 	}
-	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW, stdoutR: stdoutR}
+	if stderrW != nil {
+		stderrW.Close() // same for the stderr write end
+	}
+	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW, stdoutR: stdoutR, stderrR: stderrR}
 	go func() {
 		defer close(p.done)
 		code, werr := c.proc.Wait() // reap the child; NUL stdio needs no draining, and {stdout_pipe} is drained by the script via recv_stdout
@@ -396,6 +472,28 @@ func builtinRecvStdout(args []value.Value) (value.Value, error) {
 	}
 	if eof {
 		return value.MakeNil(), nil // the child closed its stdout; the stream has ended
+	}
+	return value.MakeStr(s), nil
+}
+
+// builtinRecvStderr reads the next available chunk of stderr from a process started with
+// {stderr_pipe: true}. It mirrors recv_stdout exactly (raw untrimmed bytes, nil at EOF, catchable
+// Err if the process has no stderr pipe or the read fails), reading stderr as a stream distinct
+// from stdout. stdout and stderr are independent pipes: to read both, drain them concurrently.
+func builtinRecvStderr(args []value.Value) (value.Value, error) {
+	if len(args) != 1 {
+		return value.MakeNil(), fmt.Errorf("recv_stderr expects 1 argument (a process), got %d", len(args))
+	}
+	p, errv, ok := procArg("recv_stderr", args[0])
+	if !ok {
+		return errv, nil
+	}
+	s, eof, err := p.readStderr()
+	if err != nil {
+		return value.MakeErr(fmt.Sprintf("recv_stderr: %v", err), 1), nil
+	}
+	if eof {
+		return value.MakeNil(), nil // the child closed its stderr; the stream has ended
 	}
 	return value.MakeStr(s), nil
 }
@@ -835,6 +933,14 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 				return o, fmt.Errorf("%s: stdout_pipe must be true or false", name)
 			}
 			o.stdoutPipe = vals[i].Truthy()
+		case "stderr_pipe":
+			if name != "start" {
+				return o, fmt.Errorf("%s: stderr_pipe is only for start() (recv_stderr reads a started process)", name)
+			}
+			if vals[i].Tag() != value.Bool {
+				return o, fmt.Errorf("%s: stderr_pipe must be true or false", name)
+			}
+			o.stderrPipe = vals[i].Truthy()
 		case "arg0":
 			if vals[i].Tag() != value.Str {
 				return o, fmt.Errorf("%s: arg0 must be a string", name)
@@ -910,6 +1016,9 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 	}
 	if o.stdinPipe && (o.hasStdin || o.hasStdinFile) {
 		return o, fmt.Errorf("%s: stdin_pipe cannot combine with stdin/stdin_file (it IS the stdin)", name)
+	}
+	if o.stderrPipe && o.mergeStderr {
+		return o, fmt.Errorf("%s: stderr_pipe cannot combine with merge_stderr (merge folds stderr into stdout; the pipe keeps it separate)", name)
 	}
 	if exactEnv != nil && overlayEnv != nil {
 		return o, fmt.Errorf("%s: env_exact and env_add are mutually exclusive", name)

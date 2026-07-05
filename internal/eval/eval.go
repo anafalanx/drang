@@ -1875,6 +1875,7 @@ var builtins = map[string]builtin{
 	"send_stdin":  builtinSendStdin,
 	"close_stdin": builtinCloseStdin,
 	"recv_stdout": builtinRecvStdout,
+	"recv_stderr": builtinRecvStderr,
 	"len":         builtinLen,
 	"push":        builtinPush,
 	"pop":         builtinPop,

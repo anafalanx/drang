@@ -2973,6 +2973,33 @@ cherry
 
 Two things to keep in mind. First, `recv_stdout` returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the `\n`. Second, the script is the one draining the pipe, so read the child's output (to `nil`) before you `await` it: a child that fills its output pipe while you are not reading blocks, and so would the `await`; a `kill(p)` always unblocks. One inherent limit: many programs *block-buffer* their stdout when it is a pipe rather than a terminal, so their output appears only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.
 
+**Read stdout and stderr apart.** `recv_stderr(p)` reads a started child's *stderr* as a stream separate from its stdout, when you launch with `{stderr_pipe: true}`. It is the alternative to `{merge_stderr}`, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). Because the two are independent pipes, reading them takes a little care: if you drain only stdout while the child keeps writing to stderr, the child eventually blocks on the full stderr pipe and your stdout read stalls with it — the classic two-pipe deadlock. So drain the two **concurrently**, reading one of them in a `spawn`ed task:
+
+```drang
+$p := start("cmd", "/c", "echo out line& echo err line 1>&2",
+            {stdout_pipe: true, stderr_pipe: true})
+
+fn .drain($read) {
+  $acc := ""
+  $chunk := $read()
+  while $chunk { $acc = $acc ~ $chunk; $chunk = $read() }
+  trim($acc)
+}
+
+# Read stdout and stderr at once, each on its own pipe. Draining them
+# concurrently keeps a burst on one stream from blocking the child on the other.
+$errs := spawn(|$_| .drain(|| recv_stderr($p)), 0)
+say($"out: ${.drain(|| recv_stdout($p))}")
+say($"err: ${await($errs)}")
+await($p)
+```
+```
+out: out line
+err: err line
+```
+
+If you only need everything the child emits, in order, `{merge_stderr}` with a single `recv_stdout` loop is simpler and cannot deadlock; reach for `{stderr_pipe}` only when the two streams must stay distinct.
+
 **`supervise`.** A plain `start` outlives drang: the detached child keeps running after your program returns. `{supervise: true}` extends the die-with-parent tie to a detached child, so a supervised background process is guaranteed to go down when drang does, kernel-enforced, whether drang finishes cleanly, crashes, or is killed. A clean exit takes a supervised child down too, and that is exactly the point: use it for a helper that must never be left orphaned.
 
 ```drang
