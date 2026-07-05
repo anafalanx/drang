@@ -45,6 +45,7 @@ type Env struct {
 	vars         map[string]binding
 	parent       *Env
 	moduleDir    string          // base directory for relative `use` paths (set on the top env per run/module)
+	scriptPath   string          // path of the running script file (for store()'s default location); "" or "<-e>"/"<stdin>" when there is none
 	loadingChain map[string]bool // canonical paths being loaded up the import chain (cycle detection)
 	callDepth    int             // dynamic user-function call depth at this env; the recursion guard (see callFunction)
 	// overflowFires counts depth-guard fires across a whole env universe (see the
@@ -104,6 +105,21 @@ func (e *Env) child() *Env { return &Env{vars: map[string]binding{}, parent: e, 
 // sets it on the top env: the importing file's directory, or cwd for -e/stdin/REPL.
 func (e *Env) SetModuleDir(dir string) { e.moduleDir = dir }
 
+// SetScriptPath records the running script's file path, from which store() derives
+// its default .drang/<script>.store location. The CLI sets it on the top env: the
+// script path for a file, or "<-e>"/"<stdin>" (no file) otherwise.
+func (e *Env) SetScriptPath(p string) { e.scriptPath = p }
+
+// scriptFilePath returns the nearest script path in the env chain (or "").
+func (e *Env) scriptFilePath() string {
+	for s := e; s != nil; s = s.parent {
+		if s.scriptPath != "" {
+			return s.scriptPath
+		}
+	}
+	return ""
+}
+
 // baseDir returns the nearest module base directory in the env chain (or "").
 func (e *Env) baseDir() string {
 	for s := e; s != nil; s = s.parent {
@@ -151,7 +167,7 @@ func (e *Env) snapshot() *Env {
 	for k, b := range e.vars {
 		vars[k] = b
 	}
-	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, loadingChain: e.loadingChain, overflowFires: e.overflowFires}
+	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, scriptPath: e.scriptPath, loadingChain: e.loadingChain, overflowFires: e.overflowFires}
 }
 
 // stormCounter finds the env universe's overflow-fire counter (on the NewEnv root, or
@@ -1614,6 +1630,15 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 	if name == "use" {
 		return evalUse(args, env)
 	}
+	if name == "store" {
+		return evalStore(args, env)
+	}
+	if name == "store_update" {
+		return evalStoreUpdate(args, depth)
+	}
+	if name == "with_store" {
+		return evalWithStore(args, depth)
+	}
 	if hofNames[name] {
 		return evalHOF(name, args, depth)
 	}
@@ -1626,7 +1651,8 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 // isNonUserName reports whether name is a builtin, HOF, or special form (i.e. not
 // a user-defined function) — a candidate for direct dispatch when unshadowed.
 func isNonUserName(name string) bool {
-	if name == "dispatch" || name == "spawn" || name == "stream_lines" || name == "use" || hofNames[name] {
+	if name == "dispatch" || name == "spawn" || name == "stream_lines" || name == "use" ||
+		name == "store" || name == "store_update" || name == "with_store" || hofNames[name] {
 		return true
 	}
 	_, ok := builtins[name]
@@ -1825,6 +1851,18 @@ var builtins = map[string]builtin{
 	"type":        builtinType,
 	"is_err":      builtinIsErr,
 	"err_code":    builtinErrCode,
+
+	// persistent JSON key-value store (store()/store_update/with_store are special
+	// forms in dispatchNonUser; these are the plain builtins)
+	"store_get":    builtinStoreGet,
+	"store_set":    builtinStoreSet,
+	"store_has":    builtinStoreHas,
+	"store_delete": builtinStoreDelete,
+	"store_keys":   builtinStoreKeys,
+	"store_all":    builtinStoreAll,
+	"store_clear":  builtinStoreClear,
+	"store_path":   builtinStorePath,
+	"store_close":  builtinStoreClose,
 	"err_msg":     builtinErrMsg,
 	"run":         builtinRun,
 	"capture":     builtinCapture,

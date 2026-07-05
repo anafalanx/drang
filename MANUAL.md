@@ -21,6 +21,7 @@ This manual is the worked, example-driven guide. For a terse formal specificatio
 - [External commands and concurrency](#external-commands-and-concurrency)
 - [In-language concurrency](#in-language-concurrency)
 - [Files and paths](#files-and-paths)
+- [Persistent storage](#persistent-storage)
 - [JSON](#json)
 - [CSV](#csv)
 - [Date and time](#date-and-time)
@@ -3574,6 +3575,121 @@ value          : true
 ```
 
 On timestamp precision: `mtime` returns sub-second float seconds, and `newer` and `stale` compare the full timestamps, so files written back to back are still distinguished on NTFS (roughly 100 ns resolution). The ceiling is the filesystem itself; older formats such as FAT resolve only to two seconds, which can make near-simultaneous writes compare equal.
+
+## Persistent storage
+
+Most scripts are amnesiac: they run, do their work, and forget everything. A glue script that runs on a schedule usually wants the opposite — to remember where it left off. A log tailer wants the last offset it read; a sync job wants the files it already copied; a poller wants the last id it saw. drang gives that a first-class form: a **store**, a durable key-value map backed by a single JSON file.
+
+Open a store with `store()`, then read and write it with the `store_` builtins. The value survives between runs:
+
+```drang
+$s := store("runs.store")
+store_set($s, "n", store_get($s, "n", 0) + 1)
+say("run " ~ str(store_get($s, "n")))
+```
+
+```
+run 1
+```
+
+Run that script again and it prints `run 2`, then `run 3`. Keys are strings; values are any JSON-serializable drang value — a number, a string, an array, or a map. A value holding a channel, task, process, or function cannot be persisted and is rejected with a catchable error, the same way `to_json` would reject it.
+
+### Where the file lives
+
+`store()` with no argument puts its file in a `.drang/` subfolder next to the running script: a script at `C:\jobs\backup.dr` gets its store at `C:\jobs\.drang\backup.store`. The location is predictable, it travels with the script, and it never depends on an environment variable or a system-wide settings directory. Pass an explicit path to put the file wherever you want:
+
+```drang
+$s := store("data/app.store")   # relative to the working directory; parent dirs are created
+```
+
+Because the default is derived from the script's own path, a one-liner (`-e`) or piped stdin — which have no script file — must pass an explicit path.
+
+The file is plain, pretty-printed JSON you can read, edit, or commit to version control, kept alongside a `.bak` copy of the previous snapshot and a `.lock` file:
+
+```
+{
+  "n": 3
+}
+```
+
+### Reading and writing
+
+The core operations read like map access. A missing key reads as `nil`, or as a default you supply:
+
+```drang
+$s := store("kv.store")
+store_set($s, "name", "ada")
+say(store_get($s, "name"))         # ada
+say(store_get($s, "missing"))      # nil
+say(store_get($s, "missing", 0))   # 0
+say(store_has($s, "name"))         # true
+store_delete($s, "name")
+say(store_keys($s))                # []
+```
+
+`store_all($s)` returns the whole store as an ordinary map, handy for iterating, and `store_clear($s)` empties it.
+
+### Counters done right: `store_update`
+
+The tempting way to bump a counter — read it, add one, write it back — has a subtle bug when two runs overlap: both read the same value and both write back the same increment, so one is lost. `store_update` closes that gap by doing the read-modify-write as one atomic step:
+
+```drang
+$s := store("hits.store")
+store_update($s, "hits", 0, |$n| $n + 1)
+store_update($s, "hits", 0, |$n| $n + 1)
+say(store_get($s, "hits"))
+```
+
+```
+2
+```
+
+The third argument is the starting value the function receives when the key is absent — here `0`, so the very first `store_update` sees `0` rather than a nil it would have to guard against (the argument order mirrors `reduce`). The function returns the new value. Because the whole step happens under the store's lock, counters and accumulators stay correct even when scheduled runs race — and across processes only one run holds a store at a time anyway: a second opener gets a catchable `store busy` error rather than silently clobbering the first.
+
+### Grouping writes: `with_store`
+
+Sometimes several writes must land together or not at all — advance a cursor *and* record its result, never one without the other. `with_store` batches every mutation inside its block into a single all-or-nothing commit:
+
+```drang
+$s := store("job.store")
+with_store($s, |$s| {
+  store_set($s, "cursor", 1000)
+  store_set($s, "done", true)
+})
+say(store_get($s, "cursor"))
+```
+
+```
+1000
+```
+
+If the block returns or propagates an error (or calls `fail`), the whole batch is rolled back and the store is left exactly as it was before it began:
+
+```drang
+$s := store("job.store")
+fn .attempt($s) {
+  store_set($s, "started", true)
+  fail("network down")
+}
+$r := with_store($s, .attempt) // "recovered"
+say($r)
+say(store_has($s, "started"))
+```
+
+```
+recovered
+false
+```
+
+Nothing the failed batch wrote was committed.
+
+### One store, many workers
+
+A store handle is a shared thing, like a channel: hand it to a `spawn`ed task or a `pmap` worker and they all see the same store, with access serialized so nothing races. Mutating one store from many workers is safe but not a speed-up — the writes take turns. Reach for a store to *coordinate* parallel work (a shared tally, a set of seen ids), not to parallelize the writes themselves.
+
+### Scope
+
+A store is a small key-value checkpoint, not a database. There are no queries, no indexes, and no joins — one obvious operation per task. When you need those, reach for a real database through an external tool. When you just need a script to remember something between runs, a store is the whole answer.
 
 ## JSON
 

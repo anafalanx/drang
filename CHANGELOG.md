@@ -3,6 +3,33 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
 
+## [Unreleased]
+
+### Added
+- **Persistent JSON store.** A `store` is a durable key-value map backed by a single JSON file,
+  for scripts that need to remember something between runs — a cursor, a checkpoint, an
+  accumulator, a cache. `store(path?)` opens one; `store_get` / `store_set` / `store_has` /
+  `store_delete` / `store_keys` / `store_all` / `store_clear` read and mutate it;
+  `store_update(s, key, default, fn)` is an atomic read-modify-write (correct counters even when
+  runs race); `with_store(s, fn)` commits a group of writes all-or-nothing, rolling back on error;
+  `store_path` / `store_close` round it out. Values are any JSON-serializable drang value (a
+  channel/task/process/function is a catchable Err); `int` stays 64-bit exact.
+  - **Durability:** atomic snapshot per write (temp + fsync + rename; the previous copy kept as
+    `.bak`), so the file is never observed torn.
+  - **One writer:** a process-exclusive advisory lock (a `.lock` sidecar) — a second process
+    opening the same store gets a catchable `store busy` Err; the data file stays readable by
+    other tools.
+  - **Location:** `store()` defaults to `.drang/<script>.store` next to the script — a
+    predictable, environment-variable-free path that travels with the script, never derived from
+    `%LOCALAPPDATA%` / `%APPDATA%` / OneDrive. The runtime keeps no state of its own. `-e`/stdin
+    pass an explicit path.
+  - The handle is a shared, mutex-guarded reference like a channel — safe to hand to `spawn`/`pmap`
+    (access serialized, not a parallelism win). Compiles identically on the register VM and the
+    tree-walker; hand-written parity + `-race` tests.
+  - Not a database, by design: no queries/indexes/joins — the smallest primitive that covers
+    "remember something between runs." An embedded SQLite was evaluated and rejected to keep the
+    single static binary with zero dependencies.
+
 ## [0.8] — 2026-07-04
 
 A speed release: *change nothing except the speed.* Every program produces byte-identical output,

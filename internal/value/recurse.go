@@ -87,7 +87,7 @@ func equalDepth(l, r Value, depth int, seen map[[2]Obj]bool) bool {
 		return l.s == r.s
 	case Err:
 		return l.s == r.s && l.n == r.n
-	case Arr, Map, Range, Func, Chan, Task, Proc, Regex:
+	case Arr, Map, Range, Func, Chan, Task, Proc, Regex, Store:
 		if l.ref == nil || r.ref == nil {
 			return false
 		}

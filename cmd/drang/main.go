@@ -278,6 +278,7 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
 	env := eval.NewEnv()
 	env.SetModuleDir(baseDir)
+	env.SetScriptPath(origin) // for store()'s default .drang/<script>.store location
 	if err := eval.RunProgramWithArgs(prog, env, argv); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {
 			os.Exit(code) // explicit exit()/die(): no error report

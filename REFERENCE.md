@@ -550,6 +550,35 @@ Shared conventions:
 | `copy` | `copy(src: string, dst: string) -> string` | Copy a file, or recursively copy a directory tree, preserving file modes; creates parent dirs of `dst`; returns `dst`. | copy failure (e.g. missing `src`) → Err; non-string → Err; aborts on wrong arity |
 | `size` | `size(p: string) -> int` | File size in bytes (`os.Stat().Size()`). | missing/unstattable → Err; non-string → Err; aborts on wrong arity |
 
+### Persistent store
+
+A `store` is a durable JSON key-value map backed by a single file. `store(path?)` opens (or creates) one and returns a `store` handle; the operations below read and mutate it. Keys are strings; values are any **JSON-serializable** drang value (scalar, array, or map) — a value carrying a `channel`/`task`/`process`/`function`/`regex` is rejected with a catchable Err, exactly as `to_json` would reject it. `int` round-trips as an exact 64-bit integer.
+
+Durability & concurrency:
+- **Atomic snapshot per write.** Every mutation rewrites the whole file (temp + fsync + atomic rename), keeping the previous copy as `<path>.bak`; the file is never observed torn.
+- **One writer.** A store holds a process-exclusive advisory lock on `<path>.lock` for its lifetime; a second process opening the same store gets a catchable `store busy` Err. The data file itself is never locked, so other tools can read it.
+- The handle is a **shared reference** (like a channel): `DeepCopy` returns itself and a mutex guards all access, so it is safe to hand to `spawn`/`pmap` workers (access is serialized, not raced). Mutating one store from parallel workers is well-defined but serialized — not a parallelism win.
+- Opening the same absolute path twice in one process returns the **same** handle.
+
+Location: `store()` with no path defaults to `.drang/<script>.store` in the running script's directory — a predictable, environment-variable-free location that travels with the script. `-e`/stdin have no script file, so they must pass an explicit path. `store("path")` resolves like every other file builtin (relative to the working directory).
+
+`store`, `store_update`, and `with_store` are **evaluator special forms** (they need the running environment or take a lambda); the rest are ordinary builtins. Error mode as elsewhere: wrong **argument count** aborts; a wrong **type**, a busy lock, a non-serializable value, an I/O failure, or exceeding the 64 MiB size cap is a catchable Err (code 1).
+
+| Builtin | Signature | Behavior | err |
+|---|---|---|---|
+| `store` | `store(path?: string) -> store` | Open/create a store at `path`, or at `.drang/<script>.store` when omitted. Idempotent per absolute path within a process. | busy lock / unreadable-or-corrupt file (no valid `.bak`) / no script for the default path / non-string path → Err; aborts on wrong arity (0–1) |
+| `store_get` | `store_get(s: store, key: string, default?: any) -> any` | Value for `key`; the `default` (or `nil`) when absent. Returns an isolated copy. | non-store / non-string key → Err; aborts on wrong arity (2–3) |
+| `store_set` | `store_set(s: store, key: string, value: any) -> true` | Store an isolated copy of `value`, durably. | non-serializable value / non-store / non-string key / I/O / size-cap → Err; aborts on wrong arity |
+| `store_has` | `store_has(s: store, key: string) -> bool` | Whether `key` is present. | non-store / non-string key → Err; aborts on wrong arity |
+| `store_delete` | `store_delete(s: store, key: string) -> true` | Remove `key` (idempotent). | non-store / non-string key / I/O → Err; aborts on wrong arity |
+| `store_keys` | `store_keys(s: store) -> array` | Keys in insertion order. | non-store → Err; aborts on wrong arity |
+| `store_all` | `store_all(s: store) -> map` | The whole store as an isolated map copy (for iteration/inspection). | non-store → Err; aborts on wrong arity |
+| `store_clear` | `store_clear(s: store) -> true` | Remove every key. | non-store / I/O → Err; aborts on wrong arity |
+| `store_update` | `store_update(s: store, key: string, default: any, fn: function) -> any` | **Atomic read-modify-write:** call `fn(current)`, or `fn(default)` if `key` is absent, under the store lock, then store and return the result. Argument order mirrors `reduce`. `fn` must be a pure transform and must not touch this store (it would deadlock). A `?`/`fail` inside `fn` leaves the store unchanged and surfaces the Err. | non-store / non-string key / non-function / non-serializable result / I/O → Err; aborts on wrong arity (4) |
+| `with_store` | `with_store(s: store, fn: function) -> any` | **All-or-nothing batch:** run `fn(s)`; mutations inside commit together in one atomic write on success, or roll the store back to its pre-batch state if `fn` returns/propagates an Err (or exits). Returns `fn`'s value. Not for concurrent batching of one store. | non-store / non-function / commit I/O → Err; aborts on wrong arity |
+| `store_path` | `store_path(s: store) -> string` | The backing file's absolute path. | non-store → Err; aborts on wrong arity |
+| `store_close` | `store_close(s: store) -> nil` | Release the lock and forget the handle (also released on process exit). | non-store → Err; aborts on wrong arity |
+
 ### Process & concurrency
 
 External commands go through Go `os/exec` directly — **no shell**, args passed verbatim (no word-splitting, no glob expansion). Handle value types: `process` (from `start`), `task` (from `spawn`), `channel` (from `chan`). Array arguments in an argv list are **flattened one level** (`run("git", ["log","--oneline"])`). A trailing map literal is the options map (see the option table). `spawn`, `stream_lines`, and `dispatch` are **evaluator special forms**, not ordinary builtins (they take a function/lambda and are handled before normal builtin dispatch).

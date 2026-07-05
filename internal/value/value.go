@@ -26,6 +26,7 @@ const (
 	Task  // heap object: a spawned task handle
 	Proc  // heap object: a started external process handle
 	Regex // heap object: a compiled, immutable regex
+	Store // heap object: a persistent JSON key-value store handle
 )
 
 // Obj is a heap-backed value referenced by a Value.
