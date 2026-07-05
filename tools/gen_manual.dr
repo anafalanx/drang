@@ -11,6 +11,24 @@ fn .esc($s) {
 	$s
 }
 
+# resolve_url points a relative repo-file link (e.g. `REFERENCE.md`, `DESIGN.md#x`)
+# at the file in the GitHub repo. The manual is served on drang.dev, where sibling
+# `.md` files are NOT hosted, so a bare relative link would 404 there. Absolute URLs,
+# in-page `#anchors`, and site-absolute `/paths` are left untouched.
+fn .resolve_url($u) {
+	if starts_with($u, "http") or starts_with($u, "#") or starts_with($u, "/") or starts_with($u, "mailto:") {
+		return $u
+	}
+	$file := $u
+	if contains($u, "#") {
+		$file = split($u, "#")[0]
+	}
+	if ends_with($file, ".md") {
+		return "https://github.com/anafalanx/drang/blob/main/" ~ $u
+	}
+	$u
+}
+
 # GitHub-style heading slug: lowercase, keep [a-z0-9_], spaces/hyphens -> "-",
 # collapse repeats, trim. Matches the in-doc TOC anchors.
 fn .slug($s) {
@@ -114,7 +132,7 @@ fn .inline($s) {
 				}
 				if $k < $n {
 					push($parts, "<a href=\"")
-					push($parts, .esc(join($url, "")))
+					push($parts, .esc(.resolve_url(join($url, ""))))
 					push($parts, "\">")
 					push($parts, .inline(join($txt, "")))
 					push($parts, "</a>")
