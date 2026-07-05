@@ -3,7 +3,13 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
 
-## [Unreleased]
+## [0.9] — 2026-07-05
+
+A capabilities release — additive and backward-compatible, so every 0.8 program runs unchanged
+(byte-for-byte; all the new names are new builtins). The headline is a **persistent JSON
+key-value store** for scripts that need to remember something between runs; around it, recursive
+directory `walk` with symlink introspection, the interpreter's own `drang_pid`, and one-liner
+in-place editing (`-i`). Still Windows-only.
 
 ### Added
 - **Persistent JSON store.** A `store` is a durable key-value map backed by a single JSON file,

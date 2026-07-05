@@ -1,6 +1,6 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-04 — **drang 0.8 released** (a speed-only release; see CHANGELOG.md).
+*Inventory refreshed 2026-07-05 — **drang 0.9 released** (persistent store + cheap-win builtins; see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -54,13 +54,22 @@ Ruby, thinks like Perl, runs like Go").*
   local preflight + fuzz targets; and two hang fixes (`reverse` on arrays, impossible channel
   deadlock). Deferred past 0.7: `recv_stdout`/`stdout_pipe`, graceful `stop`/`signal`, ConPTY, and
   the `sturm` tree.
-- **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-04 — build on real daily-driver need,
-  not speculatively).** Ordered by likely use: **`walk`** (recursive dir traversal) and
-  **named-capture `match` → map** are the two most likely to be hit and are genuine *powers*; then
-  `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed from the original list:
-  `replace_first` and array `reverse`. Also parked:
-  one-liner in-place `-i`, char/string ranges, `match`/`switch`. **Decision (2026-06-29):
-  stringy-numeric coercion is rejected** — `"5" + 3` stays a type error.
+- **0.8 (2026-07-04) — RELEASED: a speed-only release.** VM int-specialization (arithmetic,
+  comparison, compound-assignment, fused compare-branch) plus register-mode while-loop inversion,
+  verified byte-identical to 0.7. Full log in CHANGELOG.md.
+- **0.9 (2026-07-05) — RELEASED: persistent storage + cheap-win builtins.** A **persistent JSON
+  key-value store** (`store`/`store_get`/`store_set`/`store_update`/`with_store`/… — atomic snapshot
+  per write, advisory lock, a `.drang/<script>.store` default, no external DB); recursive **`walk`**
+  plus `is_symlink`/`readlink`/`is_file` symlink introspection (and `is_symlink` on `read_dir`
+  records); **`drang_pid`**; and one-liner **`-i`** in-place edit. Additive and backward-compatible.
+  Full log in CHANGELOG.md.
+- **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-05 — build on real daily-driver need,
+  not speculatively).** Ordered by likely use: **named-capture `match` → map** is the most likely to
+  be hit and a genuine *power*; then `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed:
+  `replace_first`, array `reverse`, and (0.9) **`walk`**, symlink introspection
+  (`is_symlink`/`readlink`/`is_file`), **`drang_pid`**, and one-liner **`-i`**. Still parked:
+  char/string ranges, `match`/`switch`. **Decision (2026-06-29): stringy-numeric coercion is
+  rejected** — `"5" + 3` stays a type error.
 - **Direction (2026-07-01): drang is Windows-only.** Targets **Windows 11 23H2+** and **Windows
   Server 2025+** (baseline may rise to 25H2 if a technical boundary requires it, never lower).
   Non-Windows builds are dropped; future releases ship Windows binaries only. The cross-platform
