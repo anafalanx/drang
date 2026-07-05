@@ -1,6 +1,6 @@
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-05 — **drang 0.9 released** (persistent store + cheap-win builtins; see CHANGELOG.md).
+*Inventory refreshed 2026-07-05 — **drang 0.10.0 released** (single-process orchestration completed: `recv_stdout` + `recv_stderr`; see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -63,6 +63,14 @@ Ruby, thinks like Perl, runs like Go").*
   plus `is_symlink`/`readlink`/`is_file` symlink introspection (and `is_symlink` on `read_dir`
   records); **`drang_pid`**; and one-liner **`-i`** in-place edit. Additive and backward-compatible.
   Full log in CHANGELOG.md.
+- **0.10.0 (2026-07-05) — RELEASED: single-process orchestration completed; three-part versioning
+  begins.** Two additive builtins close the last gap in the single-process surface: **`recv_stdout`**
+  reads a started child's stdout live (via `{stdout_pipe: true}`), and **`recv_stderr`** reads its
+  stderr as a *separate* stream (via `{stderr_pipe: true}`, mutually exclusive with `{merge_stderr}`).
+  Paired with the existing `send_stdin`/`close_stdin`, a script can now drive a subprocess **both
+  ways** — write its stdin, read its stdout and stderr. Graceful `stop`/`signal` stays reserved and
+  deferred (decision record in DESIGN.md); ConPTY and the *sturm* tree remain future work. Additive
+  and backward-compatible. Full log in CHANGELOG.md.
 - **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-05 — build on real daily-driver need,
   not speculatively).** Ordered by likely use: **named-capture `match` → map** is the most likely to
   be hit and a genuine *power*; then `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed:

@@ -2,7 +2,7 @@
 
 *A small, Perl-inspired scripting language for text processing, system glue, and orchestration, implemented in Go.*
 
-*Covers drang 0.9.*
+*Covers drang 0.10.0.*
 
 > Every code example in this manual was executed against the interpreter; the shown output is real.
 
@@ -83,7 +83,7 @@ from stdin
 The **REPL.** Run `drang` with no program on an interactive terminal (also what launching the executable directly does), or force it with `--repl`. Bindings persist across submissions, and each entered expression prints its value:
 
 ```
-drang 0.9 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+drang 0.10.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
 drang> $x := 21
 21
 drang> $x * 2
@@ -308,7 +308,7 @@ A drang name's *kind* lives in its sigil, present at every occurrence, so a name
 | `.name` | a user-defined function you declared with `fn` | `.greet`, called `.greet(...)` |
 | bare `name` | a builtin or standard-library function | `say`, `map`, `split` |
 
-Because the three spaces never overlap, your `.split` and the builtin `split` coexist without clashing, and a future release adding a new builtin can never shadow code you already wrote. (You can, if you insist, bind a builtin's name as data: `$len := 99` makes `$len` the number, while the builtin `len` remains reachable as a bare word.) The Functions section covers `.name` in depth; here the point is only that `$` is the sigil for every value you store.
+Because the three spaces never overlap, your `.split` and the builtin `split` coexist without clashing, and a future release adding a new builtin can never shadow code you already wrote. (You can, if you insist, bind a builtin's name as data: `$len := 99` makes `$len` the number — but that *shadows* the builtin `len` in that scope, so a later `len(...)` aborts.) The Functions section covers `.name` and this shadowing in depth; here the point is only that `$` is the sigil for every value you store.
 
 #### A constant is deeply immutable
 
@@ -514,7 +514,7 @@ These aborts are the operator policy and are distinct from the builtin conventio
 
 #### String concatenation: `~`
 
-`~` joins strings. It is the only string-join operator; `+` will not do it.
+`~` joins strings, rendering any non-string operand to its display form first — so `"n=" ~ 5` gives `"n=5"` and `"ok: " ~ true` gives `"ok: true"`. Unlike the arithmetic operators, `~` never rejects a non-string operand. It is the only string-join operator; `+` will not do it.
 
 ```drang
 say("foo" ~ "bar" ~ "!")
@@ -2898,7 +2898,7 @@ The callback closes over its surrounding scope, so an outer counter or accumulat
 
 ### `start`: a detached process handle
 
-Everything above waits for the child. `start(cmd, args...)` does not: it launches the child, detaches its stdio, and returns immediately with a `process` handle. This is the background-launch form. Because the child is detached, its output no longer flows to your terminal, and if you want to observe what it produced you route it somewhere (a file) yourself.
+Everything above waits for the child. `start(cmd, args...)` does not: it launches the child, detaches its stdio, and returns immediately with a `process` handle. This is the background-launch form. Because the child is detached, its output no longer flows to your terminal. To observe what it produces, either route it somewhere (a file) yourself, or launch with `{stdout_pipe: true}` / `{stderr_pipe: true}` and read it live with `recv_stdout` / `recv_stderr` (see *Drive a live child* below).
 
 Several builtins act on the handle. `pid(p)` reads the operating-system process id. `await(p)` blocks until the child exits and returns `true` on a clean exit or an `Err` carrying the code otherwise. `kill(p)` terminates the child and its whole tree.
 
@@ -2973,7 +2973,7 @@ cherry
 
 Two things to keep in mind. First, `recv_stdout` returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the `\n`. Second, the script is the one draining the pipe, so read the child's output (to `nil`) before you `await` it: a child that fills its output pipe while you are not reading blocks, and so would the `await`; a `kill(p)` always unblocks. One inherent limit: many programs *block-buffer* their stdout when it is a pipe rather than a terminal, so their output appears only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.
 
-**Read stdout and stderr apart.** `recv_stderr(p)` reads a started child's *stderr* as a stream separate from its stdout, when you launch with `{stderr_pipe: true}`. It is the alternative to `{merge_stderr}`, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). Because the two are independent pipes, reading them takes a little care: if you drain only stdout while the child keeps writing to stderr, the child eventually blocks on the full stderr pipe and your stdout read stalls with it — the classic two-pipe deadlock. So drain the two **concurrently**, reading one of them in a `spawn`ed task:
+**Read stdout and stderr apart.** `recv_stderr(p)` reads a started child's *stderr* as a stream separate from its stdout, when you launch with `{stderr_pipe: true}`. It is the alternative to `{merge_stderr}`, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). Because the two are independent pipes, reading them takes a little care: if you drain only stdout while the child keeps writing to stderr, the child eventually blocks on the full stderr pipe and your stdout read stalls with it — the classic two-pipe deadlock. So drain the two **concurrently**, reading one of them in a `spawn`ed task — `spawn` runs a drang function on its own thread and `await` collects its result, both covered in *In-language concurrency* below; here they let us read the second pipe while the first drains:
 
 ```drang
 $p := start("cmd", "/c", "echo out line& echo err line 1>&2",
@@ -3015,9 +3015,9 @@ For a background child that should outlive drang, use a plain `start` with no `s
 
 ### Which option belongs to which form
 
-Three options are tied to a specific form, and getting this wrong is treated as a programming mistake rather than a recoverable condition.
+Four options are tied to a specific form, and getting this wrong is treated as a programming mistake rather than a recoverable condition.
 
-**`{stdin_pipe}`, `{stdout_pipe}`, and `{supervise}` are `start`-only.** They exist to drive, read, or supervise a detached process. Using any of them on a synchronous form (`run`, `capture`, `capture_all`, `pipe`, `stream_lines`) aborts the program with a clear message; it is not a catchable `Err`, and `//` will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin or read stdout. Feed a synchronous child with `stdin` or `stdin_file`, and capture its output with `capture`, instead.
+**`{stdin_pipe}`, `{stdout_pipe}`, `{stderr_pipe}`, and `{supervise}` are `start`-only.** They exist to drive, read, or supervise a detached process. Using any of them on a synchronous form (`run`, `capture`, `capture_all`, `pipe`, `stream_lines`) aborts the program with a clear message; it is not a catchable `Err`, and `//` will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin or read stdout. Feed a synchronous child with `stdin` or `stdin_file`, and capture its output with `capture`, instead.
 
 ```drang
 $r := capture("cmd", "/c", "echo hi", {supervise: true})

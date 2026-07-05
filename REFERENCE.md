@@ -1,4 +1,4 @@
-# drang — Formal Reference (v0.9)
+# drang — Formal Reference (v0.10.0)
 
 A terse, complete specification of drang for tools and agents: grammar, semantics,
 and every builtin. No tutorial prose — for a worked, example-driven guide see
@@ -219,7 +219,7 @@ Assignability: only `VAR`, index (`x[i]`), and field (`x.name`) are valid assign
 
 ## Semantics
 
-Formal rules for drang 0.9. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
+Formal rules for drang 0.10.0. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
 
 ### Value model
 
@@ -641,7 +641,7 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 
 `chan(n?: int) -> channel` — makes an unbuffered channel, or a buffered one of capacity `n`. **err:** aborts on wrong arity.
 
-`send(c: channel, v: any) -> nil` — sends a **copy** of `v`, blocking until received. **err:** send on a closed channel → Err; would-deadlock → Err. Aborts on wrong arity.
+`send(c: channel, v: any) -> bool` — sends a **copy** of `v`, blocking until received; returns `true`. **err:** send on a closed channel → Err; would-deadlock → Err. Aborts on wrong arity.
 
 `recv(c: channel) -> any` — blocks for the next value; yields `undef` (nil) once the channel is **closed and drained**. **err:** would-deadlock → Err. Aborts on wrong arity.
 
@@ -670,7 +670,7 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 | `merge_stderr` | bool | Folds the child's stderr into its stdout (like shell `2>&1`). Mutually exclusive with `{stderr_pipe}`. |
 | `arg0` | string | Presents a different argv[0] than the launched executable. Rejected for a `.bat`/`.cmd` target (launched via `cmd.exe`, which owns argv[0]) → catchable Err. |
 | `timeout` | int (ms) | Wall-clock cap; `0` = no limit. On breach the whole process **tree** is killed → Err 124. **Rejected on `start`** (detached, unbounded) → catchable Err. |
-| `supervise` | bool | **`start`-only**: ties a detached child's lifetime to drang's job (dies with drang, kernel-enforced, even on clean exit). **Rejected** on the synchronous forms (they always die-with-parent while waiting) → catchable Err. |
+| `supervise` | bool | **`start`-only**: ties a detached child's lifetime to drang's job (dies with drang, kernel-enforced, even on clean exit). **Rejected** on the synchronous forms (they always die-with-parent while waiting) — this **aborts** (uncatchable), like the other start-only options. (Only `{timeout}` on `start` is a *catchable* Err.) |
 | `max_memory` | int (bytes) | Committed-memory cap, **per process**. Breach → child killed, Err 137. |
 | `max_job_memory` | int (bytes) | Committed-memory cap for the **whole job** (child + every descendant). Breach → whole tree killed, Err 137. |
 | `max_cpu` | int (ms) | User-CPU cap, **per process**. Breach → Err 137. |

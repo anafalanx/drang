@@ -17,7 +17,7 @@
 <main id="main" class="wrap"><div class="prose">
 <h1 id="drang-language-manual">drang: Language Manual</h1>
 <p><em>A small, Perl-inspired scripting language for text processing, system glue, and orchestration, implemented in Go.</em></p>
-<p><em>Covers drang 0.9.</em></p>
+<p><em>Covers drang 0.10.0.</em></p>
 <blockquote>Every code example in this manual was executed against the interpreter; the shown output is real.</blockquote>
 <p>This manual is the worked, example-driven guide. For a terse formal specification (the grammar, the semantics, and every builtin with exact signatures and error modes), see <a href="REFERENCE.md">REFERENCE.md</a>.</p>
 <h2 id="contents">Contents</h2>
@@ -41,7 +41,7 @@
 <pre><code>echo 'say("from stdin")' | drang</code></pre>
 <pre><code>from stdin</code></pre>
 <p>The <strong>REPL.</strong> Run <code>drang</code> with no program on an interactive terminal (also what launching the executable directly does), or force it with <code>--repl</code>. Bindings persist across submissions, and each entered expression prints its value:</p>
-<pre><code>drang 0.9 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+<pre><code>drang 0.10.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
 drang&gt; $x := 21
 21
 drang&gt; $x * 2
@@ -134,7 +134,7 @@ $k = 2</code></pre>
 <h4 id="the-three-sigil-namespaces">The three sigil-namespaces</h4>
 <p>A drang name's <em>kind</em> lives in its sigil, present at every occurrence, so a name always announces what it refers to. There are three disjoint namespaces:</p>
 <table><thead><tr><th>Sigil</th><th>Refers to</th><th>Example</th></tr></thead><tbody><tr><td><code>$name</code></td><td>data: variables and constants alike</td><td><code>$count</code>, <code>$pi</code></td></tr><tr><td><code>.name</code></td><td>a user-defined function you declared with <code>fn</code></td><td><code>.greet</code>, called <code>.greet(...)</code></td></tr><tr><td>bare <code>name</code></td><td>a builtin or standard-library function</td><td><code>say</code>, <code>map</code>, <code>split</code></td></tr></tbody></table>
-<p>Because the three spaces never overlap, your <code>.split</code> and the builtin <code>split</code> coexist without clashing, and a future release adding a new builtin can never shadow code you already wrote. (You can, if you insist, bind a builtin's name as data: <code>$len := 99</code> makes <code>$len</code> the number, while the builtin <code>len</code> remains reachable as a bare word.) The Functions section covers <code>.name</code> in depth; here the point is only that <code>$</code> is the sigil for every value you store.</p>
+<p>Because the three spaces never overlap, your <code>.split</code> and the builtin <code>split</code> coexist without clashing, and a future release adding a new builtin can never shadow code you already wrote. (You can, if you insist, bind a builtin's name as data: <code>$len := 99</code> makes <code>$len</code> the number — but that <em>shadows</em> the builtin <code>len</code> in that scope, so a later <code>len(...)</code> aborts.) The Functions section covers <code>.name</code> and this shadowing in depth; here the point is only that <code>$</code> is the sigil for every value you store.</p>
 <h4 id="a-constant-is-deeply-immutable">A constant is deeply immutable</h4>
 <p><code>::=</code> does more than forbid rebinding the name. If the value is a container, the container and everything reachable through it is frozen. Mutating it is an error.</p>
 <p>The mechanism of the error depends on how you attempt the mutation. Index or field assignment aborts the program:</p>
@@ -237,7 +237,7 @@ float 3</code></pre>
         ^</code></pre>
 <p>These aborts are the operator policy and are distinct from the builtin convention. A builtin handed the wrong <em>type</em> returns a catchable error you can recover; an operator handed the wrong type ends the program. If you need a recoverable divide, the <code>div</code> builtin gives you one: <code>div(1, 0)</code> is a catchable error, whereas the <code>/</code> operator on zero aborts.</p>
 <h4 id="string-concatenation">String concatenation: <code>~</code></h4>
-<p><code>~</code> joins strings. It is the only string-join operator; <code>+</code> will not do it.</p>
+<p><code>~</code> joins strings, rendering any non-string operand to its display form first — so <code>"n=" ~ 5</code> gives <code>"n=5"</code> and <code>"ok: " ~ true</code> gives <code>"ok: true"</code>. Unlike the arithmetic operators, <code>~</code> never rejects a non-string operand. It is the only string-join operator; <code>+</code> will not do it.</p>
 <pre><code class="language-drang">say("foo" ~ "bar" ~ "!")</code></pre>
 <pre><code>foobar!</code></pre>
 <h4 id="comparison-and-the-spaceship">Comparison: <code>== != &lt; &lt;= &gt; &gt;=</code> and the spaceship <code>&lt;=&gt;</code></h4>
@@ -1372,7 +1372,7 @@ say($"total lines: $n")</code></pre>
 total lines: 3</code></pre>
 <p>The callback closes over its surrounding scope, so an outer counter or accumulator like <code>$n</code> is visible and updatable from inside it.</p>
 <h3 id="start-a-detached-process-handle"><code>start</code>: a detached process handle</h3>
-<p>Everything above waits for the child. <code>start(cmd, args...)</code> does not: it launches the child, detaches its stdio, and returns immediately with a <code>process</code> handle. This is the background-launch form. Because the child is detached, its output no longer flows to your terminal, and if you want to observe what it produced you route it somewhere (a file) yourself.</p>
+<p>Everything above waits for the child. <code>start(cmd, args...)</code> does not: it launches the child, detaches its stdio, and returns immediately with a <code>process</code> handle. This is the background-launch form. Because the child is detached, its output no longer flows to your terminal. To observe what it produces, either route it somewhere (a file) yourself, or launch with <code>{stdout_pipe: true}</code> / <code>{stderr_pipe: true}</code> and read it live with <code>recv_stdout</code> / <code>recv_stderr</code> (see <em>Drive a live child</em> below).</p>
 <p>Several builtins act on the handle. <code>pid(p)</code> reads the operating-system process id. <code>await(p)</code> blocks until the child exits and returns <code>true</code> on a clean exit or an <code>Err</code> carrying the code otherwise. <code>kill(p)</code> terminates the child and its whole tree.</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "exit 3")
 say($"pid &gt; 0: ${pid($p) &gt; 0}")
@@ -1397,17 +1397,44 @@ await($p)
 $s := status($p)
 say($s.running, $s.ok, $s.code)</code></pre>
 <pre><code>false true 0</code></pre>
-<p><strong>Drive a live child's stdin.</strong> Launch with <code>{stdin_pipe: true}</code>, push input with <code>send_stdin(p, s)</code>, and signal end-of-input with <code>close_stdin(p)</code>. This feeds a long-running filter incrementally. Below, <code>sort</code> emits its result only after its input closes; since a started child's stdout is detached, the example routes <code>sort</code> to a file and reads it back so the result is observable.</p>
-<pre><code class="language-drang">$p := start("cmd", "/c", "sort &gt; sorted.txt", {stdin_pipe: true})
+<p><strong>Drive a live child, both directions.</strong> Launch with <code>{stdin_pipe: true}</code> to push input with <code>send_stdin(p, s)</code> (and <code>close_stdin(p)</code> for end-of-input), and <code>{stdout_pipe: true}</code> to read the child's output with <code>recv_stdout(p)</code>. Together they <em>steer</em> a running child: write a prompt, read the reply, write the next. <code>recv_stdout</code> blocks until the child writes and returns <code>nil</code> once the child has closed its stdout, so a loop drains it to completion. Below, <code>sort</code> emits its sorted result only after its input closes, and the script reads it straight off the pipe:</p>
+<pre><code class="language-drang">$p := start("sort", {stdin_pipe: true, stdout_pipe: true})
 send_stdin($p, "banana\n")
 send_stdin($p, "apple\n")
 send_stdin($p, "cherry\n")
 close_stdin($p)
+$out := ""
+$chunk := recv_stdout($p)
+while $chunk {
+  $out = $out ~ $chunk
+  $chunk = recv_stdout($p)
+}
 await($p)
-say(read_file("sorted.txt"))</code></pre>
+say(trim($out))</code></pre>
 <pre><code>apple
 banana
 cherry</code></pre>
+<p>Two things to keep in mind. First, <code>recv_stdout</code> returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the <code>\n</code>. Second, the script is the one draining the pipe, so read the child's output (to <code>nil</code>) before you <code>await</code> it: a child that fills its output pipe while you are not reading blocks, and so would the <code>await</code>; a <code>kill(p)</code> always unblocks. One inherent limit: many programs <em>block-buffer</em> their stdout when it is a pipe rather than a terminal, so their output appears only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.</p>
+<p><strong>Read stdout and stderr apart.</strong> <code>recv_stderr(p)</code> reads a started child's <em>stderr</em> as a stream separate from its stdout, when you launch with <code>{stderr_pipe: true}</code>. It is the alternative to <code>{merge_stderr}</code>, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). Because the two are independent pipes, reading them takes a little care: if you drain only stdout while the child keeps writing to stderr, the child eventually blocks on the full stderr pipe and your stdout read stalls with it — the classic two-pipe deadlock. So drain the two <strong>concurrently</strong>, reading one of them in a <code>spawn</code>ed task — <code>spawn</code> runs a drang function on its own thread and <code>await</code> collects its result, both covered in <em>In-language concurrency</em> below; here they let us read the second pipe while the first drains:</p>
+<pre><code class="language-drang">$p := start("cmd", "/c", "echo out line&amp; echo err line 1&gt;&amp;2",
+            {stdout_pipe: true, stderr_pipe: true})
+
+fn .drain($read) {
+  $acc := ""
+  $chunk := $read()
+  while $chunk { $acc = $acc ~ $chunk; $chunk = $read() }
+  trim($acc)
+}
+
+# Read stdout and stderr at once, each on its own pipe. Draining them
+# concurrently keeps a burst on one stream from blocking the child on the other.
+$errs := spawn(|$_| .drain(|| recv_stderr($p)), 0)
+say($"out: ${.drain(|| recv_stdout($p))}")
+say($"err: ${await($errs)}")
+await($p)</code></pre>
+<pre><code>out: out line
+err: err line</code></pre>
+<p>If you only need everything the child emits, in order, <code>{merge_stderr}</code> with a single <code>recv_stdout</code> loop is simpler and cannot deadlock; reach for <code>{stderr_pipe}</code> only when the two streams must stay distinct.</p>
 <p><strong><code>supervise</code>.</strong> A plain <code>start</code> outlives drang: the detached child keeps running after your program returns. <code>{supervise: true}</code> extends the die-with-parent tie to a detached child, so a supervised background process is guaranteed to go down when drang does, kernel-enforced, whether drang finishes cleanly, crashes, or is killed. A clean exit takes a supervised child down too, and that is exactly the point: use it for a helper that must never be left orphaned.</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "exit 0", {supervise: true})
 say($"supervised start ok: ${pid($p) &gt; 0}")
@@ -1415,8 +1442,8 @@ await($p)</code></pre>
 <pre><code>supervised start ok: true</code></pre>
 <p>For a background child that should outlive drang, use a plain <code>start</code> with no <code>supervise</code>.</p>
 <h3 id="which-option-belongs-to-which-form">Which option belongs to which form</h3>
-<p>Three options are tied to a specific form, and getting this wrong is treated as a programming mistake rather than a recoverable condition.</p>
-<p><strong><code>{stdin_pipe}</code> and <code>{supervise}</code> are <code>start</code>-only.</strong> They exist to drive or supervise a detached process. Using either on a synchronous form (<code>run</code>, <code>capture</code>, <code>capture_all</code>, <code>pipe</code>, <code>stream_lines</code>) aborts the program with a clear message; it is not a catchable <code>Err</code>, and <code>//</code> will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin. Feed a synchronous child with <code>stdin</code> or <code>stdin_file</code> instead.</p>
+<p>Four options are tied to a specific form, and getting this wrong is treated as a programming mistake rather than a recoverable condition.</p>
+<p><strong><code>{stdin_pipe}</code>, <code>{stdout_pipe}</code>, <code>{stderr_pipe}</code>, and <code>{supervise}</code> are <code>start</code>-only.</strong> They exist to drive, read, or supervise a detached process. Using any of them on a synchronous form (<code>run</code>, <code>capture</code>, <code>capture_all</code>, <code>pipe</code>, <code>stream_lines</code>) aborts the program with a clear message; it is not a catchable <code>Err</code>, and <code>//</code> will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin or read stdout. Feed a synchronous child with <code>stdin</code> or <code>stdin_file</code>, and capture its output with <code>capture</code>, instead.</p>
 <pre><code class="language-drang">$r := capture("cmd", "/c", "echo hi", {supervise: true})
 say("reached")</code></pre>
 <pre><code>drang: capture: supervise is only for start() (it ties a detached child's lifetime to drang)
@@ -2546,6 +2573,6 @@ say(err_msg($r))    # .\greet.bat: winjob: batch argument contains a newline: "l
 <p>To iterate over letters, build the array you want (for example with <code>chars()</code> over a literal) and loop that instead.</p>
 <p>Finally, note that first-class builtin values <em>do</em> work now, so <code>map($xs, basename)</code> and similar point-free forms are fine; that was once listed here as a gap. These remaining items are tracked in the design and roadmap notes as deferred or planned, not shipped.</p>
 </div></main>
-<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.9 · built by drang</div></footer>
+<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.10.0 · built by drang</div></footer>
 <script src="site.js"></script>
 </body></html>

@@ -690,7 +690,7 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 		case out.overflowed() || errBuf.overflowed():
 			code = 137 // the output-size cap was breached (out/err are the capped prefix)
 		case werr != nil:
-			code = 127 // a wait/system failure
+			code = 1 // a post-start wait/system failure — generic, not 127 (which means could-not-start)
 		default:
 			code = ec // Windows exit codes are non-negative
 		}

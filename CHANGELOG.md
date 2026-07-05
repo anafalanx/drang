@@ -3,7 +3,14 @@
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
 
-## [Unreleased]
+## [0.10.0] — 2026-07-05
+
+The release that completes single-process orchestration — and the first with a
+three-part version number (tags are `vX.Y.Z` from here on). Additive and
+backward-compatible: every 0.9 program runs unchanged. Two new builtins let a
+script read a started child's output live, so it can now drive a subprocess in
+**both** directions — write its stdin, read its stdout and stderr — the one
+capability a started child was still missing. Still Windows-only.
 
 ### Added
 - **Live child stdout reading (`recv_stdout`).** Completes single-process bidirectional steering.
