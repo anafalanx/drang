@@ -1899,8 +1899,12 @@ var builtins = map[string]builtin{
 	"is_within":     builtinIsWithin,
 	"path_list_sep": builtinPathListSep,
 	// filesystem: stat guards
-	"exists": builtinExists,
-	"is_dir": builtinIsDir,
+	"exists":     builtinExists,
+	"is_dir":     builtinIsDir,
+	"is_file":    builtinIsFile,
+	"is_symlink": builtinIsSymlink,
+	"readlink":   builtinReadlink,
+	"walk":       builtinWalk,
 	// filesystem: fallible ops
 	"glob":     builtinGlob,
 	"read_dir": builtinReadDir,
@@ -2013,6 +2017,7 @@ var builtins = map[string]builtin{
 
 	// drang-runtime knobs (drang_ = the interpreter itself) + platform facts (bare)
 	"drang_gc":    builtinDrangGC,
+	"drang_pid":   builtinDrangPid,
 	"cwd":         builtinCwd,
 	"env":         builtinEnv,
 	"os":          builtinOS,

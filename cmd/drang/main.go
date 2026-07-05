@@ -66,7 +66,8 @@ func main() {
 
 	mode := "run"
 	args := expandOneLinerCluster(os.Args[1:])
-	var streamN, streamP, autoSplit bool
+	var streamN, streamP, autoSplit, inPlace bool
+	var backupSuffix string
 
 	// Consume leading mode flags up to the first non-flag (the program token).
 	i := 0
@@ -95,7 +96,13 @@ loop:
 			help()
 			os.Exit(0)
 		default:
-			break loop
+			// -i / -i<suffix> (e.g. -i.bak): edit input files in place (see runStream).
+			if strings.HasPrefix(args[i], "-i") {
+				inPlace = true
+				backupSuffix = args[i][len("-i"):]
+			} else {
+				break loop
+			}
 		}
 		i++
 	}
@@ -145,8 +152,16 @@ loop:
 		src, origin = string(b), "<stdin>"
 	}
 
+	if inPlace && !streamP {
+		fmt.Fprintln(os.Stderr, "drang: -i requires -p (in-place edit writes each file with the -p output)")
+		os.Exit(2)
+	}
+	if inPlace && len(argv) == 0 {
+		fmt.Fprintln(os.Stderr, "drang: -i requires one or more input files (cannot edit stdin in place)")
+		os.Exit(2)
+	}
 	if streamN || streamP {
-		runStream(src, origin, argv, streamP, autoSplit)
+		runStream(src, origin, argv, streamP, autoSplit, inPlace, backupSuffix)
 		return
 	}
 
@@ -174,20 +189,25 @@ func expandOneLinerCluster(args []string) []string {
 		return args // a single flag (-n), a long --flag, or a bare token
 	}
 	body := a[1:]
+	expanded := make([]string, 0, len(body)+len(args)-1)
 	for i := 0; i < len(body); i++ {
 		switch body[i] {
 		case 'n', 'p', 'a':
+			expanded = append(expanded, "-"+body[i:i+1])
+		case 'i':
+			// -i is terminal in a cluster: the remainder is its optional backup
+			// suffix (-pi.bak → -p -i.bak). Combine with -e via a separate arg.
+			expanded = append(expanded, "-i"+body[i+1:])
+			return append(expanded, args[1:]...)
 		case 'e':
 			if i != len(body)-1 {
 				return args // -e must be last: it consumes the NEXT arg as the source
 			}
+			expanded = append(expanded, "-e")
+			return append(expanded, args[1:]...)
 		default:
-			return args // not purely one-liner letters; leave untouched
+			return args // not a one-liner cluster; leave untouched
 		}
-	}
-	expanded := make([]string, 0, len(body)+len(args)-1)
-	for i := 0; i < len(body); i++ {
-		expanded = append(expanded, "-"+body[i:i+1])
 	}
 	return append(expanded, args[1:]...)
 }
@@ -290,7 +310,7 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 
 // runStream parses src and runs it in one-liner stream mode (-n/-p): once per input
 // line, with the post-program args (argv) used as input files (stdin if none).
-func runStream(src, origin string, argv []string, autoPrint, autoSplit bool) {
+func runStream(src, origin string, argv []string, autoPrint, autoSplit, inPlace bool, backupSuffix string) {
 	eval.ApplyStartupGCPolicy() // one-shot run: relaxed GC + a soft memory backstop (see mempolicy.go)
 	p := parser.New(src)
 	prog := p.ParseProgram()
@@ -298,7 +318,7 @@ func runStream(src, origin string, argv []string, autoPrint, autoSplit bool) {
 		os.Exit(1)
 	}
 	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
-	opts := eval.StreamOpts{AutoPrint: autoPrint, AutoSplit: autoSplit, Files: argv}
+	opts := eval.StreamOpts{AutoPrint: autoPrint, AutoSplit: autoSplit, InPlace: inPlace, BackupSuffix: backupSuffix, Files: argv}
 	if err := eval.RunStream(prog, argv, opts); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {
 			os.Exit(code) // explicit exit()/die(): no error report

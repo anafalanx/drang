@@ -29,6 +29,16 @@ follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `
   - Not a database, by design: no queries/indexes/joins — the smallest primitive that covers
     "remember something between runs." An embedded SQLite was evaluated and rejected to keep the
     single static binary with zero dependencies.
+- **Recursive directory walk + symlink introspection.** `walk(dir)` recursively lists a tree as
+  `{name, path, is_dir, is_symlink, size, mtime}` records (the root excluded; symlinks reported
+  but never followed, so no cycles). `is_symlink(p)` and `readlink(p)` inspect links; `is_file(p)`
+  rounds out the stat guards alongside `exists`/`is_dir`; and `read_dir` records now also carry
+  `is_symlink`.
+- **`drang_pid()`** — the running interpreter's own process id, distinct from `pid(proc)` (a
+  spawned child's id).
+- **One-liner `-i` in-place edit.** `drang -pi -e '...' file` writes each file's `-p` output back
+  to the file atomically; `-i.bak` keeps a backup of the original first. Requires `-p` and one or
+  more real input files (it will not edit stdin or run without files). Clusters as `-pi` / `-pi.bak`.
 
 ## [0.8] — 2026-07-04
 

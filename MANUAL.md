@@ -3219,7 +3219,7 @@ captured: 3
 Paths in drang are ordinary strings. There is no path object and no handle type: you pass a string in, and you get a string (or an array, or a bool) back. The builtins split into four groups by how they behave and how they fail.
 
 - **File I/O**: `read_file`, `write_file`, `lines`.
-- **Filesystem operations**: `exists`, `is_dir`, `mkdir`, `glob`, `read_dir`, `rename`, `rm`, `copy`, `size`, `tempfile`, `tempdir`.
+- **Filesystem operations**: `exists`, `is_dir`, `is_file`, `is_symlink`, `mkdir`, `glob`, `read_dir`, `walk`, `readlink`, `rename`, `rm`, `copy`, `size`, `tempfile`, `tempdir`.
 - **Pure path transforms**: `path_join`, `dirname`, `basename`, `ext`, `stem`, `abs_path`, `to_slash`, `is_abs`, `clean`, `rel`, `is_within`, `path_list_sep`.
 - **Freshness gates** for build scripts: `mtime`, `newer`, `stale`.
 
@@ -3399,7 +3399,7 @@ copy    : false
 renamed : true
 ```
 
-`read_dir` returns records with three fields: `name` (the bare entry name), `path` (the full joined path), and `is_dir`. Entries are sorted by name.
+`read_dir` returns records with four fields: `name` (the bare entry name), `path` (the full joined path), `is_dir`, and `is_symlink`. Entries are sorted by name.
 
 ```drang
 $dir := path_join($ENV["TEMP"], "drang_readdir")
@@ -3420,6 +3420,28 @@ a.txt  is_dir=false
 b.log  is_dir=false
 sub  is_dir=true
 ```
+
+For a recursive listing, `walk` descends the whole tree, returning richer records — `name`, `path`, `is_dir`, `is_symlink`, `size`, and `mtime` — for every entry under the directory, with the root itself excluded. Symlinks are reported but never followed, so a symlink cycle cannot loop the walk. Compose it with the collection toolkit to get exactly what you want:
+
+```drang
+$dir := path_join($ENV["TEMP"], "drang_walk")
+rm($dir)
+mkdir(path_join($dir, "sub"))
+write_file(path_join($dir, "a.txt"), "hello")
+write_file(path_join($dir, "sub", "b.txt"), "hi")
+
+$files := walk($dir) |> filter(|$e| !$e.is_dir)
+say("files: " ~ str(len($files)))
+say("bytes: " ~ str(sum(map($files, |$e| $e.size))))
+rm($dir)
+```
+
+```
+files: 2
+bytes: 7
+```
+
+Three stat guards answer yes/no questions and never error on a missing path: `is_file` (a regular file), `is_dir` (a directory), and `is_symlink` (whether the path is *itself* a symlink, checked without following it). To read where a symlink points, `readlink` returns its target.
 
 A `**` glob walks subdirectories. Results stay sorted, and the walk root itself is never yielded. A pattern that matches nothing is an empty array, so you can loop over it without guarding:
 
@@ -4493,6 +4515,18 @@ one
 two
 ```
 
+### Editing files in place: `-i`
+
+By default `-p` writes to standard output, so `drang -pe '...' file` leaves the file untouched and prints the transformed text. Add `-i` and drang writes each file's output *back to that file* instead — the in-place edit familiar from `sed -i` and `perl -i`:
+
+```drang
+drang -pi -e '$_ = upper($_)' notes.txt
+```
+
+That rewrites `notes.txt` with every line uppercased, printing nothing. Give `-i` a suffix to keep the original first: `-i.bak` saves `notes.txt.bak` before overwriting. The flags cluster the usual way, so `-pi.bak -e '...'` and `-p -i.bak -e '...'` are equivalent.
+
+`-i` requires `-p` (the file is written with the `-p` output) and one or more real input files — it cannot edit stdin, and refuses to run without files rather than silently emptying one. Each write is atomic (a temporary file is renamed into place), so an interrupted run never leaves a half-written file. Because the rewrite is line-based, any CRLF line endings in the input become LF in the result.
+
 ### Notes and limits
 
 - Separate statements on one line with `;`. A block's closing `}` also ends a statement, so `BEGIN{ ... } stmt` needs no `;`, but `stmt; END{ ... }` does.
@@ -4510,8 +4544,6 @@ two
       say(100 / int($_))
               ^
   ```
-
-- In-place file editing is not yet available.
 
 ## Modules: `use`
 

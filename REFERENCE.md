@@ -535,8 +535,12 @@ Shared conventions:
 | `path_list_sep` | `path_list_sep() -> string` | OS PATH-list separator (`;` Windows, `:` Unix). | never; aborts on wrong arity (takes 0 args) |
 | `exists` | `exists(p: string) -> bool` | True if `os.Stat(p)` succeeds. | never (always bool); non-string → Err; aborts on wrong arity |
 | `is_dir` | `is_dir(p: string) -> bool` | True if `p` exists and is a directory. | never (always bool); non-string → Err; aborts on wrong arity |
+| `is_file` | `is_file(p: string) -> bool` | True if `p` exists and is a regular file (not a dir/device). | never (always bool); non-string → Err; aborts on wrong arity |
+| `is_symlink` | `is_symlink(p: string) -> bool` | True if `p` itself is a symlink (uses `Lstat`, so it does not follow the link, unlike exists/is_dir/is_file). | never (always bool); non-string → Err; aborts on wrong arity |
 | `glob` | `glob(pattern: string) -> array` | Sorted array of matching paths; supports `**` (spans directories); no match → `[]`. | malformed pattern → Err; non-string → Err; aborts on wrong arity |
-| `read_dir` | `read_dir(p: string) -> array` | List a directory as `[{name, path, is_dir}]` records, sorted by name; `path` is the joined full path. | missing/unreadable dir → Err; non-string → Err; aborts on wrong arity |
+| `read_dir` | `read_dir(p: string) -> array` | List a directory (one level) as `[{name, path, is_dir, is_symlink}]` records, sorted by name; `path` is the joined full path. | missing/unreadable dir → Err; non-string → Err; aborts on wrong arity |
+| `walk` | `walk(dir: string) -> array` | Recursively list everything under `dir` (root excluded) as `[{name, path, is_dir, is_symlink, size, mtime}]` records, depth-first in lexical order. Symlinks are reported but not followed (no cycles); unreadable entries are skipped. | non-directory / unreadable root → Err; non-string → Err; aborts on wrong arity |
+| `readlink` | `readlink(p: string) -> string` | The target a symlink points to (`os.Readlink`), without following it. | non-symlink / missing → Err; non-string → Err; aborts on wrong arity |
 | `mkdir` | `mkdir(p: string) -> string` | Create the directory tree (like `mkdir -p`, `os.MkdirAll` 0755); returns `p`. | create failure → Err; non-string → Err; aborts on wrong arity |
 | `mtime` | `mtime(p: string) -> float` | Modification time as float Unix seconds, sub-second precision (same unit as `now()`). | missing/unstattable → Err; non-string → Err; aborts on wrong arity |
 | `newer` | `newer(a: string, b: string) -> bool` | True if `a`'s mtime is strictly after `b`'s. | either path missing → Err; non-string → Err; aborts on wrong arity |
@@ -691,7 +695,7 @@ A small HTTP client over Go's `net/http`. The whole surface is `http` plus the `
 
 ### System
 
-Zero-arg builtins (`cwd`, `os`, `arch`, `home`, `exe`) abort on any argument. Error-mode is **not** uniform in this category: `env` and `parse_args` **abort** on a wrong-type argument (uncatchable), whereas `is_terminal` and `drang_gc` return a **catchable Err** on wrong-type. Each entry states its mode.
+Zero-arg builtins (`cwd`, `os`, `arch`, `home`, `exe`, `drang_pid`) abort on any argument. Error-mode is **not** uniform in this category: `env` and `parse_args` **abort** on a wrong-type argument (uncatchable), whereas `is_terminal` and `drang_gc` return a **catchable Err** on wrong-type. Each entry states its mode.
 
 | Builtin | Signature | Returns |
 |---|---|---|
@@ -704,6 +708,7 @@ Zero-arg builtins (`cwd`, `os`, `arch`, `home`, `exe`) abort on any argument. Er
 | `is_terminal` | `is_terminal(stream?: string) -> bool` | Whether `stream` is a console vs a pipe/file; `stream` ∈ `stdin` (default), `stdout`, `stderr`. Uses the real Windows console check (`GetConsoleMode` + MSYS2/Cygwin pty heuristic), so it reports `true` under mintty/Git Bash. |
 | `parse_args` | `parse_args(argv: array, value_opts?: array) -> map` | Parse an argv (all elements strings) into a flat map (see rules below). |
 | `drang_gc` | `drang_gc(mode: string \| int) -> int` | Set the GC target and return the PREVIOUS GOGC percent. |
+| `drang_pid` | `drang_pid() -> int` | Process id of the running drang interpreter itself (`os.Getpid`). Distinct from `pid(proc)`, which reports a spawned child's id. |
 
 **Per-builtin error modes:**
 
@@ -778,6 +783,8 @@ drang build [-o out] ./cmd/...     # compile a static binary
 ### One-liner / stream mode
 
 `-n` and `-p` run the program once per input line (awk/perl style); `-p` also prints the topic variable after each line. Short flags combine (`-ne`, `-pe`, `-ane`); a trailing `e` takes the source as its argument. Input is the files after the program, or stdin (`-` also means stdin).
+
+**`-i` — edit files in place.** With `-i`, the `-p` output for each input file is written back to that file (atomically) instead of to stdout; `-i<suffix>` (e.g. `-i.bak`) first saves the original to `<file><suffix>`. It requires `-p` and one or more real input files (not stdin), and clusters as `-pi` / `-pi.bak`. Note the file is rewritten line-by-line, so CRLF line endings are normalized to LF.
 
 | Var | Meaning |
 |---|---|

@@ -204,6 +204,26 @@ func builtinIsDir(args []value.Value) (value.Value, error) {
 	return value.MakeBool(statErr == nil && fi.IsDir()), nil
 }
 
+func builtinIsFile(args []value.Value) (value.Value, error) {
+	p, err := oneString("is_file", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	fi, statErr := os.Stat(p)
+	return value.MakeBool(statErr == nil && fi.Mode().IsRegular()), nil
+}
+
+// builtinIsSymlink uses Lstat, so it reports on the link itself rather than its target
+// (unlike exists/is_dir/is_file, which follow symlinks via Stat).
+func builtinIsSymlink(args []value.Value) (value.Value, error) {
+	p, err := oneString("is_symlink", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	fi, lerr := os.Lstat(p)
+	return value.MakeBool(lerr == nil && fi.Mode()&os.ModeSymlink != 0), nil
+}
+
 // --- fallible filesystem ops: catchable Err (code 1) on real failure ---
 
 func builtinMkdir(args []value.Value) (value.Value, error) {
@@ -456,8 +476,68 @@ func builtinReadDir(args []value.Value) (value.Value, error) {
 		om.Set(value.MakeStr("name"), value.MakeStr(de.Name()))
 		om.Set(value.MakeStr("path"), value.MakeStr(filepath.Join(p, de.Name())))
 		om.Set(value.MakeStr("is_dir"), value.MakeBool(de.IsDir()))
+		om.Set(value.MakeStr("is_symlink"), value.MakeBool(de.Type()&os.ModeSymlink != 0))
 		out[i] = m
 	}
+	return value.MakeArray(out), nil
+}
+
+// builtinReadlink returns the target a symlink points to (os.Readlink), without
+// following it. A non-symlink or missing path is a catchable Err.
+func builtinReadlink(args []value.Value) (value.Value, error) {
+	p, err := oneString("readlink", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	t, e := os.Readlink(p)
+	if e != nil {
+		return value.MakeErr("readlink "+p+": "+e.Error(), 1), nil
+	}
+	return value.MakeStr(t), nil
+}
+
+// builtinWalk recursively lists everything under dir as an array of
+// {name, path, is_dir, is_symlink, size, mtime} records, depth-first in lexical order.
+// The root itself is not included. Symlinks are reported (is_symlink) but never
+// followed, so a symlink cycle cannot loop the walk. Unreadable entries are skipped;
+// only an unreadable or non-directory root is a catchable Err. Broader than read_dir
+// (one level) or glob (pattern match); compose with filter/map for the collection you want.
+func builtinWalk(args []value.Value) (value.Value, error) {
+	p, err := oneString("walk", args)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	if fi, e := os.Stat(p); e != nil || !fi.IsDir() {
+		return value.MakeErr("walk "+p+": not a readable directory", 1), nil
+	}
+	out := []value.Value{}
+	filepath.WalkDir(p, func(path string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir // unreadable subdir: skip its subtree, keep going
+			}
+			return nil
+		}
+		if path == p {
+			return nil // exclude the root itself
+		}
+		var sz int64
+		var mt float64
+		if info, ierr := d.Info(); ierr == nil {
+			sz = info.Size()
+			mt = float64(info.ModTime().UnixNano()) / 1e9
+		}
+		m := value.MakeMap()
+		om := m.Obj().(*value.OrderedMap)
+		om.Set(value.MakeStr("name"), value.MakeStr(d.Name()))
+		om.Set(value.MakeStr("path"), value.MakeStr(path))
+		om.Set(value.MakeStr("is_dir"), value.MakeBool(d.IsDir()))
+		om.Set(value.MakeStr("is_symlink"), value.MakeBool(d.Type()&os.ModeSymlink != 0))
+		om.Set(value.MakeStr("size"), value.MakeInt(sz))
+		om.Set(value.MakeStr("mtime"), value.MakeFloat(mt))
+		out = append(out, m)
+		return nil
+	})
 	return value.MakeArray(out), nil
 }
 

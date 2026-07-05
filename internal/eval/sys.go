@@ -89,6 +89,16 @@ func builtinExe(args []value.Value) (value.Value, error) {
 	return value.MakeStr(p), nil
 }
 
+// builtinDrangPid returns the process id of the running drang interpreter itself
+// (os.Getpid). It sits in the drang_ introspection family; note `pid(proc)` instead
+// reports a CHILD process's id, so a distinct name avoids overloading that frozen one.
+func builtinDrangPid(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("drang_pid expects 0 arguments, got %d", len(args))
+	}
+	return value.MakeInt(int64(os.Getpid())), nil
+}
+
 // builtinIsTerminal reports whether a standard stream is connected to a terminal rather
 // than a pipe or file — the test a tool uses to decide whether to colorize output or drop
 // into an interactive prompt. The optional argument picks the stream: "stdin" (default),
