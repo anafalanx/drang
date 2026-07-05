@@ -1,4 +1,4 @@
-# drang — Formal Reference (v0.8)
+# drang — Formal Reference (v0.9)
 
 A terse, complete specification of drang for tools and agents: grammar, semantics,
 and every builtin. No tutorial prose — for a worked, example-driven guide see
@@ -209,7 +209,7 @@ Assignability: only `VAR`, index (`x[i]`), and field (`x.name`) are valid assign
 
 ## Semantics
 
-Formal rules for drang 0.8. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
+Formal rules for drang 0.9. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
 
 ### Value model
 

@@ -2,7 +2,7 @@
 
 *A small, Perl-inspired scripting language for text processing, system glue, and orchestration, implemented in Go.*
 
-*Covers drang 0.8.*
+*Covers drang 0.9.*
 
 > Every code example in this manual was executed against the interpreter; the shown output is real.
 
@@ -83,7 +83,7 @@ from stdin
 The **REPL.** Run `drang` with no program on an interactive terminal (also what launching the executable directly does), or force it with `--repl`. Bindings persist across submissions, and each entered expression prints its value:
 
 ```
-drang 0.8 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+drang 0.9 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
 drang> $x := 21
 21
 drang> $x * 2
