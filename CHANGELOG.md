@@ -1,7 +1,21 @@
 # Changelog
 
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
-follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y`.
+follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
+
+## [Unreleased]
+
+### Added
+- **Live child stdout reading (`recv_stdout`).** Completes single-process bidirectional steering.
+  `start(cmd, …, {stdout_pipe: true})` keeps a started child's stdout on a pipe, and `recv_stdout(p)`
+  reads the next chunk (raw bytes, untrimmed) — blocking until the child writes, returning nil once
+  it closes its stdout. Paired with the existing `send_stdin`/`close_stdin`, a script can now drive a
+  live child **both ways** — write a prompt, read the reply, repeat — which was impossible before (a
+  started child's stdout was detached to the null device). The read is direct (the script is the
+  drainer), so drain to nil before `await`; combine with `{merge_stderr}` to fold stderr in. Note
+  many programs block-buffer stdout when it is a pipe, so their output appears only on flush/exit
+  (a pty/ConPTY is not provided). Additive and backward-compatible; VM↔walker parity + `-race` tested.
+  (Graceful `stop`/`signal` remains reserved and deferred — see DESIGN.md.)
 
 ## [0.9] — 2026-07-05
 

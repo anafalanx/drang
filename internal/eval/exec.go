@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,7 @@ type execOpts struct {
 	stdinFile      string // feed the child's stdin from this file (zero-copy), instead of {stdin}
 	hasStdinFile   bool
 	stdinPipe      bool   // start() only: keep a writable stdin so send_stdin/close_stdin can drive the child
+	stdoutPipe     bool   // start() only: keep a readable stdout so recv_stdout can read the child live
 	mergeStderr    bool   // route the child's stderr to its stdout (2>&1)
 	arg0           string // present a different argv[0] than the launched executable
 	hasArg0        bool
@@ -96,6 +98,10 @@ type Proc struct {
 	stdinMu     sync.Mutex // guards the writable-stdin handle below
 	stdinW      *os.File   // writable stdin, set when started with {stdin_pipe: true}; nil otherwise
 	stdinClosed bool
+
+	stdoutMu     sync.Mutex // guards the readable-stdout handle below
+	stdoutR      *os.File   // readable stdout, set when started with {stdout_pipe: true}; nil otherwise
+	stdoutClosed bool
 }
 
 // writeStdin feeds s to a process started with {stdin_pipe: true}. It errors if the process has no
@@ -121,6 +127,50 @@ func (p *Proc) closeStdin() {
 	if p.stdinW != nil && !p.stdinClosed {
 		p.stdinClosed = true
 		p.stdinW.Close()
+	}
+}
+
+// readStdout reads the next chunk of stdout from a process started with {stdout_pipe: true}. It
+// blocks until the child writes, reports EOF once the child has closed its stdout (it exited and
+// its output is drained), and errors if the process has no readable stdout. The read is DIRECT
+// (the script is the drainer): a child that outruns the read pace back-pressures, and a script
+// that awaits a large output without draining it will block — drain to EOF first, or kill().
+// Returns (chunk, eof, err). The read is done outside stdoutMu so a concurrent closeStdout (which
+// *os.File tolerates) cannot deadlock against it.
+func (p *Proc) readStdout() (string, bool, error) {
+	p.stdoutMu.Lock()
+	r, closed := p.stdoutR, p.stdoutClosed
+	p.stdoutMu.Unlock()
+	if r == nil {
+		return "", false, fmt.Errorf("process was not started with {stdout_pipe: true}")
+	}
+	if closed {
+		return "", true, nil // already drained to EOF
+	}
+	buf := make([]byte, 64*1024)
+	n, err := r.Read(buf)
+	if n > 0 {
+		return string(buf[:n]), false, nil
+	}
+	if err != nil {
+		p.closeStdout() // stream ended (or closed under us): release the read end
+		if err == io.EOF || errors.Is(err, os.ErrClosed) {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	return "", false, nil
+}
+
+// closeStdout closes the readable stdout end. Idempotent, and a no-op when the process has no
+// readable stdout. readStdout calls it at EOF; the reaper deliberately does NOT, so output the
+// child wrote just before exiting is not discarded before the script reads it.
+func (p *Proc) closeStdout() {
+	p.stdoutMu.Lock()
+	defer p.stdoutMu.Unlock()
+	if p.stdoutR != nil && !p.stdoutClosed {
+		p.stdoutClosed = true
+		p.stdoutR.Close()
 	}
 }
 
@@ -188,17 +238,41 @@ func builtinStart(args []value.Value) (value.Value, error) {
 		c.ownedStdin = pr
 		stdinW = pw
 	}
+	// {stdout_pipe}: keep a readable pipe from the child's stdout so recv_stdout can read it live.
+	// The child writes the write end (an *os.File, so writerDescriptor passes it through with no
+	// draining copier); drang holds the read end and, after launch, closes its own copy of the write
+	// end — the *os.File fast path does not track it in childFiles — so the read end EOFs when the
+	// child exits (exactly the discipline stream_lines uses).
+	var stdoutR, stdoutW *os.File
+	if opts.stdoutPipe {
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			if stdinW != nil {
+				stdinW.Close()
+			}
+			return execError(argv[0], perr, ""), nil
+		}
+		c.stdout = pw
+		stdoutR, stdoutW = pr, pw
+	}
 	c.killOnClose = opts.supervise // supervise:true ties it to drang's life; else it outlives drang
 	if startErr := c.start(); startErr != nil {
 		if stdinW != nil {
 			stdinW.Close()
 		}
+		if stdoutW != nil {
+			stdoutR.Close()
+			stdoutW.Close()
+		}
 		return execError(argv[0], startErr, ""), nil
 	}
-	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW}
+	if stdoutW != nil {
+		stdoutW.Close() // close our copy of the child's write end so the read end can EOF on child exit
+	}
+	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW, stdoutR: stdoutR}
 	go func() {
 		defer close(p.done)
-		code, werr := c.proc.Wait() // reap the child; the NUL stdio needs no draining
+		code, werr := c.proc.Wait() // reap the child; NUL stdio needs no draining, and {stdout_pipe} is drained by the script via recv_stdout
 		c.stopMonitor()             // finalize limitHit before reading breachErr
 		p.closeStdin()              // release the write end once the child is gone
 		p.closeJob()
@@ -300,6 +374,30 @@ func builtinCloseStdin(args []value.Value) (value.Value, error) {
 	}
 	p.closeStdin()
 	return value.MakeBool(true), nil
+}
+
+// builtinRecvStdout reads the next available chunk of stdout from a process started with
+// {stdout_pipe: true}. It blocks until the child writes, returns the raw bytes as a string
+// (untrimmed, so newlines survive), and returns nil once the child has closed its stdout (it
+// exited and its output is fully drained). It is the read side of send_stdin: together they steer
+// a live child. A catchable Err if the process was not started with {stdout_pipe: true} or the
+// read fails.
+func builtinRecvStdout(args []value.Value) (value.Value, error) {
+	if len(args) != 1 {
+		return value.MakeNil(), fmt.Errorf("recv_stdout expects 1 argument (a process), got %d", len(args))
+	}
+	p, errv, ok := procArg("recv_stdout", args[0])
+	if !ok {
+		return errv, nil
+	}
+	s, eof, err := p.readStdout()
+	if err != nil {
+		return value.MakeErr(fmt.Sprintf("recv_stdout: %v", err), 1), nil
+	}
+	if eof {
+		return value.MakeNil(), nil // the child closed its stdout; the stream has ended
+	}
+	return value.MakeStr(s), nil
 }
 
 // builtinPid returns a started process's PID.
@@ -729,6 +827,14 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 				return o, fmt.Errorf("%s: stdin_pipe must be true or false", name)
 			}
 			o.stdinPipe = vals[i].Truthy()
+		case "stdout_pipe":
+			if name != "start" {
+				return o, fmt.Errorf("%s: stdout_pipe is only for start() (recv_stdout reads a started process)", name)
+			}
+			if vals[i].Tag() != value.Bool {
+				return o, fmt.Errorf("%s: stdout_pipe must be true or false", name)
+			}
+			o.stdoutPipe = vals[i].Truthy()
 		case "arg0":
 			if vals[i].Tag() != value.Str {
 				return o, fmt.Errorf("%s: arg0 must be a string", name)

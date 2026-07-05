@@ -2948,22 +2948,30 @@ say($s.running, $s.ok, $s.code)
 false true 0
 ```
 
-**Drive a live child's stdin.** Launch with `{stdin_pipe: true}`, push input with `send_stdin(p, s)`, and signal end-of-input with `close_stdin(p)`. This feeds a long-running filter incrementally. Below, `sort` emits its result only after its input closes; since a started child's stdout is detached, the example routes `sort` to a file and reads it back so the result is observable.
+**Drive a live child, both directions.** Launch with `{stdin_pipe: true}` to push input with `send_stdin(p, s)` (and `close_stdin(p)` for end-of-input), and `{stdout_pipe: true}` to read the child's output with `recv_stdout(p)`. Together they *steer* a running child: write a prompt, read the reply, write the next. `recv_stdout` blocks until the child writes and returns `nil` once the child has closed its stdout, so a loop drains it to completion. Below, `sort` emits its sorted result only after its input closes, and the script reads it straight off the pipe:
 
 ```drang
-$p := start("cmd", "/c", "sort > sorted.txt", {stdin_pipe: true})
+$p := start("sort", {stdin_pipe: true, stdout_pipe: true})
 send_stdin($p, "banana\n")
 send_stdin($p, "apple\n")
 send_stdin($p, "cherry\n")
 close_stdin($p)
+$out := ""
+$chunk := recv_stdout($p)
+while $chunk {
+  $out = $out ~ $chunk
+  $chunk = recv_stdout($p)
+}
 await($p)
-say(read_file("sorted.txt"))
+say(trim($out))
 ```
 ```
 apple
 banana
 cherry
 ```
+
+Two things to keep in mind. First, `recv_stdout` returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the `\n`. Second, the script is the one draining the pipe, so read the child's output (to `nil`) before you `await` it: a child that fills its output pipe while you are not reading blocks, and so would the `await`; a `kill(p)` always unblocks. One inherent limit: many programs *block-buffer* their stdout when it is a pipe rather than a terminal, so their output appears only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.
 
 **`supervise`.** A plain `start` outlives drang: the detached child keeps running after your program returns. `{supervise: true}` extends the die-with-parent tie to a detached child, so a supervised background process is guaranteed to go down when drang does, kernel-enforced, whether drang finishes cleanly, crashes, or is killed. A clean exit takes a supervised child down too, and that is exactly the point: use it for a helper that must never be left orphaned.
 
@@ -2982,7 +2990,7 @@ For a background child that should outlive drang, use a plain `start` with no `s
 
 Three options are tied to a specific form, and getting this wrong is treated as a programming mistake rather than a recoverable condition.
 
-**`{stdin_pipe}` and `{supervise}` are `start`-only.** They exist to drive or supervise a detached process. Using either on a synchronous form (`run`, `capture`, `capture_all`, `pipe`, `stream_lines`) aborts the program with a clear message; it is not a catchable `Err`, and `//` will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin. Feed a synchronous child with `stdin` or `stdin_file` instead.
+**`{stdin_pipe}`, `{stdout_pipe}`, and `{supervise}` are `start`-only.** They exist to drive, read, or supervise a detached process. Using any of them on a synchronous form (`run`, `capture`, `capture_all`, `pipe`, `stream_lines`) aborts the program with a clear message; it is not a catchable `Err`, and `//` will not rescue it. The reasoning is that a synchronous call already blocks until the child exits, so supervising it is meaningless, and it has no live handle through which to push stdin or read stdout. Feed a synchronous child with `stdin` or `stdin_file`, and capture its output with `capture`, instead.
 
 ```drang
 $r := capture("cmd", "/c", "echo hi", {supervise: true})
