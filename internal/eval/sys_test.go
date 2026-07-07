@@ -64,7 +64,7 @@ func TestStartDetached(t *testing.T) {
 	}
 }
 
-// exe() and is_terminal() unblock porting the zmal `z` launcher (find-own-location and
+// exe() and is_terminal() unblock porting the z front door (find-own-location and
 // TTY detection).
 
 func TestExe(t *testing.T) {

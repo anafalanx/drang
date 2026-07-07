@@ -3,7 +3,7 @@
 # each one's presence + version. Exits non-zero if a CORE piece is missing/broken.
 #   run:  drang toolcheck.dr [project-root]
 
-$root ::= $ARGV[0] // "C:/zmal/_els"
+$root ::= $ARGV[0] // path_join(env("Z_ROOT", "C:/z"), "_els")
 $tc ::= path_join($root, ".toolchain")
 
 # Each component: where it lives, the probe path segments under it, whether it's

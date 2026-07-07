@@ -9,7 +9,7 @@ Usage: python run.py [repeats]   (default 3)
 import subprocess, time, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DRANG = r"C:\zmal\_drang\drang.exe"
+DRANG = os.path.join(os.path.dirname(os.path.dirname(HERE)), "drang.exe")
 PY = sys.executable
 REPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 TIMEOUT = 600

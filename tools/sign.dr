@@ -19,11 +19,11 @@ $TSA ::= "http://time.certum.pl"  # Certum RFC-3161 timestamp server (mandatory:
                                   # signature valid after the certificate expires)
 
 # resolve_signtool locates signtool.exe: prefer the Windows SDK's own copy (glob picks the
-# highest installed version, so an SDK update just works), then the zmal junction, then PATH.
+# highest installed version, so an SDK update just works), then the z workspace junction, then PATH.
 fn .resolve_signtool() {
   $sdk := glob("C:/Program Files (x86)/Windows Kits/10/bin/*/x64/signtool.exe")
   if len($sdk) > 0 { return $sdk[len($sdk) - 1] }
-  $junction := "C:/zmal/r/winsdk/10.0.26100.0/signtool.exe"
+  $junction := env("Z_ROOT", "C:/z") ~ "/r/winsdk/10.0.26100.0/signtool.exe"
   if exists($junction) { return $junction }
   $w := capture_all("where", "signtool")
   if $w.ok and len(lines($w.out)) > 0 {

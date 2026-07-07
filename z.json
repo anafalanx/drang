@@ -3,7 +3,7 @@
     "build": ["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", "drang.exe", "./cmd/drang"],
     "sign": ["./drang.exe", "tools/sign.dr"],
     "test": ["go", "test", "./..."],
-    "verify": ["go", "run", "./cmd/drang", "tools/verify.dr"],
+    "check": ["go", "run", "./cmd/drang", "tools/verify.dr"],
     "run": ["./drang.exe"],
     "drang-version": ["./drang.exe", "--version"],
     "drang-help": ["./drang.exe", "--help"]

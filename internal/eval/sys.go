@@ -10,7 +10,7 @@ import (
 )
 
 // builtinCwd returns the current working directory (native path). A task runner
-// invoked through the zmal `z` front door runs from the project root, so cwd() is
+// invoked through the z front door runs from the project root, so cwd() is
 // how a ported script discovers the root (the .toolchain, project files).
 func builtinCwd(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {
@@ -76,7 +76,7 @@ func builtinHome(args []value.Value) (value.Value, error) {
 
 // builtinExe returns the path of the running drang executable (Go's os.Executable), so a
 // script can locate itself — e.g. a launcher discovering its project root relative to the
-// binary, the way the zmal `z` front door does. A lookup failure is a catchable Err. The
+// binary, the way the z front door does. A lookup failure is a catchable Err. The
 // path may be an unresolved symlink; resolve it explicitly if a canonical path is needed.
 func builtinExe(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {

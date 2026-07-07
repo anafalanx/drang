@@ -60,7 +60,7 @@ go test -run TestVMParity ./internal/eval   # one test
 ```
 
 The toolchain is **Go 1.26** (it is not on the global `PATH` in this environment — it
-lives under `zmal/r/go/1.26.4/bin`).
+lives under `z/r/go/1.26.4/bin`).
 
 ---
 
