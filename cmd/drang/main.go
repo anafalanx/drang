@@ -27,7 +27,7 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.10.0"
+var version = "0.11.0"
 
 func main() {
 	// Make the console render drang's UTF-8 output correctly (no-op when output is
@@ -36,7 +36,7 @@ func main() {
 	// A standalone executable (made by `drang build`) carries its program appended
 	// to this binary; run it directly, with every argument going to the script as
 	// $ARGV. A plain drang binary has no such payload and continues to the CLI.
-	if src, name, found, err := embeddedProgram(); found {
+	if src, name, assets, found, err := embeddedProgram(); found {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "drang: corrupt standalone payload:", err)
 			os.Exit(1)
@@ -45,6 +45,7 @@ func main() {
 		if origin == "" {
 			origin = standaloneOrigin()
 		}
+		eval.SetEmbeddedWeb(assets)
 		runProgram(string(src), origin, os.Args[1:], "")
 		return
 	}

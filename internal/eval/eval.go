@@ -2033,6 +2033,9 @@ var builtins = map[string]builtin{
 	"http":      builtinHTTP,
 	"http_get":  builtinHTTPGet,
 	"http_post": builtinHTTPPost,
+
+	// GUI: a local, token-gated htmx server bound to 127.0.0.1 (see serve.go)
+	"serve": builtinServe,
 }
 
 // stdout is where say writes its output; tests override it to capture output.

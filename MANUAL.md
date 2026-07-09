@@ -1,3 +1,11 @@
+---
+type: manual
+title: drang manual
+description: The drang language end to end — values, control flow, functions, the builtin library, one-liner mode, concurrency, process control, and the GUI server.
+tags: [drang, manual, guide, language]
+timestamp: 2026-07-09
+---
+
 # drang: Language Manual
 
 *A small, Perl-inspired scripting language for text processing, system glue, and orchestration, implemented in Go.*

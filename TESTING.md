@@ -1,3 +1,11 @@
+---
+type: guide
+title: testing drang
+description: How to run drang's local preflight — the -race suite, the fuzzers, the example checks, and the release gate.
+tags: [drang, testing, preflight, quality]
+timestamp: 2026-07-09
+---
+
 # Testing drang
 
 drang has **no hosted CI and no scheduled fuzzing**. That is a deliberate choice, not

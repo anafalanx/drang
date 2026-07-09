@@ -1,7 +1,46 @@
+---
+type: changelog
+title: drang changelog
+description: The release history of drang, newest first (Keep a Changelog style).
+tags: [drang, changelog, releases]
+timestamp: 2026-07-09
+---
+
 # Changelog
 
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
+
+## [0.11.0] — 2026-07-09
+
+The GUI release. drang can now build **local htmx GUIs** — single-user tool
+"cockpits" served to a clamped system-browser window — with no external runtime,
+no bundled Chromium, and no web framework. A design line previously scrapped as out
+of scope is brought back **deliberately but narrowly**: `serve` is a *local* server
+for building tools, not a production web server or framework. Additive and
+backward-compatible; still Windows-only.
+
+### Added
+- **`serve` — a local htmx GUI server.** `serve({routes, static?, port?, open?})`
+  binds `127.0.0.1` on an ephemeral port, routes request paths to drang handler
+  functions that return HTML (a full page or an htmx fragment), and gates every
+  request on a per-launch random token so no other local process can drive it.
+  Handlers get a `{method, path, query, form, headers}` request map and return a
+  string (sent as text/html), a `{status?, headers?, body}` map, or nil. VM calls
+  are serialized (one handler at a time — right for a single browser); a handler
+  panic becomes a 500, never a crashed server.
+- **Embedded htmx.** The htmx runtime (2.0.4) is baked into the binary and served
+  at `/_/htmx.js` — reference it with `<script src="/_/htmx.js"></script>`. Nothing
+  to install, fully offline.
+- **Clamped system-browser launch.** By default `serve` opens the page in Microsoft
+  Edge `--app` mode (a chrome-less window) against a throwaway isolated profile,
+  with background-networking/sync/extensions off. Closing the window shuts the
+  server down and wipes the profile. Falls back to the default browser (unclamped)
+  if Edge is absent; `open: false` skips the launch for headless/test use.
+- **`drang build --web <dir>`.** Bundles a `web/` asset tree into the standalone exe
+  (payload format v3), served from memory by `serve`. A GUI tool — drang + htmx +
+  your HTML/CSS/JS — is now a single self-contained file. `static: "web"` serves
+  from disk in dev and from the embedded copy when built (identical program).
 
 ## [0.10.0] — 2026-07-05
 

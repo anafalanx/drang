@@ -1,4 +1,12 @@
-# drang — Formal Reference (v0.10.0)
+---
+type: reference
+title: drang formal reference
+description: The precise specification of drang — grammar, semantics, the value and error models, and every builtin.
+tags: [drang, reference, specification]
+timestamp: 2026-07-09
+---
+
+# drang — Formal Reference (v0.11.0)
 
 A terse, complete specification of drang for tools and agents: grammar, semantics,
 and every builtin. No tutorial prose — for a worked, example-driven guide see
@@ -708,6 +716,18 @@ A small HTTP client over Go's `net/http`. The whole surface is `http` plus the `
 | `http` | `http(method: string, url: string, opts?: map) -> map \| error` | Request with any HTTP `method` (case-insensitive; the primitive under `http_get`/`http_post`). **err:** aborts on wrong arity (not 2–3 args); non-string `method`/`url`, non-map `opts`, bad URL, `body`+`json` conflict, oversized body, or transport failure → Err (code 1); timeout → Err (code 124). Never on a 4xx/5xx status. |
 | `http_get` | `http_get(url: string, opts?: map) -> map \| error` | GET `url`. **err:** aborts on wrong arity (not 1–2 args); non-string `url`, non-map `opts`, bad URL, or transport failure → Err (code 1); timeout → Err (code 124). Never on a 4xx/5xx status. |
 | `http_post` | `http_post(url: string, body: string, opts?: map) -> map \| error` | POST a **string** `body` to `url` (merged into `opts` as `body`; use `http("POST", url, {json: x})` to send JSON). **err:** aborts on wrong arity (not 2–3 args); non-string `body`, non-string `url`, non-map `opts`, bad URL, or transport failure → Err (code 1); timeout → Err (code 124). Never on a 4xx/5xx status. |
+
+### GUI (local htmx server)
+
+`serve` runs a **local, single-user htmx GUI**: it binds `127.0.0.1` on an ephemeral port, routes request paths to drang handler functions that return HTML, serves the embedded htmx runtime at `/_/htmx.js`, and (by default) opens the page in a clamped Edge `--app` window against a throwaway isolated profile. It is a *tool cockpit* server — one browser, on the same machine — **not** a production web server or framework. Every request is gated on a per-launch random token (issued as the `drang_token` cookie on the first `?t=` navigation), so no other local process can drive it. VM handler calls are serialized (one at a time); a handler panic is a 500, never a crashed server. `serve` blocks until the window closes (`open:true`) or the process is interrupted, then shuts down and wipes the profile.
+
+**Handlers.** A route value is a function of 0 or 1 parameter. With 1 parameter it receives a request map `{method, path, query, form, headers}` (`query`/`form` are first-value string maps; `form` includes an htmx POST body via `ParseForm`). It returns a **string** (sent as `text/html`), a **map** `{status?: int, headers?: {name: value}, body?: string}`, or **nil** (204). An `Err` return becomes a 500.
+
+**Assets.** `static: <dir>` serves a directory (traversal-safe `http.Dir`). `drang build script.dr --web <dir>` bundles that tree into the standalone exe (payload format v3), served from memory — so the same `static:` program serves from disk in dev and from the embedded copy when built. `/_/htmx.js` is reserved for the embedded htmx runtime and cannot be shadowed by a route.
+
+| Builtin | Signature | Behavior |
+|---|---|---|
+| `serve` | `serve(opts: map) -> nil \| error` | Run the GUI server described by `opts`: `routes` (`{path: handler}` map, **required** — each path starts with `/`, each handler a fn of 0/1 params), `static` (dir string, optional), `port` (int `0`–`65535`, default `0` = ephemeral), `open` (bool, default `true` — launch the clamped browser). **err:** aborts on wrong arity (not 1 arg); a non-map `opts`, a bad `routes`/`port`, or a bind failure → Err (code 1). Blocks until shutdown. |
 
 ### System
 

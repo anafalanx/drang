@@ -1,3 +1,11 @@
+---
+type: roadmap
+title: drang roadmap
+description: What is built, what is deliberately out of scope, and what remains — drang's status ledger.
+tags: [drang, roadmap, status]
+timestamp: 2026-07-09
+---
+
 # drang — Roadmap: what's left to complete
 
 *Inventory refreshed 2026-07-05 — **drang 0.10.0 released** (single-process orchestration completed: `recv_stdout` + `recv_stderr`; see CHANGELOG.md).
@@ -148,7 +156,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~array `reverse`~~ | array convenience — **DONE in 0.7**; `reverse` now handles strings and arrays | Go | ✅ DONE |
 | ~~`replace_first`~~, named-capture→map `match`, `parse_url`, `hmac`/`sha512`, `walk`, `chmod` | targeted Go bindings (`walk` + named-capture `match` are the likeliest hits). `replace_first` — **DONE** (landed with the pre-1.0 naming pass as `replace_first`/`replace_all`, literal-or-regex needle) | Go | MIXED |
 | ~~`http`/`http_get`/`http_post` client~~ | minimal+robust net/http binding — **DONE**: transport-fail→Err (timeout code 124), HTTP status is data; defaults: 30s timeout, ≤10 redirects, TLS on, 32 MiB cap, gzip, shared pooled transport | Go | ✅ DONE |
-| ~~HTTP server / browser-GUI serving~~ | explored (serve + cell + htmx model) then **SCRAPPED by decision** — out of scope; drang is not a web framework | — | ❌ OUT OF SCOPE |
+| ~~Local htmx GUI serving (`serve`)~~ | **DONE in 0.11.0** — a *local, single-user* htmx server for tool cockpits: 127.0.0.1 + per-launch token, embedded htmx, clamped Edge `--app` window, `drang build --web` asset bundling. Deliberately narrow — a production web server / framework stays out of scope | Go | ✅ DONE |
 | TOML / INI config parsing | no Go-stdlib parser → would need a third-party library (against the dependency-light pillar) | Go | GATED (decision-record first) |
 | ~~First-class builtin values (`map($xs, basename)`)~~ | the long-standing HOF wart — **DONE**: a bare builtin name is a function value on both backends | (language) | ✅ DONE |
 | `sh()` shell-escape; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency batteries; build on demand | mixed | DEFERRED-BY-DESIGN |
@@ -203,7 +211,7 @@ Must-use enforcement was deliberately dropped (`[LOCKED]`), not missing.
 
 Ternary `?:`, `**`, bitwise, `++`/`--`; classes/inheritance/`bless`/MOP; scalar-list
 context and the punctuation-variable zoo; **Perl's regex operators (`=~`, `s///`) and `$1..$n` capture variables** (drang keeps `qr//` + the `match`/`replace_all`/`matches` builtins + pipelines; named-capture→map is the ergonomics path — `s///` reconsiderable only for one-liner mode); string `eval`; a package registry;
-sandboxing; an HTTP *server* / web framework; bignum; GUI/Tk hosting;
+sandboxing; a *production* HTTP server / web framework (the local `serve` tool-GUI is in scope; a general web server is not); bignum; GUI/Tk hosting;
 the ops/observability and distributed/multi-host growth verticals (locked to
 "personal daily-driver"). **YAML/TOML** is the one genuine judgment-call: no Go-stdlib
 parser, so it needs a decision-record (hand-rolled exception vs out-of-scope).

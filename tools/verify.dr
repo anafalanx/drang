@@ -2,28 +2,24 @@
 # release or after major work. There is no hosted CI: this IS the gate, run on
 # demand, on your own machine. drang verifying drang.
 #
-#   drang tools/verify.dr           # full suite + 20s fuzz on each target
+#   drang tools/verify.dr           # build + vet + -race + docs checks, then a 20s fuzz burst per target
 #   drang tools/verify.dr 60s       # longer fuzz burst per target
-#   drang tools/verify.dr none      # skip fuzzing (build + vet + -race only)
+#   drang tools/verify.dr none      # skip fuzzing (build + vet + -race + docs only)
 #
-# Run from the repo root (the go commands use ./... paths). Exits non-zero if any
-# stage fails, so it composes in a shell or another script.
+# Run from the repo root (the go commands use ./... paths, and the docs checks read
+# the root docs). Exits non-zero if any stage fails, so it composes in a shell.
 $ft := $ARGV[0] // "20s"
 $fuzz := $ft != "none"
 say("")
 say("=== drang preflight ===")
 if $fuzz {
-	say("full build + vet + -race suite, then a " ~ $ft ~ " fuzz burst per target")
+	say("build + vet + -race suite + docs checks, then a " ~ $ft ~ " fuzz burst per target")
 } else {
-	say("full build + vet + -race suite (fuzzing skipped)")
+	say("build + vet + -race suite + docs checks (fuzzing skipped)")
 }
 say("")
 
 # --- stages ---------------------------------------------------------------
-# Each stage is {name, cmd, args}. The gate stages (build/vet/race) run first and
-# stop the run on the first failure — no point fuzzing a broken tree. The fuzz
-# stages then all run even if one fails, so a single pass surfaces every parse,
-# format, and backend-parity regression at once.
 fn .stage($name, $cmd, $args) {
 	say("--- " ~ $name ~ " ---")
 	$r := run($cmd, $args)
@@ -44,7 +40,8 @@ fn .record($results, $name, $ok) {
 	$results
 }
 
-# Gate: build, vet, then the full race-enabled suite. Stop at the first failure.
+# Gate: build, vet, then the full race-enabled suite. Stop at the first failure —
+# no point checking docs or fuzzing a broken tree.
 $gate := [
 	{name: "go build ./...", cmd: "go", args: ["build", "./..."]},
 	{name: "go vet ./...", cmd: "go", args: ["vet", "./..."]},
@@ -57,6 +54,27 @@ for $s in $gate {
 	if !$ok {
 		$broke = true
 		break
+	}
+}
+# Docs & examples: the manual's runnable blocks still match the interpreter, and the
+# OKF knowledge bundle is well-formed (every concept doc declares a `type`). Run them
+# with this same drang, all in one group (like the fuzz sweep) so a single pass
+# surfaces every doc regression — but only once the gate is green.
+if !$broke {
+	$drang := exe()
+	$docStages := [
+		{name: "drang fmt --check", cmd: $drang, args: ["fmt", "--check", "bench", "tools", "examples"]},
+		{name: "manual examples (MANUAL.md)", cmd: $drang, args: ["tools/check_examples.dr", "MANUAL.md"]},
+		{
+			name: "reference examples (REFERENCE.md)",
+			cmd: $drang,
+			args: ["tools/check_examples.dr", "REFERENCE.md"]
+		},
+		{name: "OKF docs lint", cmd: $drang, args: ["tools/okf_lint.dr"]}
+	]
+	for $s in $docStages {
+		$ok := .stage($s.name, $s.cmd, $s.args)
+		$results = .record($results, $s.name, $ok)
 	}
 }
 # Fuzz sweep: parser totality, formatter fixed-point, and VM/walker parity. Only if

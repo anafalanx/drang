@@ -1,3 +1,11 @@
+---
+type: overview
+title: drang
+description: A small, parallel, Perl-inspired scripting language for text, system glue, and orchestration — implemented in Go, Windows-only.
+tags: [drang, overview, readme, scripting-language]
+timestamp: 2026-07-09
+---
+
 # drang
 
 A small, parallel, **Perl-inspired** scripting language for text processing, system glue, and

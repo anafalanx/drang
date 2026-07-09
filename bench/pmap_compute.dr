@@ -2,19 +2,20 @@
 # by iterating an LCG K times, then sum all per-item checksums (order-independent).
 # drang uses pmap(list, .worker) for TRUE parallelism (goroutines over NumCPU),
 # no GIL. The checksum sum matches the Python multiprocessing.Pool version exactly.
-
 $N := 4000
 $K := 15000
 
 fn .worker($i) {
-  $acc := $i
-  for $j in 0..($K - 1) {
-    $acc = ($acc * 1103515245 + $j) % 2147483648
-  }
-  $acc
+	$acc := $i
+	for $j in 0..$K - 1 {
+		$acc = ($acc * 1103515245 + $j) % 2147483648
+	}
+	$acc
 }
 
 $items := []
-for $i in 0..($N - 1) { push($items, $i) }
+for $i in 0..$N - 1 {
+	push($items, $i)
+}
 $total := reduce(pmap($items, .worker), 0, |$a, $b| $a + $b)
 say($total)

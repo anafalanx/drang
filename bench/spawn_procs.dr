@@ -3,8 +3,8 @@
 # OS-process-spawn-bound: measures orchestration/launch overhead, not VM speed.
 $n := 40
 $sum := 0
-for $i in 0..($n - 1) {
-  $out := capture("cmd", "/c", "echo", str($i))
-  $sum = $sum + int(trim($out))
+for $i in 0..$n - 1 {
+	$out := capture("cmd", "/c", "echo", str($i))
+	$sum = $sum + int(trim($out))
 }
 say($sum)

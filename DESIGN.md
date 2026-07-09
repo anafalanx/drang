@@ -1,3 +1,11 @@
+---
+type: design
+title: drang design notes
+description: The architecture and locked design decisions behind drang — the pillars, the scope, and the rationale for what is in and out.
+tags: [drang, design, architecture, decisions]
+timestamp: 2026-07-09
+---
+
 # drang — Language Design
 
 *Working name (provisional). A simpler, parallel, Perl-inspired text-processing language, implemented in Go.*

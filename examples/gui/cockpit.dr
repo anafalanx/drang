@@ -1,0 +1,42 @@
+# examples/gui/cockpit.dr — a minimal htmx GUI.
+#
+# `serve` binds 127.0.0.1, serves the page below, and opens it in a clamped Edge
+# window (app mode, throwaway profile). The button triggers an htmx GET whose HTML
+# fragment is rendered here in drang. htmx itself is baked into the drang runtime
+# and served at /_/htmx.js — nothing to install.
+#
+#   drang examples/gui/cockpit.dr        # run it (opens the window)
+#   drang build examples/gui/cockpit.dr  # -> a single self-contained cockpit.exe
+$page := <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>drang cockpit</title>
+  <script src="/_/htmx.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: .25rem; }
+    button { font-size: 1rem; padding: .5rem 1rem; cursor: pointer; }
+    #out { margin-top: 1rem; font-size: 1.1rem; color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h1>drang cockpit</h1>
+  <p>A single-exe htmx GUI, served to a clamped Edge window by <code>serve()</code>.</p>
+  <button hx-get="/tick" hx-target="#out" hx-swap="innerHTML">Ping the server</button>
+  <div id="out">(click the button)</div>
+</body>
+</html>
+HTML
+
+fn .home($req) {
+	$page
+}
+
+fn .tick($req) {
+	$t := format_time(now(), "%H:%M:%S")
+	"<strong>pong</strong> - server time is " ~ $t
+}
+
+serve({routes: {"/": .home, "/tick": .tick}})

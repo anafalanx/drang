@@ -4,11 +4,11 @@ $n := 200000
 $seed := 12345
 $total := 0
 for $i in 1..$n {
-  $seed = ($seed * 1103515245 + 12345) % 2147483648
-  $name := $names[$seed % 5]
-  $seed = ($seed * 1103515245 + 12345) % 2147483648
-  $amount := $seed % 10000
-  $line := "#" ~ str($i) ~ " " ~ $name ~ ": $" ~ str($amount) ~ ".00"
-  $total = $total + len($line)
+	$seed = ($seed * 1103515245 + 12345) % 2147483648
+	$name := $names[$seed % 5]
+	$seed = ($seed * 1103515245 + 12345) % 2147483648
+	$amount := $seed % 10000
+	$line := "#" ~ str($i) ~ " " ~ $name ~ ": $" ~ str($amount) ~ ".00"
+	$total = $total + len($line)
 }
 say($total)

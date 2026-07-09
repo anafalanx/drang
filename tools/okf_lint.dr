@@ -1,0 +1,46 @@
+# okf_lint.dr — verify the repo-root OKF knowledge bundle. Every concept document
+# (a root-level .md that isn't a reserved index.md/log.md) must begin with a YAML
+# frontmatter block and declare a non-empty `type` — the one field OKF v0.1 requires.
+# drang linting its own docs. Run from the repo root:  drang tools/okf_lint.dr
+$reserved ::= {"index.md": true, "log.md": true}
+$fail := 0
+$checked := 0
+for $path in glob("*.md") {
+	$base := basename($path)
+	if has($reserved, $base) {
+		next
+	}
+	$checked = $checked + 1
+	$src := read_file($path)?
+	$ls := split(replace_all($src, "\r\n", "\n"), "\n")
+	if len($ls) == 0 or trim($ls[0]) != "---" {
+		say($"FAIL  ${base}: no YAML frontmatter (must begin with '---')")
+		$fail = $fail + 1
+		next
+	}
+	$k := 1
+	$type := ""
+	while $k < len($ls) and trim($ls[$k]) != "---" {
+		if starts_with(trim($ls[$k]), "type:") {
+			$type = trim(replace_first(trim($ls[$k]), "type:", ""))
+		}
+		$k = $k + 1
+	}
+	if $k >= len($ls) {
+		say($"FAIL  ${base}: frontmatter block not closed with '---'")
+		$fail = $fail + 1
+	} else if $type == "" {
+		say($"FAIL  ${base}: frontmatter declares no non-empty 'type'")
+		$fail = $fail + 1
+	} else {
+		say($"  ok  ${base}  (type: ${type})")
+	}
+}
+say("")
+if $fail == 0 {
+	say($"OKF OK — ${checked} concept document(s) conform")
+	exit(0)
+} else {
+	say($"OKF FAILED — ${fail} of ${checked} document(s) non-conformant")
+	exit(1)
+}

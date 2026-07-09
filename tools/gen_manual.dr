@@ -16,7 +16,10 @@ fn .esc($s) {
 # `.md` files are NOT hosted, so a bare relative link would 404 there. Absolute URLs,
 # in-page `#anchors`, and site-absolute `/paths` are left untouched.
 fn .resolve_url($u) {
-	if starts_with($u, "http") or starts_with($u, "#") or starts_with($u, "/") or starts_with($u, "mailto:") {
+	if starts_with($u, "http") or starts_with($u, "#") or starts_with($u, "/") or starts_with(
+		$u,
+		"mailto:"
+	) {
 		return $u
 	}
 	$file := $u
@@ -227,10 +230,21 @@ fn .cells($line) {
 # --- block parser ---
 $md := read_file("MANUAL.md")
 $lines := lines($md)
+# Strip a leading YAML frontmatter block (--- ... ---) so the OKF metadata isn't
+# rendered into the page. The manual's body is unchanged; the site looks the same.
+if len($lines) > 0 and trim($lines[0]) == "---" {
+	$fk := 1
+	while $fk < len($lines) and trim($lines[$fk]) != "---" {
+		$fk = $fk + 1
+	}
+	if $fk + 1 < len($lines) {
+		$lines = $lines[$fk + 1..len($lines) - 1]
+	}
+}
 $nl := len($lines)
 $out := []
 $para := []
-$seen := {}   # heading-id -> true, for GitHub-style slug de-duplication
+$seen := {}  # heading-id -> true, for GitHub-style slug de-duplication
 $i := 0
 while $i < $nl {
 	$line := $lines[$i]
@@ -313,7 +327,8 @@ while $i < $nl {
 		$base := .slug($htext)
 		$id := $base
 		$k := 0
-		while has($seen, $id) {   # duplicate heading text -> -1, -2, ... like GitHub
+		while has($seen, $id) {
+			# duplicate heading text -> -1, -2, ... like GitHub
 			$k = $k + 1
 			$id = $base ~ "-" ~ str($k)
 		}
@@ -394,7 +409,7 @@ push($h, $body)
 push($h, "</div></main>")
 push(
 	$h,
-	"<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.10.0 · built by drang</div></footer>"
+	"<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.11.0 · built by drang</div></footer>"
 )
 push($h, "<script src=\"site.js\"></script>")
 push($h, "</body></html>")
