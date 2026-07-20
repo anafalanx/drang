@@ -119,15 +119,19 @@ func (*ExprStmt) stmtNode()        {}
 // (mutable) or $name ::= value (constant, when Const is true).
 type DeclStmt struct {
 	Pos
-	Name  string
-	Value Expr
-	Const bool
+	Name     string
+	Value    Expr
+	Const    bool
+	Exported bool // marked `e` — a module export (top-level `::=` constants only)
 }
 
 func (s *DeclStmt) String() string {
 	op := ":="
 	if s.Const {
 		op = "::="
+	}
+	if s.Exported {
+		return fmt.Sprintf("(e %s $%s %s)", op, s.Name, s.Value)
 	}
 	return fmt.Sprintf("(%s $%s %s)", op, s.Name, s.Value)
 }
@@ -210,12 +214,16 @@ type FnDecl struct {
 	Params   []string
 	Defaults []Expr // parallel to Params; a nil entry means the parameter is required
 	Body     *Block
+	Exported bool // marked `e` — a module export (top-level declarations only)
 }
 
 func (s *FnDecl) String() string {
 	ps := make([]string, len(s.Params))
 	for i, p := range s.Params {
 		ps[i] = "$" + p
+	}
+	if s.Exported {
+		return fmt.Sprintf("(e fn %s (%s) %s)", s.Name, strings.Join(ps, " "), s.Body)
 	}
 	return fmt.Sprintf("(fn %s (%s) %s)", s.Name, strings.Join(ps, " "), s.Body)
 }

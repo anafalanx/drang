@@ -55,6 +55,54 @@ func TestJobClosedIdempotent(t *testing.T) {
 	}
 }
 
+func TestJobActiveProcessCount(t *testing.T) {
+	job := mustJob(t, true)
+	defer job.Close()
+	if got, err := job.ActiveProcessCount(); err != nil || got != 0 {
+		t.Fatalf("empty job active count = %d, %v; want 0, nil", got, err)
+	}
+	f := nul(t)
+	defer f.Close()
+	p, err := Launch([]string{selfExe(t)}, "", childEnv("sleep"), []*Job{job}, Stdio{Stdin: f, Stdout: f, Stderr: f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, err := job.ActiveProcessCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("launched process never appeared in job accounting")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := job.Terminate(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		got, err := job.ActiveProcessCount()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job active count remained %d after process exit", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // A job terminates its members on Terminate — the whole-tree kill that replaces taskkill /F /T.
 // This adopts a real child via OpenProcess to validate the kernel job semantics on their own,
 // independent of the born-in-job launcher (M1b).

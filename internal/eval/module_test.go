@@ -38,7 +38,7 @@ func runMod(t *testing.T, dir, src string) (string, error) {
 
 func TestModuleFlatMerge(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "util.dr", "fn .shout($s) { upper($s) ~ \"!\" }\n$G ::= \"hi\"")
+	writeMod(t, dir, "util.dr", "e fn .shout($s) { upper($s) ~ \"!\" }\ne $G ::= \"hi\"")
 	out, err := runMod(t, dir, "use \"./util\"\nsay(.shout(\"hey\"))\nsay($G)")
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestModuleFlatMerge(t *testing.T) {
 // import path — not only when the module is run directly (the runProgram CLI path).
 func TestModuleDuplicateFnWarns(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "dup.dr", "fn .helper() { 1 }\nfn .helper() { 2 }")
+	writeMod(t, dir, "dup.dr", "e fn .helper() { 1 }\ne fn .helper() { 2 }")
 	var errBuf bytes.Buffer
 	oldErr := stderr
 	stderr = &errBuf
@@ -72,7 +72,7 @@ func TestModuleDuplicateFnWarns(t *testing.T) {
 
 func TestModuleIsolated(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "util.dr", "fn .shout($s) { upper($s) ~ \"!\" }\n$G ::= \"hi\"")
+	writeMod(t, dir, "util.dr", "e fn .shout($s) { upper($s) ~ \"!\" }\ne $G ::= \"hi\"")
 	out, err := runMod(t, dir, "$u := use(\"./util\")\nsay($u.shout(\"hey\"))\nsay($u.G)")
 	if err != nil {
 		t.Fatal(err)
@@ -86,14 +86,14 @@ func TestModuleFrozenExportReject(t *testing.T) {
 	dir := t.TempDir()
 	writeMod(t, dir, "bad.dr", "fn .ok() { 1 }\n$scratch := []")
 	_, err := runMod(t, dir, "use \"./bad\"")
-	if err == nil || !strings.Contains(err.Error(), "only functions and constants") {
+	if err == nil || !strings.Contains(err.Error(), "mutable top-level state") {
 		t.Errorf("want a frozen-export error, got %v", err)
 	}
 }
 
 func TestModuleCollisionErrors(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "util.dr", "fn .shout($s) { $s }")
+	writeMod(t, dir, "util.dr", "e fn .shout($s) { $s }")
 	_, err := runMod(t, dir, "fn .shout($x) { \"mine\" }\nuse \"./util\"")
 	if err == nil || !strings.Contains(err.Error(), "already defined") {
 		t.Errorf("want a collision error, got %v", err)
@@ -102,8 +102,8 @@ func TestModuleCollisionErrors(t *testing.T) {
 
 func TestModuleCycleErrors(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "a.dr", "fn .a() { 1 }\nuse \"./b\"")
-	writeMod(t, dir, "b.dr", "fn .b() { 1 }\nuse \"./a\"")
+	writeMod(t, dir, "a.dr", "e fn .a() { 1 }\nuse \"./b\"")
+	writeMod(t, dir, "b.dr", "e fn .b() { 1 }\nuse \"./a\"")
 	_, err := runMod(t, dir, "use \"./a\"")
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Errorf("want a cycle error, got %v", err)
@@ -114,9 +114,9 @@ func TestModuleImportOnceDiamond(t *testing.T) {
 	// A -> B -> D and A -> C -> D: D loads exactly once, and flat-merge is NOT
 	// transitive (D's .d is not re-exported by B/C, so no collision in A).
 	dir := t.TempDir()
-	writeMod(t, dir, "d.dr", "say(\"loaded D\")\nfn .d() { \"D\" }")
-	writeMod(t, dir, "b.dr", "use \"./d\"\nfn .b() { .d() }")
-	writeMod(t, dir, "c.dr", "use \"./d\"\nfn .c() { .d() }")
+	writeMod(t, dir, "d.dr", "say(\"loaded D\")\ne fn .d() { \"D\" }")
+	writeMod(t, dir, "b.dr", "use \"./d\"\ne fn .b() { .d() }")
+	writeMod(t, dir, "c.dr", "use \"./d\"\ne fn .c() { .d() }")
 	out, err := runMod(t, dir, "use \"./b\"\nuse \"./c\"\nsay(.b() ~ .c())")
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestModuleExitPropagatesThroughCapturedUse(t *testing.T) {
 	// exit()/die() during an import must terminate the program, even via the
 	// catchable $u := use(...) form (it is NOT downgraded to a recoverable Err).
 	dir := t.TempDir()
-	writeMod(t, dir, "ex.dr", "say(\"in module\")\nexit(3)\nfn .x() { 1 }")
+	writeMod(t, dir, "ex.dr", "say(\"in module\")\nexit(3)\ne fn .x() { 1 }")
 	_, err := runMod(t, dir, "$u := use(\"./ex\")\nsay(\"after\")")
 	code, ok := ExitRequested(err)
 	if !ok || code != 3 {
@@ -153,8 +153,8 @@ func TestModuleConstNotTransitivelyReExported(t *testing.T) {
 	// B flat-merges D (a $CONST among them); A imports B. D's constant must NOT be
 	// re-exported by B — flat-merge is non-transitive for constants as well.
 	dir := t.TempDir()
-	writeMod(t, dir, "d.dr", "$DSECRET ::= \"d-secret\"\nfn .d() { 1 }")
-	writeMod(t, dir, "b.dr", "use \"./d\"\nfn .b() { .d() }")
+	writeMod(t, dir, "d.dr", "e $DSECRET ::= \"d-secret\"\ne fn .d() { 1 }")
+	writeMod(t, dir, "b.dr", "use \"./d\"\ne fn .b() { .d() }")
 	out, err := runMod(t, dir, "$u := use(\"./b\")\nsay(keys($u))")
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func TestModuleUseInsidePmapNoFalseCycle(t *testing.T) {
 	// Concurrent first-loads of the same module from pmap workers must not
 	// false-trigger the import-cycle check (cycle detection is per import chain).
 	dir := t.TempDir()
-	writeMod(t, dir, "tiny.dr", "fn .val() { 42 }")
+	writeMod(t, dir, "tiny.dr", "e fn .val() { 42 }")
 	out, err := runMod(t, dir, "$res := [1,2,3,4,5,6,7,8] |> pmap(|$x| { use(\"./tiny\") })\nsay(len($res))")
 	if err != nil {
 		t.Fatalf("use inside pmap errored (false cycle?): %v", err)
@@ -182,7 +182,7 @@ func TestModuleExportIsFrozen(t *testing.T) {
 	// A constant array exported by a module is immutable: pushing to it (via the
 	// flat-merged binding) is a catchable error, not a silent mutation.
 	dir := t.TempDir()
-	writeMod(t, dir, "data.dr", "$LIST ::= [1,2,3]\nfn .get() { $LIST }")
+	writeMod(t, dir, "data.dr", "e $LIST ::= [1,2,3]\nfn .get() { $LIST }")
 	out, err := runMod(t, dir, "use \"./data\"\nsay(push($LIST, 4) // \"frozen!\")")
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestModuleExportIsFrozen(t *testing.T) {
 
 func TestModuleExportIndexAssignRejected(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "data.dr", "$M ::= {\"a\": 1}\nfn .x() { 1 }")
+	writeMod(t, dir, "data.dr", "e $M ::= {\"a\": 1}\nfn .x() { 1 }")
 	_, err := runMod(t, dir, "$u := use(\"./data\")\n$u.M[\"a\"] = 99")
 	if err == nil || !strings.Contains(err.Error(), "frozen") {
 		t.Errorf("expected a frozen-map error on index-assign, got %v", err)
@@ -205,7 +205,7 @@ func TestModuleExportNoCachePoisoning(t *testing.T) {
 	// The original Boundary-1 bug: an importer mutating an export poisoned the
 	// shared cache. Now the mutation is rejected, so a later import sees the original.
 	dir := t.TempDir()
-	writeMod(t, dir, "reg.dr", "$REGISTRY ::= [\"a\",\"b\"]\nfn .reg() { $REGISTRY }")
+	writeMod(t, dir, "reg.dr", "e $REGISTRY ::= [\"a\",\"b\"]\nfn .reg() { $REGISTRY }")
 	out, err := runMod(t, dir, "$u := use(\"./reg\")\npush($u.REGISTRY, \"POISON\")\n$v := use(\"./reg\")\nsay(len($v.REGISTRY))")
 	if err != nil {
 		t.Fatal(err)
@@ -215,13 +215,84 @@ func TestModuleExportNoCachePoisoning(t *testing.T) {
 	}
 }
 
+func TestModulePrivateNamesNotExported(t *testing.T) {
+	// Unmarked top-level names are module-private: absent from the export record
+	// (captured form) and never injected by a flat merge.
+	dir := t.TempDir()
+	writeMod(t, dir, "vis.dr",
+		"e fn .pub() { .priv() }\nfn .priv() { \"inner\" }\ne $PUB ::= 1\n$PRIV ::= 2")
+	out, err := runMod(t, dir, "$u := use(\"./vis\")\nsay(join(keys($u), \",\"))\nsay($u.pub())")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "pub,PUB") { // sorted env-key order: ".pub" < "PUB" in ASCII
+		t.Errorf("export record should hold exactly pub and PUB, got %q", out)
+	}
+	if strings.Contains(out, "priv") || strings.Contains(out, "PRIV") {
+		t.Errorf("private names leaked into the export record: %q", out)
+	}
+	if !strings.Contains(out, "inner") {
+		t.Errorf("an exported fn must still reach its private sibling, got %q", out)
+	}
+	// Flat merge: the private fn must not be injected, so a caller naming it errors.
+	_, err = runMod(t, dir, "use \"./vis\"\n.priv()")
+	if err == nil {
+		t.Error("calling a private module fn after flat merge should fail, but succeeded")
+	}
+}
+
+func TestModulePrivateAllowsHelperCollision(t *testing.T) {
+	// The point of privacy for flat merge: two modules with same-named PRIVATE
+	// helpers can both be merged — helper names are no longer a cross-module contract.
+	dir := t.TempDir()
+	writeMod(t, dir, "left.dr", "e fn .l() { .check() }\nfn .check() { \"L\" }")
+	writeMod(t, dir, "right.dr", "e fn .r() { .check() }\nfn .check() { \"R\" }")
+	out, err := runMod(t, dir, "use \"./left\"\nuse \"./right\"\nsay(.l() ~ .r())")
+	if err != nil {
+		t.Fatalf("same-named private helpers must not collide on merge: %v", err)
+	}
+	if strings.TrimSpace(out) != "LR" {
+		t.Errorf("each module must keep its own private helper: got %q, want LR", out)
+	}
+}
+
+func TestModuleExportsNothingWarns(t *testing.T) {
+	// An all-private module is almost always a pre-`e` migration miss — warn.
+	dir := t.TempDir()
+	writeMod(t, dir, "quiet.dr", "fn .helper() { 1 }")
+	var errBuf bytes.Buffer
+	oldErr := stderr
+	stderr = &errBuf
+	defer func() { stderr = oldErr }()
+	if _, err := runMod(t, dir, "$u := use(\"./quiet\")\nsay(len(keys($u)))"); err != nil {
+		t.Fatal(err)
+	}
+	if warn := errBuf.String(); !strings.Contains(warn, "exports nothing") {
+		t.Errorf("expected the exports-nothing warning, stderr=%q", warn)
+	}
+}
+
+func TestModuleExportedSubmoduleReExport(t *testing.T) {
+	// Deliberate re-export: `e $sub ::= use("./sub")` exposes the captured record.
+	dir := t.TempDir()
+	writeMod(t, dir, "inner.dr", "e fn .greet() { \"hi\" }")
+	writeMod(t, dir, "outer.dr", "e $inner ::= use(\"./inner\")\ne fn .o() { 1 }")
+	out, err := runMod(t, dir, "$u := use(\"./outer\")\nsay($u.inner.greet())")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "hi" {
+		t.Errorf("re-exported submodule should be reachable as $u.inner.greet(): got %q", out)
+	}
+}
+
 func TestModuleFailedLoadNotCached(t *testing.T) {
 	// A failed load must not be cached, or it would poison a later valid import.
 	dir := t.TempDir()
 	if _, err := runMod(t, dir, "$u := use(\"./later\")"); err != nil {
 		t.Fatalf("a missing module via the captured form should be catchable, got %v", err)
 	}
-	writeMod(t, dir, "later.dr", "fn .hi() { \"hello\" }")
+	writeMod(t, dir, "later.dr", "e fn .hi() { \"hello\" }")
 	out, err := runMod(t, dir, "$u := use(\"./later\")\nsay($u.hi())")
 	if err != nil {
 		t.Fatal(err)

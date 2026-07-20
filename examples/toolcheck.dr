@@ -2,7 +2,7 @@
 # Probes the project-local .toolchain for the components els needs, reporting
 # each one's presence + version. Exits non-zero if a CORE piece is missing/broken.
 #   run:  drang toolcheck.dr [project-root]
-$root ::= $ARGV[0] // path_join(env("Z_ROOT", "C:/z"), "_els")
+$root ::= $ARGV[0] // path_join(env("Z_ROOT", "C:/dev"), "_els")
 $tc ::= path_join($root, ".toolchain")
 # Each component: where it lives, the probe path segments under it, whether it's
 # core, the wanted version ("" = any), and how to read its version.

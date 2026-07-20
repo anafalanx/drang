@@ -3,7 +3,7 @@ type: design
 title: drang design notes
 description: The architecture and locked design decisions behind drang — the pillars, the scope, and the rationale for what is in and out.
 tags: [drang, design, architecture, decisions]
-timestamp: 2026-07-09
+timestamp: 2026-07-20
 ---
 
 # drang — Language Design
@@ -2749,6 +2749,85 @@ A **pseudo-terminal** — the Windows `CreatePseudoConsole` (ConPTY) API, the OS
 **Why deferred, not built.** (1) *Speculative.* No demonstrated daily-driver need — the same build-on-real-need test that shipped `recv_stdout`/`recv_stderr` (real capability holes) and deferred graceful `stop`. Real-world use will surface whether interactive children actually come up; until they do, the plain-pipe model covers the batch-tool workload (compilers, formatters, `git` plumbing, HTTP, file munging). (2) *Semantic clash with the clean-output model.* Over a pipe, `recv_stdout` returns exactly what the program wrote; over a ConPTY it returns *what you would feed a terminal to reproduce a screen* — cursor moves, line rewrites, clear-screens, width-wrapping — not a logical transcript. Recovering "the text" in general needs a VT state machine reading the resulting screen (as `pexpect` / `tmux capture-pane` do) — a genuine sub-project, and lossy for cursor-addressed programs. (3) *Net-new hand-declared kernel surface.* `CreatePseudoConsole`/`ResizePseudoConsole` and the `STARTUPINFOEX` + `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` attribute-list dance are not in `x/sys` (hand-declared syscalls) — the same cost that deferred graceful stop. (4) *conhost joins the job tree.* Each pseudo-console spawns a real `conhost.exe` that must sit correctly inside drang's Job Object so tree-kill, die-with-parent, and the `max_*` caps still hold — more moving parts. (5) *It belongs with supervision.* A supervisor that runs and relays/records interactive children is the archetypal ConPTY consumer; its natural home is the future `sturm` tree, so deferring the two together is coherent.
 
 **Reopen when:** a concrete interactive-child case appears in real use (an `ssh`/`git` prompt to answer; a REPL that shows nothing until it exits; an isatty-gated tool that refuses a pipe), or the `sturm` tree is built. Build the raw-VT `{pty}` first; add a clean-text terminal-emulation layer only if the reach-for-it recurs.
+
+## Wireglass feedback: GUI packaging and Edge lifecycle (2026-07-14)
+
+The first serious `serve` application exposed two release-level gaps. A standalone
+copied the console-subsystem interpreter verbatim, so double-clicking a GUI tool
+opened a meaningless console window. `drang build --gui` now changes only the
+temporary output copy's PE Optional Header subsystem from CUI (3) to GUI (2),
+before appending the unchanged payload. Console remains the safe development
+default because GUI-subsystem startup errors have no visible terminal.
+
+More seriously, the original browser watcher equated the first `msedge.exe` PID
+with the app window's lifetime. Edge is allowed to hand work to descendants and
+exit that launcher, which made drang shut HTTP down underneath a still-open blank
+window. Edge is now launched race-free inside a dedicated Windows Job Object;
+the watcher waits for the whole job to reach zero, with completion notification as
+the fast path and `ActiveProcesses` accounting as the loss-proof fallback. This is
+exactly the kind of defect the real-application experiment was intended to find.
+
+## Decision: module visibility — the `e` export marker (2026-07-20)
+
+Modules are now **private by default**: a top-level `fn .foo` or `$CONST ::=` enters
+the export surface only when marked with the contextual keyword **`e`** (`e fn .foo(...)`,
+`e $CONST ::= …`). Unmarked names never enter the export record, hence never merge and
+never appear on a captured record. This replaces the 0.4-era "every top-level name is
+exported" rule. **Breaking** for module files (scripts are unaffected); migration is
+deliberate and guided — importing an all-private module warns `exports nothing —
+top-level names are module-private unless marked with `e``.
+
+**Why a keyword and not a sigil variant.** Four sigil schemes were weighed — `._foo`,
+`..foo`, `.$BAR`, `$$BAR` — and all share a wrong premise: that visibility belongs in
+the *name*. The sigil system encodes what a thing IS (data / user fn / builtin);
+visibility is a property of one *definition site*, and forcing it into the sigil made
+every call site carry it and the glyph arithmetic contradict itself (under the
+prefix-dot rule a single leading dot means *exported* on a function but *private* on a
+constant — fatal asymmetry). The keyword does zero sigil surgery: `.foo` is `.foo` at
+the definition, every call site, and in the record.
+
+**Why private-by-default.** Loud beats silent: a forgotten `e` fails immediately at the
+importer (plus the exports-nothing warning), while a forgotten privacy marker under
+public-by-default is silent API bloat discovered months later. It also completes what
+frozen exports began — the surface was already deliberate in *kind* (functions +
+constants only), now it is deliberate in *extent* — and it makes same-named private
+helpers in two flat-merged modules legal, where public-by-default turned helper names
+into a cross-module contract. Precedent: Rust/Zig `pub`, Go's case rule.
+
+**Why the spelling `e`.** The three-sigil wall means bare-name real estate is entirely
+language-owned: claiming a keyword is exactly as safe as adding a builtin (one registry,
+one grep — `e` was free; contrast Perl gating `say` behind `use feature`, Python's
+two-release `async` deprecation, JS's forever-contextual `let`). The q-family (`q`,
+`qq`, `qr`, `qw`) already blesses high-frequency single letters, and an API definition
+line is high-frequency. Grammar: contextual — `e` is a keyword only statement-leading,
+immediately before `fn` or `$NAME ::=`, at the top level; anywhere else in that position
+it is a parse error (`e` on a mutable `:=` too), so the marker can never silently mean
+nothing. In expression position `e` remains an ordinary (unknown-builtin) identifier.
+
+**Mutable top-level state stays banned, visibility-independent.** A module loads once
+and its env is shared by every importer; a private mutable top-level would be
+cross-importer shared state and a `pmap` data race. The old "may export only functions
+and constants" error is now "may not hold mutable top-level state."
+
+**Migration policy: no blanket `fmt --fix` rule.** Whether a file is a module or a
+script is not statically knowable, and a rule adding `e` to every top-level definition
+would litter every script. The exports-nothing warning names the file and the fix;
+module files are migrated by hand (three keystrokes per export). Deliberate re-export
+is now explicit too: `e $dep ::= use("./dep")`.
+
+**Considered and declined: further visibility tiers.** Each classic tier dissolves
+against a structure drang lacks or a stronger mechanism it has: OO `protected` — no
+inheritance, no referent; `pub(crate)`/Go `internal/` — no compilation unit larger than
+a file, and no third-party importers in a one-user language; `friend` grants — the
+value-passing idiom covers it; read-only exports — every export is already deep-frozen;
+test-only visibility — `example` assertions live in-file, inside the boundary;
+merge-only vs capture-only exports — the *importer* chooses the mode, and importer
+sovereignty is the right allocation. The pattern: visibility tiers patch languages where
+the name is the only access path; drang has two others (function values, captured
+records), and privacy binds **names, not values** — a private handler passed to
+`serve({routes})` or `map` is fully callable, which is the capability model and covers
+the legitimate need "protected" gestures at. Two levels + first-class values span the
+space; do not re-propose without new information.
 
 ## Development pause (2026-07-05)
 

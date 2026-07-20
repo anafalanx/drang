@@ -33,6 +33,19 @@ type Job struct {
 	killOnClose bool // immutable after New; re-applied by SetLimits so a limit write never drops it
 }
 
+// basicAccountingInformation is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION. x/sys
+// exposes the information-class constant but not this structure.
+type basicAccountingInformation struct {
+	TotalUserTime             int64
+	TotalKernelTime           int64
+	ThisPeriodTotalUserTime   int64
+	ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount       uint32
+	TotalProcesses            uint32
+	ActiveProcesses           uint32
+	TotalTerminatedProcesses  uint32
+}
+
 var errClosedJob = errors.New("winjob: job is closed")
 
 // New creates a Job Object. When killOnClose is set, closing the last handle to the job —
@@ -118,6 +131,28 @@ func (j *Job) SetLimits(l Limits) error {
 
 // Handle returns the raw job handle, for the born-in-job launcher's attribute list.
 func (j *Job) Handle() windows.Handle { return j.handle }
+
+// ActiveProcessCount returns the number of live processes in the job, including
+// descendants that inherited membership. It is the loss-proof counterpart to a
+// Monitor's best-effort EventActiveZero notification.
+func (j *Job) ActiveProcessCount() (uint32, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return 0, errClosedJob
+	}
+	var info basicAccountingInformation
+	if err := windows.QueryInformationJobObject(
+		j.handle,
+		windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+		nil,
+	); err != nil {
+		return 0, fmt.Errorf("QueryInformationJobObject(accounting): %w", err)
+	}
+	return info.ActiveProcesses, nil
+}
 
 // Assign adds an already-running process to the job. The born-in-job launcher does not need
 // this — the child is placed into its jobs at spawn time — but it is how drang adopts a process

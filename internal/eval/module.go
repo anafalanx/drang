@@ -161,9 +161,15 @@ func runModule(canon string, importerEnv *Env) (value.Value, error) {
 }
 
 // collectExports builds the export record from a module env's own scope, in a
-// deterministic (sorted) order: each .foo user function (keyed without its dot, so
-// $u.foo works) and each $CONST. Bindings flat-merged from a sub-module are skipped
-// (re-export is non-transitive). A mutable top-level var is rejected.
+// deterministic (sorted) order: each `e`-marked .foo user function (keyed without
+// its dot, so $u.foo works) and each `e`-marked $CONST. Unmarked names are
+// module-private and simply never enter the record — which is also what keeps them
+// out of a flat merge. Bindings flat-merged from a sub-module are skipped
+// (re-export is non-transitive; a DELIBERATE re-export is `e $sub ::= use(...)`).
+// A mutable top-level var is rejected even when private: the module runs once and
+// its env is shared by every importer, so mutable top-level state would be
+// cross-importer shared state (and a data race under pmap) regardless of
+// visibility.
 func collectExports(modEnv *Env, canon string) (value.Value, error) {
 	keys := make([]string, 0, len(modEnv.vars))
 	for k := range modEnv.vars {
@@ -172,19 +178,31 @@ func collectExports(modEnv *Env, canon string) (value.Value, error) {
 	sort.Strings(keys)
 	m := value.MakeMap()
 	om := m.Obj().(*value.OrderedMap)
+	candidates := 0
 	for _, key := range keys {
 		b := modEnv.vars[key]
 		if b.merged {
 			continue
 		}
-		switch {
-		case strings.HasPrefix(key, "."):
-			om.Set(value.MakeStr(strings.TrimPrefix(key, ".")), b.v)
-		case b.frozen:
-			om.Set(value.MakeStr(key), b.v)
-		default:
-			return value.MakeNil(), fmt.Errorf("%s: a module may export only functions and constants, but $%s is a mutable top-level variable", canon, key)
+		isFn := strings.HasPrefix(key, ".")
+		if !isFn && !b.frozen {
+			return value.MakeNil(), fmt.Errorf("%s: a module may not hold mutable top-level state — $%s must be a `::=` constant (or live inside a function)", canon, key)
 		}
+		candidates++
+		if !b.exported {
+			continue // unmarked = module-private
+		}
+		if isFn {
+			om.Set(value.MakeStr(strings.TrimPrefix(key, ".")), b.v)
+		} else {
+			om.Set(value.MakeStr(key), b.v)
+		}
+	}
+	// A module whose whole top level is private is almost always a migration miss
+	// (pre-`e` modules exported everything) — say so instead of silently importing
+	// nothing. stderr, not an error: an all-side-effect module is still legal.
+	if candidates > 0 && len(om.Keys()) == 0 {
+		fmt.Fprintf(stderr, "drang: warning: %s exports nothing — top-level names are module-private unless marked with `e`\n", canon)
 	}
 	// Freeze the record (and, transitively, every exported array/map) so the one
 	// cached copy is safe to share read-only across importers — mutating an export

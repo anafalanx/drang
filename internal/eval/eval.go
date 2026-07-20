@@ -35,9 +35,10 @@ import (
 
 // binding is a value plus whether it is a constant.
 type binding struct {
-	v      value.Value
-	frozen bool
-	merged bool // imported into this scope by `use` (flat-merge) — not re-exported
+	v        value.Value
+	frozen   bool
+	merged   bool // imported into this scope by `use` (flat-merge) — not re-exported
+	exported bool // marked `e` at the top level — part of the module's export surface
 }
 
 // Env is a lexical scope chain.
@@ -216,6 +217,21 @@ func (e *Env) define(name string, v value.Value, frozen bool) error {
 		e.vars = map[string]binding{} // lazily created: a register-mode scope starts map-free (see childDepth)
 	}
 	e.vars[name] = binding{v: v, frozen: frozen}
+	return nil
+}
+
+// defineWith is define plus the module-export marker (`e`): the flag is recorded
+// on the binding so collectExports can tell the export surface from the private
+// interior. Exported is inert outside a module load — a plain run never reads it.
+func (e *Env) defineWith(name string, v value.Value, frozen, exported bool) error {
+	if err := e.define(name, v, frozen); err != nil {
+		return err
+	}
+	if exported {
+		b := e.vars[name]
+		b.exported = true
+		e.vars[name] = b
+	}
 	return nil
 }
 
@@ -504,7 +520,7 @@ func evalStmtInner(s ast.Stmt, env *Env) (value.Value, error) {
 		if err != nil {
 			return value.MakeNil(), err
 		}
-		if err := env.define(n.Name, v, n.Const); err != nil {
+		if err := env.defineWith(n.Name, v, n.Const, n.Exported); err != nil {
 			return value.MakeNil(), err
 		}
 		return v, nil
@@ -512,7 +528,7 @@ func evalStmtInner(s ast.Stmt, env *Env) (value.Value, error) {
 		return evalAssign(n, env)
 	case *ast.FnDecl:
 		fn := newFunction(n.Name, n.Params, n.Defaults, n.Body, env)
-		if err := env.define(n.Name, value.MakeObj(value.Func, fn), false); err != nil {
+		if err := env.defineWith(n.Name, value.MakeObj(value.Func, fn), false, n.Exported); err != nil {
 			return value.MakeNil(), err
 		}
 		return value.MakeNil(), nil

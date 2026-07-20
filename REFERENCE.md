@@ -3,7 +3,7 @@ type: reference
 title: drang formal reference
 description: The precise specification of drang — grammar, semantics, the value and error models, and every builtin.
 tags: [drang, reference, specification]
-timestamp: 2026-07-09
+timestamp: 2026-07-20
 ---
 
 # drang — Formal Reference (v0.11.0)
@@ -58,7 +58,7 @@ VAR          = "$" ident ;                              (* $-sigil variable; Lit
 dotname      = "." ident ;                              (* user-function reference; see prefix rules *)
 ```
 
-The language has exactly **three name forms**: `$name` (VAR — variables/parameters, the only sigil'd form), a **bare** `IDENT` (builtins and, in statement/call position, contextual words), and a leading-dot `.name` (user-defined functions, kept as an `Ident` whose name literally begins with `.`, disjoint from bare builtins). A **keyword** is any `IDENT` matching: `fn return if else unless for in while until break next true false or and not`. A bare `IDENT` cannot be assigned to and is not an lvalue.
+The language has exactly **three name forms**: `$name` (VAR — variables/parameters, the only sigil'd form), a **bare** `IDENT` (builtins and, in statement/call position, contextual words), and a leading-dot `.name` (user-defined functions, kept as an `Ident` whose name literally begins with `.`, disjoint from bare builtins). A **keyword** is any `IDENT` matching: `fn return if else unless for in while until break next true false or and not`. Additionally, `use`, `example`, `BEGIN`/`END`, and `e` (export marker) are **contextual** — keywords only in their statement-leading positions, ordinary identifiers elsewhere. A bare `IDENT` cannot be assigned to and is not an lvalue.
 
 ```ebnf
 (* --- numeric literals --- *)
@@ -124,6 +124,7 @@ statement =
       special-block                     (* BEGIN {…} / END {…}  — contextual, one-liner stream mode *)
     | use-stmt                          (* use "path"           — contextual: 'use' + string literal *)
     | example-stmt                      (* example EXPR …       — contextual: top level only *)
+    | export-decl                       (* e fn … / e $C ::= …  — contextual: top level only *)
     | fn-decl
     | if-stmt
     | while-stmt
@@ -160,6 +161,8 @@ for-stmt    = "for" VAR [ "," VAR ] "in" expr block ;   (* one var = element; tw
 special-block = ( "BEGIN" | "END" ) block ;
 use-stmt      = "use" ( STRING | RAWSTR ) ;             (* the '$u := use("path")' captured form is an ordinary call *)
 example-stmt  = "example" expr [ "==" expr | "fails" ] ;
+export-decl   = "e" ( fn-decl | VAR "::=" expr ) ;      (* marks a module export; 'e' before a mutable ':=' or in
+                                                           a nested position is a parse error *)
 ```
 
 **Expressions** — binding powers, lowest to highest. `//` is looser than `|>` (so `$x // $y |> f()` parses as `$x // ($y |> f())`). All binary operators are **left-associative** (verified: `10-3-2` → `(- (- 10 3) 2)`; `$a//$b//$c` → `(// (// $a $b) $c)`; `1<2<3` → `(< (< 1 2) 3)`; `1..2..3` → `(range (range 1 2) 3)`).
@@ -321,9 +324,9 @@ Safe *by subtraction*: frozen top-level constants + lexical-only scope + immutab
 
 ### Modules
 
-Any `.dr` file is a module; its top-level `fn .foo` functions and `$CONST ::=` constants are its **exports** (a mutable top-level `:=` var is rejected at import). One keyword, `use`; **whether the result is captured** chooses the mode:
+Any `.dr` file is a module; its **exports are the top-level definitions marked `e`** — `e fn .foo(...)` and `e $CONST ::= …`. Unmarked top-level names are **module-private** (never merged, absent from the record); a mutable top-level `:=` var is rejected at import even when private. One keyword, `use`; **whether the result is captured** chooses the mode:
 
-- **Flat merge** — `use "./util"` (statement): merges the module's `.foo` into your `.`-space and `$CONST` into your `$`-space, as if pasted.
+- **Flat merge** — `use "./util"` (statement): merges the module's exported `.foo` into your `.`-space and exported `$CONST` into your `$`-space, as if pasted.
 - **Isolated** — `$u := use("./util")` (captured call): binds the export **record**; reach exports via `$u.foo()` / `$u.CONST`. Injects nothing. This is the aliased-import form (no `as`).
 
 Resolution & rules:
@@ -335,7 +338,8 @@ Resolution & rules:
 - **Collisions error**: merging a name already bound in the current scope (or defining one a `use` already merged) aborts, never silently overwrites.
 - **`exit`/`die` propagate** through loading, even through the captured `$u := use(...)` form (not downgraded to a catchable Err).
 - A **failed captured** import is a **catchable Err** (`use("./x") // {}`); a **failed flat-merge** statement **aborts** with the import error.
-- **Exports are deeply immutable** (record and every container within frozen), safe to share across the import cache. Every top-level `.foo` is exported — no module-private helpers yet.
+- **Exports are deeply immutable** (record and every container within frozen), safe to share across the import cache.
+- **Visibility**: `e` is legal only at the top level (elsewhere a parse error) and never on a mutable `:=` (parse error). Importing a module whose top level is entirely unmarked warns `exports nothing` on stderr (the pre-`e` migration guide). Privacy binds **names, not values** — a private fn passed as a value (`serve` route, `map` callback) is fully callable. Deliberate re-export: `e $dep ::= use("./dep")`.
 
 ## Builtins
 
@@ -723,7 +727,7 @@ A small HTTP client over Go's `net/http`. The whole surface is `http` plus the `
 
 **Handlers.** A route value is a function of 0 or 1 parameter. With 1 parameter it receives a request map `{method, path, query, form, headers}` (`query`/`form` are first-value string maps; `form` includes an htmx POST body via `ParseForm`). It returns a **string** (sent as `text/html`), a **map** `{status?: int, headers?: {name: value}, body?: string}`, or **nil** (204). An `Err` return becomes a 500.
 
-**Assets.** `static: <dir>` serves a directory (traversal-safe `http.Dir`). `drang build script.dr --web <dir>` bundles that tree into the standalone exe (payload format v3), served from memory — so the same `static:` program serves from disk in dev and from the embedded copy when built. `/_/htmx.js` is reserved for the embedded htmx runtime and cannot be shadowed by a route.
+**Assets and packaging.** `static: <dir>` serves a directory (traversal-safe `http.Dir`). `drang build script.dr --web <dir>` bundles that tree into the standalone exe (payload format v3), served from memory — so the same `static:` program serves from disk in dev and from the embedded copy when built. Add `--gui` for a Windows GUI-subsystem standalone that does not allocate a console when double-clicked. Console mode is the default and is preferable during development because a GUI-subsystem launch normally has no visible stdout/stderr or startup errors. `/_/htmx.js` is reserved for the embedded htmx runtime and cannot be shadowed by a route.
 
 | Builtin | Signature | Behavior |
 |---|---|---|

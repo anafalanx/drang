@@ -3,7 +3,7 @@ type: roadmap
 title: drang roadmap
 description: What is built, what is deliberately out of scope, and what remains — drang's status ledger.
 tags: [drang, roadmap, status]
-timestamp: 2026-07-09
+timestamp: 2026-07-20
 ---
 
 # drang — Roadmap: what's left to complete
@@ -188,7 +188,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 
 | Item | Status |
 |------|--------|
-| Module privacy (every top-level `.foo` is exported) | NOT-STARTED |
+| ~~Module privacy (every top-level `.foo` is exported)~~ | ✅ DONE — modules are private-by-default; exports are marked with the contextual `e` keyword (`e fn .foo`, `e $C ::=`). Breaking for module files; decision record in DESIGN.md |
 | ~~Duplicate `fn .foo` in one file = silent last-wins~~ | ✅ DONE — 0.7 warns on stderr while preserving last-definition-wins |
 | Extensionless path precedence (bare file shadows `<name>.dr`) | DEFERRED-BY-DESIGN |
 | Bare `use("x")` with parens as a discarded statement = silent no-op | DEFERRED-BY-DESIGN |

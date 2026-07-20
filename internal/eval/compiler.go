@@ -460,7 +460,11 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 		idx := c.addTemplate(n.Name, n.Params, n.Defaults, n.Body)
 		r := c.reserve()
 		c.emit(OpMakeClosure, r, idx, 0)
-		c.emit(OpDeclVar, r, c.konst(value.MakeStr(n.Name)), 0)
+		flags := int32(0) // bit 1: exported (`e`); a fn binding is never frozen
+		if n.Exported {
+			flags |= 2
+		}
+		c.emit(OpDeclVar, r, c.konst(value.MakeStr(n.Name)), flags)
 		c.release(1)
 		if resultReg >= 0 {
 			c.emit(OpLoadNil, resultReg, 0, 0) // a declaration yields nil
@@ -567,11 +571,14 @@ func (c *compiler) compileDecl(n *ast.DeclStmt, resultReg int32) {
 	}
 	r, tmp := c.resultOrTemp(resultReg)
 	c.compileExpr(n.Value, r)
-	frozen := int32(0)
+	flags := int32(0) // bit 0: frozen (::=), bit 1: exported (`e`)
 	if n.Const {
-		frozen = 1
+		flags |= 1
 	}
-	c.emit(OpDeclVar, r, c.konst(value.MakeStr(n.Name)), frozen)
+	if n.Exported {
+		flags |= 2
+	}
+	c.emit(OpDeclVar, r, c.konst(value.MakeStr(n.Name)), flags)
 	c.freeTemp(tmp)
 }
 

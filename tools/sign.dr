@@ -24,7 +24,7 @@ fn .resolve_signtool() {
 	if len($sdk) > 0 {
 		return $sdk[len($sdk) - 1]
 	}
-	$junction := env("Z_ROOT", "C:/z") ~ "/r/winsdk/10.0.26100.0/signtool.exe"
+	$junction := env("Z_HOME", "C:/dev/.z") ~ "/r/winsdk/10.0.26100.0/signtool.exe"
 	if exists($junction) {
 		return $junction
 	}

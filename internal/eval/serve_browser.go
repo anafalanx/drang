@@ -13,6 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
+
+	"github.com/anafalanx/drang/internal/winjob"
 )
 
 // clampFlags lock the app instance down: no first-run/EULA/default-browser prompts,
@@ -25,28 +28,124 @@ var clampFlags = []string{
 	"--disable-background-networking",
 	"--disable-sync",
 	"--disable-extensions",
+	"--disable-background-mode",
 	"--disable-component-update",
 	"--no-service-autorun",
 	"--disable-features=Translate,MediaRouter",
 }
 
-// launchClampedBrowser starts Edge in --app mode against an isolated profile and
-// returns the running process, whose exit signals the window has closed. An error
-// means Edge wasn't found (caller falls back to the default browser).
-func launchClampedBrowser(url, profileDir string) (*exec.Cmd, error) {
+// clampedBrowser owns Edge's entire process tree. Edge may hand an app launch to
+// a descendant and let the first msedge.exe exit, so waiting on only that first
+// PID can tear the HTTP server down underneath a still-open blank window.
+type clampedBrowser struct {
+	job     *winjob.Job
+	monitor *winjob.Monitor
+	process *winjob.Process
+	key     uintptr
+}
+
+// Wait blocks until the whole isolated Edge process tree has drained. The job
+// completion event is the fast path; the accounting query is a loss-proof
+// fallback because completion-port notifications are documented as best-effort.
+func (b *clampedBrowser) Wait() error {
+	defer b.monitor.Close()
+	defer b.job.Close()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	events := b.monitor.Events()
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if ev.Job == b.key && ev.Kind == winjob.EventActiveZero {
+				return b.reap()
+			}
+		case <-ticker.C:
+			active, err := b.job.ActiveProcessCount()
+			if err != nil {
+				return err
+			}
+			if active == 0 {
+				return b.reap()
+			}
+		}
+	}
+}
+
+func (b *clampedBrowser) reap() error {
+	code, err := b.process.Wait()
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("clamped browser exited with code %d", code)
+	}
+	return nil
+}
+
+// launchClampedBrowser starts Edge in --app mode against an isolated profile,
+// born into a dedicated Job Object so every descendant is tracked race-free. An
+// error means Edge was not found or could not launch (caller falls back to the
+// default browser).
+func launchClampedBrowser(url, profileDir string) (*clampedBrowser, error) {
+	if profileDir == "" {
+		return nil, fmt.Errorf("isolated profile directory is required")
+	}
 	edge := findEdge()
 	if edge == "" {
 		return nil, fmt.Errorf("msedge.exe not found")
 	}
 	args := append([]string{"--app=" + url}, clampFlags...)
-	if profileDir != "" {
-		args = append(args, "--user-data-dir="+profileDir)
-	}
-	cmd := exec.Command(edge, args...)
-	if err := cmd.Start(); err != nil {
+	args = append(args, "--user-data-dir="+profileDir)
+	return launchClampedProcess(edge, args)
+}
+
+// launchClampedProcess is the job-contained process-tree launcher shared by the
+// Edge path and its deterministic handoff regression test.
+func launchClampedProcess(exe string, args []string) (*clampedBrowser, error) {
+	job, err := winjob.New(true)
+	if err != nil {
 		return nil, err
 	}
-	return cmd, nil
+	monitor, err := winjob.NewMonitor()
+	if err != nil {
+		job.Close()
+		return nil, err
+	}
+	key, err := monitor.Watch(job)
+	if err != nil {
+		monitor.Close()
+		job.Close()
+		return nil, err
+	}
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		monitor.Close()
+		job.Close()
+		return nil, err
+	}
+	stdout, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		stdin.Close()
+		monitor.Close()
+		job.Close()
+		return nil, err
+	}
+	defer stdin.Close()
+	defer stdout.Close()
+	argv := append([]string{exe}, args...)
+	process, err := winjob.LaunchExe(exe, argv, "", nil, []*winjob.Job{job}, winjob.Stdio{
+		Stdin: stdin, Stdout: stdout, Stderr: stdout,
+	})
+	if err != nil {
+		monitor.Close()
+		job.Close()
+		return nil, err
+	}
+	return &clampedBrowser{job: job, monitor: monitor, process: process, key: key}, nil
 }
 
 // findEdge locates msedge.exe in the standard install locations, then PATH.

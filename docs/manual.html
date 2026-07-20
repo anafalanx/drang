@@ -47,8 +47,10 @@ drang&gt; $x := 21
 drang&gt; $x * 2
 42
 drang&gt; exit</code></pre>
-<p>There is also a fifth path that produces no interpreter dependency at all. <code>drang build app.dr -o app.exe</code> compiles a script into a single self-contained Windows executable: the drang runtime with your source appended. Running it executes the embedded program, with its command-line arguments exposed as <code>$ARGV</code> exactly as for a normal script. The build refuses to overwrite the source or the running interpreter.</p>
+<p>There is also a fifth path that produces no interpreter dependency at all. <code>drang build app.dr -o app.exe</code> compiles a script into a single self-contained Windows executable: the drang runtime with your source appended. Running it executes the embedded program, with its command-line arguments exposed as <code>$ARGV</code> exactly as for a normal script. The build refuses to overwrite the source or the running interpreter. Console mode is the default. For a finished graphical tool, add <code>--gui</code> to produce a Windows GUI-subsystem executable that Explorer launches without a console; stdout/stderr and startup errors are then normally invisible, so keep the console form while developing.</p>
 <pre><code>drang build greet.dr -o greet.exe</code></pre>
+<p>A self-contained local GUI with embedded assets can be packaged as:</p>
+<pre><code>drang build cockpit.dr --web web --gui -o cockpit.exe</code></pre>
 <pre><code>built greet.exe (8209998 bytes) from greet.dr</code></pre>
 <pre><code>greet.exe world     # where greet.dr is: say($"hi, ${$ARGV[0]}")</code></pre>
 <pre><code>hi, world</code></pre>
@@ -2233,15 +2235,16 @@ two</code></pre>
       say(100 / int($_))
               ^</code></pre>
 <h2 id="modules-use">Modules: <code>use</code></h2>
-<p>A program can be split across files. Any <code>.dr</code> file is a <strong>module</strong>. Its top-level named functions (<code>fn .foo</code>) and constants (<code>$CONST ::= …</code>) are its <strong>exports</strong>, and nothing else is. A mutable top-level variable in a module is rejected at import time, so a module's public surface is always functions and constants, never mutable state.</p>
+<p>A program can be split across files. Any <code>.dr</code> file is a <strong>module</strong>. Its exports are the top-level definitions <strong>marked with the <code>e</code> keyword</strong> — <code>e fn .foo(...) {...}</code> and <code>e $CONST ::= …</code> — and nothing else: an unmarked top-level name is <strong>module-private</strong>, invisible to every importer. A mutable top-level variable in a module is rejected at import time even when private, so a module's surface is always functions and constants, never mutable state.</p>
 <p>There is exactly one keyword, <code>use</code>, and it has two modes. Which one you get is decided by a single thing: <strong>whether you capture the result</strong>. Used bare as a statement, <code>use</code> merges. Used as a call whose value you bind, it isolates. There is no <code>import</code>/<code>from</code>/<code>as</code> vocabulary to learn beyond this.</p>
 <h3 id="flat-merge-use-util">Flat merge: <code>use "./util"</code></h3>
-<p>As a statement, <code>use</code> merges the module's exports into the current scope, as if the source had been pasted in: the module's <code>.foo</code> functions join your <code>.</code>-space, its <code>$CONST</code>s join your <code>$</code>-space. You then call them with no prefix.</p>
+<p>As a statement, <code>use</code> merges the module's exports into the current scope, as if the source had been pasted in: the module's <code>e</code>-marked <code>.foo</code> functions join your <code>.</code>-space, its <code>e</code>-marked <code>$CONST</code>s join your <code>$</code>-space. You then call them with no prefix.</p>
 <p>Given this module:</p>
 <pre><code class="language-drang"># util.dr
-fn .shout($s) { upper($s) ~ "!" }
-$GREETING ::= "hi"</code></pre>
-<p>a flat merge pulls both names straight into scope:</p>
+e fn .shout($s) { .bang(upper($s)) }
+e $GREETING ::= "hi"
+fn .bang($s) { $s ~ "!" }</code></pre>
+<p>a flat merge pulls both exports straight into scope — and only them; the private <code>.bang</code> helper stays behind:</p>
 <pre><code class="language-drang">use "./util"
 say(.shout("hey"))   # HEY!
 say($GREETING)       # hi</code></pre>
@@ -2266,8 +2269,8 @@ say($g.hi())</code></pre>
 <p><strong>Load once.</strong> A module's top level is evaluated exactly once per process and cached by canonical path (case-folded, matching how Windows treats file names). If several modules import the same dependency, its top level still runs a single time. In a diamond, where a left and a right module both import a shared module, the shared module loads once:</p>
 <pre><code class="language-drang"># count.dr
 say("loading count")
-fn .n() { 1 }</code></pre>
-<pre><code class="language-drang"># left.dr and right.dr each contain:  use "./count"
+e fn .n() { 1 }</code></pre>
+<pre><code class="language-drang"># left.dr and right.dr each contain:  use "./count"  and an e-marked .left() / .right()
 $l := use("./left")
 $r := use("./right")
 say($l.left())
@@ -2291,7 +2294,7 @@ true</code></pre>
 <p>The module's top level ran both times.</p>
 <p><strong>Cycles are an error, not a hang.</strong> If imports form a cycle, the load fails with a message containing <code>import cycle through …</code> rather than looping forever:</p>
 <pre><code>drang: use "./cyc_a": … use "./cyc_b": … use "./cyc_a": import cycle through …\cyc_a.dr</code></pre>
-<p><strong>Flat merge is not transitive.</strong> If module <code>b</code> does <code>use "./d"</code>, importing <code>b</code> gives you <code>b</code>'s own exports only; <code>d</code>'s names are not re-exported through <code>b</code>. A merge injects names into the importing module's scope and stops there. Reaching for a name that was merged one level down is an unknown-name error:</p>
+<p><strong>Flat merge is not transitive.</strong> If module <code>b</code> does <code>use "./d"</code>, importing <code>b</code> gives you <code>b</code>'s own exports only; <code>d</code>'s names are not re-exported through <code>b</code>. A merge injects names into the importing module's scope and stops there. (A <em>deliberate</em> re-export is spelled, like everything else, with <code>e</code>: a module containing <code>e $d ::= use("./d")</code> exposes the whole captured record as <code>$u.d</code>.) Reaching for a name that was merged one level down is an unknown-name error:</p>
 <pre><code>drang: unknown function .fromD</code></pre>
 <h3 id="errors-3">Errors</h3>
 <p>The two modes differ in how a <em>failed</em> import behaves, and the difference is deliberate.</p>
@@ -2316,21 +2319,23 @@ $m := use("./exiter") // {}
 say("this should not print")</code></pre>
 <p>The program exits with code <code>7</code> and prints nothing; the <code>say</code> never runs. A module that calls <code>die("...")</code> likewise ends the program with its stderr message and exit code <code>1</code>, past any <code>//</code>.</p>
 <h3 id="limits-and-notes">Limits and notes</h3>
-<p><strong>A module exports only functions and constants.</strong> A mutable top-level <code>:=</code> variable is not exportable and makes the whole module fail at import:</p>
+<p><strong>A module may not hold mutable top-level state — even privately.</strong> A module's top level runs once and is shared by every importer, so a mutable top-level <code>:=</code> variable would be cross-importer shared state (and a data race under <code>pmap</code>) no matter its visibility. It makes the whole module fail at import:</p>
 <pre><code class="language-drang"># badmod.dr
 $counter := 0
 fn .bump() { $counter = $counter + 1 }</code></pre>
-<pre><code>drang: use "./badmod": …\badmod.dr: a module may export only functions and constants,
-but $counter is a mutable top-level variable</code></pre>
-<p>This rule has a consequence worth internalizing. To capture a nested import <em>inside</em> a module, bind it to a <strong>constant</strong>, not a variable: <code>$DEP ::= use("./dep")</code> is a valid export-compatible binding, whereas <code>$dep := use("./dep")</code> would make the enclosing module itself unexportable.</p>
+<pre><code>drang: use "./badmod": …\badmod.dr: a module may not hold mutable top-level state —
+$counter must be a `::=` constant (or live inside a function)</code></pre>
+<p>This rule has a consequence worth internalizing. To capture a nested import <em>inside</em> a module, bind it to a <strong>constant</strong>, not a variable: <code>$DEP ::= use("./dep")</code> keeps the dependency private, <code>e $DEP ::= use("./dep")</code> re-exports it, and <code>$dep := use("./dep")</code> would make the enclosing module itself unimportable.</p>
 <p><strong>Exports are deeply immutable.</strong> A module's export record and every container reachable through it (each array and map inside) are frozen. Since exports are shared across the import cache, this guarantees one importer cannot mutate a value out from under another. An attempted write fails loudly at the point of mutation:</p>
-<pre><code class="language-drang"># frozen.dr contains:  $CONF ::= {host: "local", port: 80}
+<pre><code class="language-drang"># frozen.dr contains:  e $CONF ::= {host: "local", port: 80}
 $c := use("./frozen")
 say($c.CONF.host)
 $c.CONF.host = "other"</code></pre>
 <pre><code>local
 drang: cannot modify a frozen map</code></pre>
-<p><strong>Every top-level <code>.foo</code> is exported.</strong> There is no module-private helper mechanism yet; a top-level function is always public.</p>
+<p><strong>Private by default; <code>e</code> names the API.</strong> Everything a module does not mark is implementation, free to be renamed or deleted without breaking an importer — and free to <em>collide</em>: two modules may each keep a private <code>.check</code> helper, and a program can flat-merge both, because private names never leave their file. The export decision is made once, at the definition site, and the whole API is one grep away (<code>e fn</code>, <code>e $</code>).</p>
+<p>The marker is only legal at the top level of a file — <code>e</code> inside a function or block is a parse error, and <code>e $x := …</code> (a mutable variable) is rejected outright, so the keyword can never silently mean nothing. Forgetting to mark anything is loud too: importing a module whose top level is entirely private prints <code>warning: … exports nothing — top-level names are module-private unless marked with </code>e<code></code>, which is also the one-line migration guide for pre-<code>e</code> module files.</p>
+<p>Privacy binds <strong>names, not values</strong>. A function value handed out by the module works wherever it flows — <code>serve({routes: {"/": .home}})</code> may pass a private <code>.home</code> to the server, <code>map($xs, .clean)</code> may pass a private <code>.clean</code> to a builtin — because possession of the value is the permission. What privacy removes is the ability of <em>other files</em> to reach the name.</p>
 <p><strong>A bare parenthesized <code>use(...)</code> as a statement loads the module but imports nothing.</strong> Because it is a call whose result is discarded, it neither merges (that is the no-parentheses statement form) nor binds. It is almost always a mistake:</p>
 <pre><code class="language-drang">use("./util")         # loads util, imports nothing
 say(.shout("x"))</code></pre>

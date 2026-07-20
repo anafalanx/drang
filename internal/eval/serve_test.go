@@ -3,11 +3,38 @@ package eval
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anafalanx/drang/internal/value"
 )
+
+func TestRemoveBrowserProfileWaitsForStableAbsence(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "profile")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(350 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			_ = os.MkdirAll(dir, 0o755)
+			_ = os.WriteFile(filepath.Join(dir, "late"), []byte("x"), 0o600)
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	if err := removeBrowserProfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("profile still exists after cleanup: %v", err)
+	}
+}
 
 // The token gate is the security boundary: 127.0.0.1 excludes remote clients, the
 // token excludes other local processes. Verify all four paths.

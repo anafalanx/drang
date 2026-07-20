@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,7 +92,7 @@ func TestWriteStandaloneRoundTrip(t *testing.T) {
 	}
 	out := filepath.Join(dir, "app.exe")
 	src := []byte("say(\"embedded\")\n$x := 7\n")
-	if _, err := writeStandalone(rt, out, "tool.dr", src, nil); err != nil {
+	if _, err := writeStandalone(rt, out, "tool.dr", src, nil, false); err != nil {
 		t.Fatalf("writeStandalone: %v", err)
 	}
 	f, err := os.Open(out)
@@ -117,12 +118,109 @@ func TestWriteStandaloneRoundTrip(t *testing.T) {
 
 	// build -o into a missing subdirectory creates the parent dir.
 	out2 := filepath.Join(dir, "nested", "deep", "app.exe")
-	if _, err := writeStandalone(rt, out2, "tool.dr", src, nil); err != nil {
+	if _, err := writeStandalone(rt, out2, "tool.dr", src, nil, false); err != nil {
 		t.Fatalf("writeStandalone into a missing dir: %v", err)
 	}
 	if _, err := os.Stat(out2); err != nil {
 		t.Errorf("expected %s to exist after build: %v", out2, err)
 	}
+}
+
+func TestWriteStandaloneGUI(t *testing.T) {
+	dir := t.TempDir()
+	rt := filepath.Join(dir, "runtime.exe")
+	if err := os.WriteFile(rt, minimalPE(0x20b, 3), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "app.exe")
+	src := []byte("say(\"gui\")\n")
+	if _, err := writeStandalone(rt, out, "gui.dr", src, nil, true); err != nil {
+		t.Fatalf("writeStandalone --gui: %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := peSubsystem(b); got != imageSubsystemWindowsGUI {
+		t.Fatalf("GUI subsystem got %d, want %d", got, imageSubsystemWindowsGUI)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fi, _ := f.Stat()
+	got, name, _, found, err := extractPayload(f, fi.Size())
+	if !found || err != nil || string(got) != string(src) || name != "gui.dr" {
+		t.Fatalf("GUI payload round-trip: found=%v err=%v name=%q source=%q", found, err, name, got)
+	}
+}
+
+func TestSetPESubsystemValidation(t *testing.T) {
+	for _, magic := range []uint16{0x10b, 0x20b} {
+		t.Run(fmt.Sprintf("magic_%x", magic), func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "runtime.exe")
+			if err := os.WriteFile(p, minimalPE(magic, 3), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.OpenFile(p, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = setPESubsystem(f, imageSubsystemWindowsGUI)
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(p)
+			if got := peSubsystem(b); got != 2 {
+				t.Fatalf("subsystem got %d, want 2", got)
+			}
+		})
+	}
+
+	badCases := map[string][]byte{
+		"truncated DOS":         make([]byte, 12),
+		"missing PE signature":  minimalPE(0x20b, 3),
+		"bad optional magic":    minimalPE(0x999, 3),
+		"non-Windows subsystem": minimalPE(0x20b, 10),
+	}
+	copy(badCases["missing PE signature"][0x80:0x84], []byte("NOPE"))
+	for name, data := range badCases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "bad.exe")
+			if err := os.WriteFile(p, data, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.OpenFile(p, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = setPESubsystem(f, imageSubsystemWindowsGUI)
+			f.Close()
+			if err == nil {
+				t.Fatal("setPESubsystem unexpectedly accepted malformed PE")
+			}
+		})
+	}
+}
+
+func minimalPE(magic, subsystem uint16) []byte {
+	const peOffset = 0x80
+	b := make([]byte, 0x200)
+	copy(b[:2], []byte("MZ"))
+	binary.LittleEndian.PutUint32(b[0x3c:0x40], peOffset)
+	copy(b[peOffset:peOffset+4], []byte("PE\x00\x00"))
+	optional := peOffset + 4 + 20
+	binary.LittleEndian.PutUint16(b[peOffset+4+16:peOffset+4+18], 0xf0)
+	binary.LittleEndian.PutUint16(b[optional:optional+2], magic)
+	binary.LittleEndian.PutUint16(b[optional+int(peSubsystemOffset):optional+int(peSubsystemOffset)+2], subsystem)
+	return b
+}
+
+func peSubsystem(b []byte) uint16 {
+	peOffset := int(binary.LittleEndian.Uint32(b[0x3c:0x40]))
+	return binary.LittleEndian.Uint16(b[peOffset+24+int(peSubsystemOffset) : peOffset+24+int(peSubsystemOffset)+2])
 }
 
 func TestSameFile(t *testing.T) {

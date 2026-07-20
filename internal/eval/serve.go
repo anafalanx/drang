@@ -30,6 +30,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -343,20 +344,58 @@ func (m memFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (g *guiServer) openAndWatch(httpSrv *http.Server) {
 	profileDir, err := os.MkdirTemp("", "drang-gui-")
 	if err != nil {
-		profileDir = ""
+		fmt.Fprintf(stdout, "drang: cannot create isolated Edge profile (%v); opening the default browser (unclamped)\n", err)
+		openDefaultBrowser(g.url)
+		return
 	}
-	cmd, launchErr := launchClampedBrowser(g.url, profileDir)
+	browser, launchErr := launchClampedBrowser(g.url, profileDir)
 	if launchErr != nil {
 		fmt.Fprintf(stdout, "drang: clamped Edge unavailable (%v); opening the default browser (unclamped)\n", launchErr)
 		openDefaultBrowser(g.url)
-		if profileDir != "" {
-			os.RemoveAll(profileDir)
+		if err := removeBrowserProfile(profileDir); err != nil {
+			fmt.Fprintf(stdout, "drang: cannot remove temporary browser profile: %v\n", err)
 		}
 		return
 	}
-	_ = cmd.Wait() // returns when the isolated app window closes
-	_ = httpSrv.Shutdown(context.Background())
-	if profileDir != "" {
-		os.RemoveAll(profileDir)
+	if err := browser.Wait(); err != nil {
+		fmt.Fprintf(stdout, "drang: clamped Edge watcher failed: %v\n", err)
 	}
+	// Clean up before Shutdown unblocks Serve: once Serve returns, a standalone
+	// can exit immediately and tear this watcher goroutine down mid-removal.
+	if err := removeBrowserProfile(profileDir); err != nil {
+		fmt.Fprintf(stdout, "drang: cannot remove temporary browser profile: %v\n", err)
+	}
+	_ = httpSrv.Shutdown(context.Background())
+}
+
+func removeBrowserProfile(profileDir string) error {
+	if profileDir == "" {
+		return nil
+	}
+	// Edge's process tree has drained, but profile helpers or virus scanners can
+	// briefly retain a handle and Edge can recreate the directory just after a
+	// successful removal. Require five consecutive absent checks rather than
+	// treating one nil RemoveAll as final.
+	stableAbsent := 0
+	var lastErr error
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(profileDir); os.IsNotExist(err) {
+			stableAbsent++
+			if stableAbsent >= 5 {
+				return nil
+			}
+		} else {
+			stableAbsent = 0
+			if err != nil {
+				lastErr = err
+			} else if err := os.RemoveAll(profileDir); err != nil {
+				lastErr = err
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("profile directory kept reappearing: %s", profileDir)
 }

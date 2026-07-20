@@ -70,12 +70,17 @@ Compile a script into a single self-contained executable (the drang runtime with
 embedded) that needs no separate interpreter:
 
 ```
-drang build app.dr -o app   # -> ./app  (app.exe on Windows)
-./app one two               # runs the embedded program; args become $ARGV
+drang build app.dr -o app.exe
+app.exe one two             # runs the embedded program; args become $ARGV
+
+# Finished GUI: embed web assets and suppress the console window.
+drang build cockpit.dr --web web --gui -o cockpit.exe
 ```
 
 `drang build` validates that the script parses, refuses to overwrite the source or the running
-interpreter, and writes atomically. It produces a standalone Windows executable (`app.exe`).
+interpreter, and writes atomically. Console mode remains the default so errors stay visible during
+development. `--gui` changes only the standalone's Windows subsystem: Explorer launches it without
+a console, so stdout/stderr and startup errors are normally invisible; use it for finished GUI apps.
 
 ## Documentation
 

@@ -216,7 +216,7 @@ func expandOneLinerCluster(args []string) []string {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drang [--run|--ast|--tokens] (-e '<source>' | <file.dr>) [args...]")
 	fmt.Fprintln(os.Stderr, "       drang -n|-p [-a] (-e '<source>' | <file.dr>) [files...]   (one-liner mode)")
-	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [-o <output>]")
+	fmt.Fprintln(os.Stderr, "       drang build <file.dr> [--web <dir>] [--gui] [-o <output>]")
 	fmt.Fprintln(os.Stderr, "       drang test [--update] <file.dr> [file.dr ...]               (example + golden tests)")
 	fmt.Fprintln(os.Stderr, "       drang fmt [-w|--check|-l|-d] [path ...]                      (format source)")
 	fmt.Fprintln(os.Stderr, "try 'drang --help' for more information")
@@ -230,12 +230,13 @@ func help() {
 Usage:
   drang [options] <file.dr> [args...]
   drang [options] -e '<source>' [args...]
-  drang build <file.dr> [-o <output>]
+  drang build <file.dr> [--web <dir>] [--gui] [-o <output>]
   drang test [--update] <file.dr> [file.dr ...]
 
 Commands:
   build          compile a script into a standalone executable (a drang binary with
-                 the source appended); the result runs its embedded program.
+                 the source appended); --web embeds assets and --gui suppresses the
+                 console window for a double-clickable Windows application.
   test           run each file's 'example' assertions and, when a sibling .golden
                  exists, diff its stdout against that file (--update rewrites goldens);
                  reports pass/fail and exits non-zero on any failure

@@ -3,13 +3,44 @@ type: changelog
 title: drang changelog
 description: The release history of drang, newest first (Keep a Changelog style).
 tags: [drang, changelog, releases]
-timestamp: 2026-07-09
+timestamp: 2026-07-20
 ---
 
 # Changelog
 
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
+
+## [Unreleased]
+
+### Added
+- **`drang build --gui`.** Produces a Windows GUI-subsystem standalone for polished
+  double-clickable tools without a stray console window. Console builds remain the
+  default so development diagnostics stay visible.
+
+### Changed
+- **Modules are private-by-default: the `e` export marker (breaking).** A module's
+  exports are now the top-level definitions marked with the contextual keyword `e` —
+  `e fn .foo(...)` and `e $CONST ::= …`; every unmarked top-level name is
+  **module-private** (never flat-merged, absent from the captured record). Same-named
+  private helpers in two merged modules no longer collide. `e` is legal only at the
+  top level and only before `fn` or a `::=` constant — anywhere else, or on a mutable
+  `:=`, it is a parse error, so the marker can never silently mean nothing. Importing
+  a module whose top level is entirely unmarked warns `exports nothing` (the one-line
+  migration guide for pre-`e` module files). Deliberate re-export is explicit:
+  `e $dep ::= use("./dep")`. Privacy binds names, not values — a private fn passed as
+  a value (a `serve` route, a `map` callback) is fully callable. The mutable-top-level
+  rule is unchanged in force but clearer in scope: a module may not hold mutable
+  top-level state even privately (its once-loaded env is shared by every importer).
+  Scripts that are never imported are unaffected. `drang fmt` canonicalizes the
+  marker; decision record in DESIGN.md.
+
+### Fixed
+- **Clamped Edge lifetime.** `serve(open:true)` now launches Edge born into a
+  dedicated Windows Job Object and keeps the server alive until the entire isolated
+  browser process tree exits. Previously it watched only the initial `msedge.exe`;
+  an Edge handoff could leave a live but blank app window after the server shut down.
+  Throwaway-profile removal is retried after the tree drains.
 
 ## [0.11.0] — 2026-07-09
 

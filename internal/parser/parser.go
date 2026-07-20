@@ -180,6 +180,14 @@ func (p *Parser) parseStmtDispatch() ast.Stmt {
 		p.lastBlockForm = false
 		return s
 	}
+	// Contextual: a statement-leading `e` immediately before `fn` or a `$NAME ::=`
+	// constant marks that top-level definition as a module export. `e` stays an
+	// ordinary identifier everywhere else (there is no builtin of that name, and
+	// the sigil walls mean it can never collide with user code).
+	if p.tok.Kind == token.IDENT && p.tok.Lit == "e" &&
+		(p.peek.Kind == token.FN || p.peek.Kind == token.VAR) {
+		return p.parseExport()
+	}
 	switch p.tok.Kind {
 	case token.FN:
 		s := p.parseFn()
@@ -238,6 +246,39 @@ func (p *Parser) parseUse() ast.Stmt {
 		return nil
 	}
 	return &ast.UseStmt{Pos: pos, Path: path}
+}
+
+// parseExport parses an `e`-marked top-level definition: `e fn .name(...) {...}`
+// or `e $NAME ::= value`. The caller has verified the current token is `e` and the
+// next is `fn` or a `$name`. The marker is only meaningful at a module's top level,
+// so anywhere else it is rejected outright rather than silently meaning nothing.
+func (p *Parser) parseExport() ast.Stmt {
+	if p.blockDepth > 0 {
+		p.errorf("`e` (export) is only valid at the top level, not inside a block or function")
+	}
+	p.next() // consume 'e'
+	switch {
+	case p.tok.Kind == token.FN:
+		s := p.parseFn()
+		if fd, ok := s.(*ast.FnDecl); ok {
+			fd.Exported = true
+		}
+		p.lastBlockForm = true
+		return s
+	case p.tok.Kind == token.VAR && p.peek.Kind == token.CONSTDECL:
+		s := p.parseDecl(true)
+		if d, ok := s.(*ast.DeclStmt); ok {
+			d.Exported = true
+		}
+		p.lastBlockForm = false
+		return s
+	case p.tok.Kind == token.VAR && p.peek.Kind == token.COLONEQ:
+		p.errorf("`e` cannot export a mutable variable — a module exports only functions and `::=` constants")
+		return nil
+	default:
+		p.errorf("`e` must be followed by `fn .name(...)` or a `$NAME ::= ...` constant")
+		return nil
+	}
 }
 
 // parseExample parses a `drang test` assertion: `example EXPR`, `example EXPR == EXPR`,

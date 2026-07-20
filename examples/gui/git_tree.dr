@@ -1,0 +1,426 @@
+# examples/gui/git_tree.dr — an interactive Git history viewer in drang.
+#
+# The default repository is C:\dev\_els. Pass another repository as the first
+# argument to reuse the viewer elsewhere:
+#
+#   drang examples/gui/git_tree.dr
+#   drang examples/gui/git_tree.dr C:\path\to\repo
+#
+# `--no-open` keeps the local server running without launching its app window;
+# this is useful for automated checks.
+$root_arg := 'C:\dev\_els'
+$open_window := true
+for $arg in $ARGV {
+	if $arg == "--no-open" {
+		$open_window = false
+	} else {
+		$root_arg = $arg
+	}
+}
+$ROOT ::= abs_path($root_arg)?
+$OPEN_WINDOW ::= $open_window
+$MARK ::= "__DRANG_COMMIT__"
+
+fn .git($args) {
+	capture_all(
+		"git",
+		"--no-pager",
+		"-c",
+		"color.ui=false",
+		"-c",
+		"i18n.logOutputEncoding=UTF-8",
+		"-C",
+		$ROOT,
+		$args,
+		{timeout: 15000}
+	)
+}
+
+fn .h($value) {
+	$s := str($value)
+	$s = replace_all($s, "&", "&amp;")
+	$s = replace_all($s, "<", "&lt;")
+	$s = replace_all($s, ">", "&gt;")
+	$s = replace_all($s, '"', "&quot;")
+	replace_all($s, "'", "&#39;")
+}
+
+fn .param($req, $name, $fallback) {
+	if has($req.form, $name) {
+		return $req.form[$name]
+	}
+	$fallback
+}
+
+fn .choice($value, $allowed, $fallback) {
+	if contains($allowed, $value) {
+		return $value
+	}
+	$fallback
+}
+
+fn .selected($actual, $wanted) {
+	if $actual == $wanted {
+		return " selected"
+	}
+	""
+}
+
+fn .git_value($args, $fallback = "—") {
+	$result := .git($args)
+	if !$result.ok {
+		return $fallback
+	}
+	$value := trim($result.out)
+	if $value == "" {
+		return $fallback
+	}
+	$value
+}
+
+fn .ref_html($decorations) {
+	if $decorations == "" {
+		return '<span class="no-ref">—</span>'
+	}
+	$html := ""
+	for $raw in split($decorations, ", ") {
+		$ref := $raw
+		$class := "branch"
+		if starts_with($ref, "tag: ") {
+			$class = "tag"
+			$ref = replace_first($ref, "tag: ", "")
+		} else if starts_with($ref, "HEAD") {
+			$class = "head"
+		} else if contains($ref, "/") {
+			$class = "remote"
+		}
+		$html = $html ~ '<span class="ref ref-' ~ $class ~ '" title="' ~ .h($raw) ~ '">' ~ .h($ref) ~ "</span>"
+	}
+	$html
+}
+
+fn .graph_html($text) {
+	if trim($text) == "" {
+		return <<'HTML'
+<div class="empty-state">
+  <div class="empty-glyph">⌁</div>
+  <strong>No commits matched</strong>
+  <span>Try a broader search or switch to all refs.</span>
+</div>
+HTML
+	}
+	$rows := ""
+	$commits := 0
+	for $line in lines($text) {
+		$at := find_index($line, $MARK)
+		if $at < 0 {
+			$rows = $rows ~ '<tr class="connector"><td class="lanes">' ~ .h($line) ~ '</td><td colspan="5"></td></tr>'
+			next
+		}
+		$graph := ""
+		if $at > 0 {
+			$graph = $line[0..$at - 1]
+		}
+		$payload := $line[$at + len($MARK)..-1]
+		$fields := split($payload, "\t")
+		if len($fields) < 5 {
+			$rows = $rows ~ '<tr class="connector"><td class="lanes">' ~ .h($line) ~ '</td><td colspan="5"></td></tr>'
+			next
+		}
+		$commits = $commits + 1
+		$subject := join(drop($fields, 4), "\t")
+		$rows = $rows ~ '<tr class="commit">' ~ '<td class="lanes">' ~ .h($graph) ~ "</td>" ~ '<td class="hash">' ~ .h(
+			$fields[0]
+		) ~ "</td>" ~ '<td class="subject" title="' ~ .h($subject) ~ '">' ~ .h($subject) ~ "</td>" ~ '<td class="decorations">' ~ .ref_html(
+			$fields[3]
+		) ~ "</td>" ~ '<td class="author">' ~ .h($fields[2]) ~ "</td>" ~ '<td class="date">' ~ .h(
+			$fields[1]
+		) ~ "</td></tr>"
+	}
+	'<div class="graph-scroll"><table class="graph-table"><thead><tr><th aria-label="Graph"></th><th>Commit</th><th>Message</th><th>Refs</th><th>Author</th><th>Date</th></tr></thead><tbody>' ~ $rows ~ "</tbody></table></div>"
+}
+
+fn .tree($req) {
+	$scope := .choice(.param($req, "scope", "visible"), ["visible", "current"], "visible")
+	$limit := .choice(.param($req, "limit", "all"), ["80", "160", "all"], "all")
+	$query := trim(.param($req, "q", ""))
+	$args := [
+		"log",
+		"--graph",
+		"--topo-order",
+		"--decorate=short",
+		"--date=short",
+		"--format=" ~ $MARK ~ "%h%x09%ad%x09%an%x09%D%x09%s"
+	]
+	if $scope == "visible" {
+		push($args, "--branches", "--remotes", "--tags")
+	}
+	if $query != "" {
+		push($args, "--regexp-ignore-case", "--fixed-strings", "--grep=" ~ $query)
+	}
+	if $limit != "all" {
+		push($args, "--max-count=" ~ $limit)
+	}
+	$log := .git($args)
+	if !$log.ok {
+		return '<section class="error-card"><strong>Git could not build the tree.</strong><pre>' ~ .h(
+			$log.err
+		) ~ "</pre></section>"
+	}
+	$commit_total := .git_value(["rev-list", "--count", "--branches", "--remotes", "--tags"])
+	$branch_total := .git_value(
+		["for-each-ref", "--count=99999", "--format=%(refname:short)", "refs/heads"]
+	)
+	if $branch_total != "—" {
+		$branch_total = str(len(lines($branch_total)))
+	}
+	$tag_total := .git_value(["tag", "--list"])
+	if $tag_total != "—" {
+		$tag_total = str(len(lines($tag_total)))
+	}
+	$branch := .git_value(["branch", "--show-current"], "detached")
+	$status := .git(["status", "--porcelain=v1"])
+	$pending := 0
+	if $status.ok {
+		$pending = len(lines($status.out))
+	}
+	$work_label := "Clean"
+	$work_detail := "no pending files"
+	$work_class := "clean"
+	if $pending > 0 {
+		$work_label = str($pending)
+		$work_detail = "pending files"
+		$work_class = "dirty"
+	}
+	$shown := 0
+	for $line in lines($log.out) {
+		if contains($line, $MARK) {
+			$shown = $shown + 1
+		}
+	}
+	$scope_label := "all visible refs"
+	if $scope == "current" {
+		$scope_label = "current branch"
+	}
+	$match_label := str($shown) ~ " commits shown"
+	if $query != "" {
+		$match_label = str($shown) ~ " matches"
+	}
+	$scope_visible := .selected($scope, "visible")
+	$scope_current := .selected($scope, "current")
+	$limit_80 := .selected($limit, "80")
+	$limit_160 := .selected($limit, "160")
+	$limit_all := .selected($limit, "all")
+	$tree_html := .graph_html($log.out)
+	$updated := format_time(now(), "%H:%M:%S")
+	<<$HTML
+<section class="metrics" aria-label="Repository summary">
+  <article class="metric"><span class="metric-icon commits-icon">⌘</span><div><strong>${.h($commit_total)}</strong><span>reachable commits</span></div></article>
+  <article class="metric"><span class="metric-icon branches-icon">⑂</span><div><strong>${.h($branch_total)}</strong><span>local branches</span></div></article>
+  <article class="metric"><span class="metric-icon tags-icon">◇</span><div><strong>${.h($tag_total)}</strong><span>release tags</span></div></article>
+  <article class="metric"><span class="metric-icon work-icon ${work_class}">●</span><div><strong>${.h($work_label)}</strong><span>${.h($work_detail)}</span></div></article>
+</section>
+
+<section class="tree-card">
+  <form id="filters" class="toolbar" hx-get="/tree" hx-target="#tree-panel" hx-swap="innerHTML" hx-indicator="#refresh-indicator">
+    <label class="search-wrap" for="search">
+      <span class="search-icon">⌕</span>
+      <input id="search" name="q" type="search" value="${.h($query)}" placeholder="Search commit messages…" autocomplete="off" hx-get="/tree" hx-target="#tree-panel" hx-swap="innerHTML" hx-trigger="keyup changed delay:350ms, search" hx-include="#filters" hx-indicator="#refresh-indicator">
+    </label>
+    <label class="select-wrap">
+      <span>History</span>
+      <select name="scope" aria-label="History scope" hx-get="/tree" hx-target="#tree-panel" hx-swap="innerHTML" hx-trigger="change" hx-include="#filters" hx-indicator="#refresh-indicator">
+        <option value="visible"${scope_visible}>All refs</option>
+        <option value="current"${scope_current}>Current branch</option>
+      </select>
+    </label>
+    <label class="select-wrap">
+      <span>Limit</span>
+      <select name="limit" aria-label="Commit limit" hx-get="/tree" hx-target="#tree-panel" hx-swap="innerHTML" hx-trigger="change" hx-include="#filters" hx-indicator="#refresh-indicator">
+        <option value="80"${limit_80}>80</option>
+        <option value="160"${limit_160}>160</option>
+        <option value="all"${limit_all}>All</option>
+      </select>
+    </label>
+    <button class="refresh" type="submit" title="Refresh Git data"><span id="refresh-indicator" class="htmx-indicator">↻</span><span>Refresh</span></button>
+  </form>
+
+  <div class="tree-meta">
+    <div><span class="branch-dot"></span><strong>${.h($branch)}</strong><span class="muted">· ${.h($scope_label)} · ${.h($match_label)}</span></div>
+    <span class="updated">Updated ${updated}</span>
+  </div>
+
+  ${tree_html}
+</section>
+HTML
+}
+
+$PAGE_HEAD ::= <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Git tree · drang</title>
+  <script src="/_/htmx.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #eef4f8;
+      --muted: #8293a3;
+      --faint: #506171;
+      --panel: rgba(15, 27, 39, .92);
+      --panel-2: #101d29;
+      --line: rgba(155, 184, 204, .13);
+      --cyan: #57d3c7;
+      --cyan-2: #8aeee5;
+      --purple: #a78bfa;
+      --amber: #f5c76f;
+      --green: #7ce2a1;
+      --red: #ff967e;
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: #071019; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(40, 153, 147, .16), transparent 31rem),
+        radial-gradient(circle at 92% 8%, rgba(109, 77, 178, .12), transparent 28rem),
+        linear-gradient(145deg, #071019 0%, #09131d 48%, #08111a 100%);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .18;
+      background-image: linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: linear-gradient(to bottom, black, transparent 65%);
+    }
+    button, input, select { font: inherit; }
+    .app { width: min(1480px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 26px; position: relative; }
+    .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    .brand-line { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--cyan-2); font: 650 12px/1 var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+    .brand-mark { width: 27px; height: 27px; border: 1px solid rgba(87,211,199,.5); border-radius: 9px; display: grid; place-items: center; background: rgba(87,211,199,.09); box-shadow: inset 0 0 18px rgba(87,211,199,.08); }
+    .brand-mark::before { content: "⑂"; font-size: 17px; }
+    h1 { margin: 0; font-size: clamp(32px, 4vw, 54px); line-height: .98; letter-spacing: -.045em; font-weight: 690; }
+    h1 em { color: var(--cyan); font-style: normal; }
+    .repo-path { max-width: 55vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 13px/1.5 var(--mono); padding: 9px 13px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8, 17, 26, .65); }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .metric { min-height: 90px; display: flex; align-items: center; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(145deg, rgba(17,31,44,.93), rgba(12,23,34,.9)); box-shadow: 0 10px 32px rgba(0,0,0,.13); }
+    .metric-icon { flex: 0 0 38px; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; font: 18px/1 var(--mono); background: rgba(87,211,199,.09); color: var(--cyan); border: 1px solid rgba(87,211,199,.17); }
+    .branches-icon { color: var(--purple); background: rgba(167,139,250,.09); border-color: rgba(167,139,250,.17); }
+    .tags-icon { color: var(--amber); background: rgba(245,199,111,.09); border-color: rgba(245,199,111,.17); }
+    .work-icon { font-size: 12px; color: var(--green); background: rgba(124,226,161,.09); border-color: rgba(124,226,161,.17); }
+    .work-icon.dirty { color: var(--amber); background: rgba(245,199,111,.09); border-color: rgba(245,199,111,.17); }
+    .metric div { min-width: 0; }
+    .metric strong { display: block; font: 650 23px/1.05 var(--mono); letter-spacing: -.03em; }
+    .metric div span { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
+    .tree-card { overflow: hidden; border: 1px solid rgba(155,184,204,.16); border-radius: 17px; background: var(--panel); box-shadow: 0 24px 70px rgba(0,0,0,.28); backdrop-filter: blur(14px); }
+    .toolbar { display: flex; gap: 10px; align-items: stretch; padding: 13px; border-bottom: 1px solid var(--line); background: rgba(8,17,26,.46); }
+    .search-wrap { flex: 1 1 360px; min-width: 210px; position: relative; }
+    .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-52%); color: var(--muted); font: 21px/1 var(--mono); pointer-events: none; }
+    input[type="search"], select { height: 42px; color: var(--ink); border: 1px solid rgba(155,184,204,.18); border-radius: 10px; outline: none; background: #0b1722; transition: border-color .18s, box-shadow .18s; }
+    input[type="search"] { width: 100%; padding: 0 14px 0 42px; }
+    input[type="search"]::placeholder { color: #627484; }
+    input[type="search"]:focus, select:focus { border-color: rgba(87,211,199,.58); box-shadow: 0 0 0 3px rgba(87,211,199,.1); }
+    .select-wrap { display: flex; align-items: center; gap: 9px; padding-left: 12px; border: 1px solid rgba(155,184,204,.12); border-radius: 10px; background: rgba(11,23,34,.6); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .select-wrap select { min-width: 108px; border: 0; border-left: 1px solid var(--line); border-radius: 0 9px 9px 0; padding: 0 29px 0 11px; color: #cfd9e0; font-size: 13px; text-transform: none; letter-spacing: 0; }
+    .refresh { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 104px; padding: 0 15px; border: 1px solid rgba(87,211,199,.25); border-radius: 10px; color: #d9fffa; background: rgba(45,143,136,.18); cursor: pointer; transition: background .18s, transform .18s; }
+    .refresh:hover { background: rgba(45,143,136,.28); }
+    .refresh:active { transform: translateY(1px); }
+    .htmx-indicator { display: inline-block; opacity: .72; }
+    .htmx-indicator.htmx-request { animation: spin .75s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tree-meta { min-height: 45px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 17px; border-bottom: 1px solid var(--line); color: #cbd6dc; font: 12px/1 var(--mono); }
+    .tree-meta > div { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .branch-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 4px rgba(87,211,199,.1); }
+    .muted, .updated { color: var(--muted); }
+    .updated { white-space: nowrap; }
+    .graph-scroll { overflow: auto; max-height: calc(100vh - 325px); min-height: 250px; scrollbar-color: #3b5667 #0b151e; scrollbar-width: thin; }
+    .graph-table { width: 100%; min-width: 1050px; border-collapse: collapse; table-layout: auto; font: 12px/1.2 var(--mono); }
+    .graph-table thead { position: sticky; top: 0; z-index: 2; background: #0c1823; box-shadow: 0 1px 0 var(--line); }
+    .graph-table th { height: 32px; padding: 0 10px; color: #607485; font: 600 10px/1 var(--sans); text-align: left; text-transform: uppercase; letter-spacing: .1em; white-space: nowrap; }
+    .graph-table th:first-child { width: 1%; min-width: 48px; }
+    .graph-table th:nth-child(2) { width: 76px; }
+    .graph-table th:nth-child(3) { width: 100%; }
+    .graph-table tbody tr.commit { height: 28px; border-bottom: 1px solid rgba(155,184,204,.055); }
+    .graph-table tbody tr.commit:hover { background: rgba(87,211,199,.055); }
+    .graph-table td { padding: 0 10px; white-space: nowrap; }
+    .graph-table .lanes { padding-left: 16px; padding-right: 8px; color: var(--cyan); white-space: pre; font-weight: 650; letter-spacing: 0; }
+    .graph-table tr.connector { height: 17px; }
+    .graph-table tr.connector .lanes { line-height: 17px; color: rgba(87,211,199,.8); }
+    .hash { color: var(--cyan-2); font-weight: 650; }
+    .subject { max-width: 0; overflow: hidden; text-overflow: ellipsis; color: #dce5ea; }
+    .decorations { text-align: right; }
+    .author { color: #91a3b1; }
+    .date { padding-right: 17px !important; color: #718595; }
+    .ref { display: inline-block; margin-left: 5px; padding: 3px 6px 2px; border-radius: 5px; border: 1px solid transparent; font: 600 10px/1.15 var(--mono); }
+    .ref-head { color: #a8f1c1; background: rgba(124,226,161,.1); border-color: rgba(124,226,161,.2); }
+    .ref-tag { color: #ffe0a1; background: rgba(245,199,111,.1); border-color: rgba(245,199,111,.2); }
+    .ref-remote { color: #c8b8ff; background: rgba(167,139,250,.1); border-color: rgba(167,139,250,.2); }
+    .ref-branch { color: #9ce6df; background: rgba(87,211,199,.09); border-color: rgba(87,211,199,.18); }
+    .no-ref { color: #344958; }
+    .empty-state { min-height: 330px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--muted); }
+    .empty-state strong { color: var(--ink); font-size: 17px; }
+    .empty-state span { font-size: 13px; }
+    .empty-glyph { margin-bottom: 5px; color: var(--cyan); font: 42px/1 var(--mono); }
+    .error-card { padding: 24px; border: 1px solid rgba(255,150,126,.26); border-radius: 14px; background: rgba(93,35,31,.22); color: #ffd7cf; }
+    .error-card pre { white-space: pre-wrap; color: #e9a99b; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px 4px 0; color: #536675; font: 11px/1.4 var(--mono); }
+    footer span:last-child { text-align: right; }
+    @media (max-width: 900px) {
+      .app { width: min(100% - 24px, 1480px); padding-top: 24px; }
+      .masthead { align-items: flex-start; flex-direction: column; }
+      .repo-path { max-width: 100%; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .toolbar { flex-wrap: wrap; }
+      .search-wrap { flex-basis: 100%; }
+      .select-wrap { flex: 1; }
+      .graph-scroll { max-height: calc(100vh - 390px); }
+    }
+    @media (max-width: 560px) {
+      .metrics { grid-template-columns: 1fr; }
+      .select-wrap { width: 100%; }
+      .refresh { flex: 1; min-height: 42px; }
+      .updated { display: none; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+HTML
+$PAGE_FOOT ::= <<'HTML'
+</body>
+</html>
+HTML
+
+fn .home($req) {
+	$name := upper(replace_first(basename($ROOT), "_", ""))
+	$hero := <<$HTML
+<main class="app">
+  <header class="masthead">
+    <div>
+      <div class="brand-line"><span class="brand-mark"></span><span>drang · repository atlas</span></div>
+      <h1><em>${.h($name)}</em> Git tree</h1>
+    </div>
+    <div class="repo-path" title="${.h($ROOT)}">${.h($ROOT)}</div>
+  </header>
+  <div id="tree-panel">${.tree($req)}</div>
+  <footer><span>Rendered directly from Git’s topology · no cached history</span><span>Local-only htmx UI · powered by drang</span></footer>
+</main>
+HTML
+	$PAGE_HEAD ~ $hero ~ $PAGE_FOOT
+}
+
+$probe := .git(["rev-parse", "--is-inside-work-tree"])
+if !$probe.ok or trim($probe.out) != "true" {
+	die("git_tree: not a Git work tree: " ~ $ROOT ~ "\n" ~ trim($probe.err))
+}
+serve({routes: {"/": .home, "/tree": .tree}, open: $OPEN_WINDOW})?

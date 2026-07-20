@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/ast"
@@ -105,6 +106,56 @@ func TestPipeRHSMustBeCallable(t *testing.T) {
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Errorf("%q: unexpected parse error: %v", src, errs)
 		}
+	}
+}
+
+// TestExportMarker: `e` before a top-level fn / `::=` constant sets Exported; bad
+// placements are parse errors so the marker can never silently mean nothing.
+func TestExportMarker(t *testing.T) {
+	good := map[string]string{
+		`e fn .f() { 1 }`:      "(e fn .f () (block 1))",
+		`e $C ::= 5`:           "(e ::= $C 5)",
+		`fn .f() { 1 }`:        "(fn .f () (block 1))",
+		`$C ::= 5`:             "(::= $C 5)",
+		`e fn .f() { 1 }
+e $C ::= 5`: "(e fn .f () (block 1))\n(e ::= $C 5)",
+	}
+	for src, want := range good {
+		p := New(src)
+		prog := p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			t.Errorf("%q: unexpected parse error: %v", src, errs)
+			continue
+		}
+		if got := prog.String(); got != want {
+			t.Errorf("%q: got %q, want %q", src, got, want)
+		}
+	}
+	bad := map[string]string{
+		`e $x := 5`:                 "mutable",              // e cannot export a mutable variable
+		`fn .f() { e fn .g() {} }`:  "top level",            // nested in a function
+		`if true { e $C ::= 1 }`:    "top level",            // nested in a block
+		`e $x`:                      "must be followed by",  // no ::= after the var
+		`e $x + 1`:                  "must be followed by",  // an expression, not a decl
+	}
+	for src, wantSub := range bad {
+		p := New(src)
+		p.ParseProgram()
+		errs := p.Errors()
+		if len(errs) == 0 {
+			t.Errorf("%q: expected a parse error", src)
+			continue
+		}
+		if !strings.Contains(strings.Join(errs, "; "), wantSub) {
+			t.Errorf("%q: error %v should mention %q", src, errs, wantSub)
+		}
+	}
+	// `e` not followed by fn/$ stays an ordinary identifier (a builtin-name
+	// expression), so existing code using none of this parses unchanged.
+	p := New(`say(1)`)
+	p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Errorf("plain program: unexpected errors %v", p.Errors())
 	}
 }
 

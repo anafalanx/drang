@@ -1,6 +1,6 @@
 package main
 
-// Standalone executables. `drang build script.dr [--web dir] [-o app.exe]` copies
+// Standalone executables. `drang build script.dr [--web dir] [--gui] [-o app.exe]` copies
 // this drang binary and appends the gzip-compressed source — and, optionally, a
 // tree of web/ assets that serve() can serve from memory — followed by a fixed
 // trailer. At startup drang inspects its own tail: if the trailer is present it
@@ -185,9 +185,10 @@ func standaloneOrigin() string {
 	return "<standalone>"
 }
 
-// buildStandalone implements `drang build <script.dr> [--web <dir>] [-o <output>]`.
+// buildStandalone implements `drang build <script.dr> [--web <dir>] [--gui] [-o <output>]`.
 func buildStandalone(args []string) {
 	var srcPath, outPath, webDir string
+	var gui bool
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-o", "--output":
@@ -204,6 +205,8 @@ func buildStandalone(args []string) {
 			}
 			webDir = args[i+1]
 			i++
+		case "--gui":
+			gui = true
 		default:
 			if srcPath != "" {
 				fmt.Fprintln(os.Stderr, "drang build: unexpected argument", args[i])
@@ -213,7 +216,7 @@ func buildStandalone(args []string) {
 		}
 	}
 	if srcPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: drang build <script.dr> [--web <dir>] [-o <output>]")
+		fmt.Fprintln(os.Stderr, "usage: drang build <script.dr> [--web <dir>] [--gui] [-o <output>]")
 		os.Exit(2)
 	}
 	src, err := os.ReadFile(srcPath)
@@ -259,7 +262,7 @@ func buildStandalone(args []string) {
 		fmt.Fprintln(os.Stderr, "drang build: refusing to overwrite the runtime binary — choose a different -o")
 		os.Exit(1)
 	}
-	n, err := writeStandalone(exe, outPath, filepath.Base(srcPath), src, assets)
+	n, err := writeStandalone(exe, outPath, filepath.Base(srcPath), src, assets, gui)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang build:", err)
 		os.Exit(1)
@@ -337,7 +340,7 @@ func defaultOutput(srcPath string) string {
 // (compressed source + assets + trailer), and atomically moves the result into
 // place. It writes to a temp file in the destination directory and renames on
 // success, so a failed or partial build never truncates an existing file.
-func writeStandalone(runtimeExe, outPath, name string, src []byte, assets map[string][]byte) (int64, error) {
+func writeStandalone(runtimeExe, outPath, name string, src []byte, assets map[string][]byte, gui bool) (int64, error) {
 	in, err := os.Open(runtimeExe)
 	if err != nil {
 		return 0, err
@@ -364,6 +367,11 @@ func writeStandalone(runtimeExe, outPath, name string, src []byte, assets map[st
 	if _, err := io.Copy(tmp, in); err != nil {
 		return 0, err
 	}
+	if gui {
+		if err := setPESubsystem(tmp, imageSubsystemWindowsGUI); err != nil {
+			return 0, fmt.Errorf("--gui: %w", err)
+		}
+	}
 	if _, err := tmp.Write(packPayload(name, src, assets)); err != nil {
 		return 0, err
 	}
@@ -381,6 +389,78 @@ func writeStandalone(runtimeExe, outPath, name string, src []byte, assets map[st
 		return fi.Size(), nil
 	}
 	return 0, nil
+}
+
+const (
+	imageSubsystemWindowsGUI = uint16(2)
+	peSubsystemOffset        = int64(68) // from either PE32 or PE32+ optional header
+)
+
+// setPESubsystem changes the Windows PE Optional Header's Subsystem field in the
+// temporary standalone copy. The running interpreter remains a console program;
+// only an explicitly requested --gui output is changed.
+func setPESubsystem(f *os.File, subsystem uint16) error {
+	const (
+		dosPEOffset     = int64(0x3c)
+		coffHeaderSize  = int64(20)
+		peSignatureSize = int64(4)
+	)
+
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Size() < dosPEOffset+4 {
+		return fmt.Errorf("runtime is not a PE image (DOS header is truncated)")
+	}
+	var dosMagic [2]byte
+	if _, err := f.ReadAt(dosMagic[:], 0); err != nil || string(dosMagic[:]) != "MZ" {
+		return fmt.Errorf("runtime is not a PE image (MZ signature missing)")
+	}
+	var dword [4]byte
+	if _, err := f.ReadAt(dword[:], dosPEOffset); err != nil {
+		return fmt.Errorf("read PE header offset: %w", err)
+	}
+	peOffset := int64(binary.LittleEndian.Uint32(dword[:]))
+	optionalOffset := peOffset + peSignatureSize + coffHeaderSize
+	subsystemOffset := optionalOffset + peSubsystemOffset
+	if peOffset < 0 || subsystemOffset+2 > fi.Size() {
+		return fmt.Errorf("runtime is not a PE image (optional header is truncated)")
+	}
+	var signature [4]byte
+	if _, err := f.ReadAt(signature[:], peOffset); err != nil || string(signature[:]) != "PE\x00\x00" {
+		return fmt.Errorf("runtime is not a PE image (signature missing)")
+	}
+	var coff [20]byte
+	if _, err := f.ReadAt(coff[:], peOffset+peSignatureSize); err != nil {
+		return fmt.Errorf("read PE COFF header: %w", err)
+	}
+	optionalSize := int64(binary.LittleEndian.Uint16(coff[16:18]))
+	if optionalSize < peSubsystemOffset+2 || optionalOffset+optionalSize > fi.Size() {
+		return fmt.Errorf("runtime is not a PE image (declared optional header is truncated)")
+	}
+	var magic [2]byte
+	if _, err := f.ReadAt(magic[:], optionalOffset); err != nil {
+		return fmt.Errorf("read PE optional header: %w", err)
+	}
+	switch binary.LittleEndian.Uint16(magic[:]) {
+	case 0x10b, 0x20b: // PE32, PE32+
+	default:
+		return fmt.Errorf("unsupported PE optional-header magic 0x%x", binary.LittleEndian.Uint16(magic[:]))
+	}
+	var field [2]byte
+	if _, err := f.ReadAt(field[:], subsystemOffset); err != nil {
+		return fmt.Errorf("read PE subsystem: %w", err)
+	}
+	current := binary.LittleEndian.Uint16(field[:])
+	if current != 2 && current != 3 {
+		return fmt.Errorf("runtime PE subsystem is %d, expected Windows GUI (2) or console (3)", current)
+	}
+	binary.LittleEndian.PutUint16(field[:], subsystem)
+	if _, err := f.WriteAt(field[:], subsystemOffset); err != nil {
+		return fmt.Errorf("write PE subsystem: %w", err)
+	}
+	return nil
 }
 
 // packPayload frames the name + source + assets, compresses them, and appends the
