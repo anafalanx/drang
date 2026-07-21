@@ -44,6 +44,7 @@ runs these stages and exits non-zero if any fails:
 | manual examples | `drang tools/check_examples.dr MANUAL.md` | manual/reality drift — shown output byte-compared |
 | reference examples | `drang tools/check_examples.dr REFERENCE.md` | the same, for any runnable REFERENCE blocks |
 | OKF lint | `drang tools/okf_lint.dr` | a concept doc missing its OKF `type` frontmatter |
+| version stamps | `drang tools/version_lint.dr` | README / manual-footer / CHANGELOG stamps behind `cmd/drang/main.go`'s version |
 | fuzz: parser | `go test -fuzz=FuzzParse ./internal/parser` | inputs that panic/hang the front end |
 | fuzz: printer | `go test -fuzz=FuzzFmtRoundTrip ./internal/printer` | `drang fmt` losing its fixed point |
 | fuzz: eval | `go test -fuzz=FuzzBackendParity ./internal/eval` | the VM and the oracle disagreeing |
@@ -51,7 +52,7 @@ runs these stages and exits non-zero if any fails:
 The build/vet/race stages are a **gate**: the first failure stops the run (no point
 checking docs or fuzzing a broken tree). The docs group then runs as a batch (so one
 pass surfaces every doc regression), and the three fuzz stages all run even if one
-fails — ten stages in all, and a single pass reports everything at once.
+fails — eleven stages in all, and a single pass reports everything at once.
 
 The `-race` suite runs the **full** suite with no `-short`, so the slow behavioral
 tests (e.g. the Job-Object resource-limit and CPU-breach tests, which spin a real

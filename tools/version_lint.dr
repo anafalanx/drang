@@ -1,0 +1,53 @@
+# version_lint.dr — assert the user-facing version stamps agree with the source of
+# truth, `var version` in cmd/drang/main.go. The release flow bumps the docs it
+# touches, but overview stamps drift silently unless gated (README's Status sat at
+# "drang 0.8" through four releases). Checked stamps:
+#
+#   README.md            the Status section must mention "drang <version>"
+#   tools/gen_manual.dr  the manual.html footer template must carry "drang <version>"
+#   CHANGELOG.md         a "## [<version>]" release section must exist
+#
+#   drang tools/version_lint.dr
+#
+# Run from the repo root. Exits 0 iff every stamp matches.
+$main := read_file("cmd/drang/main.go")?
+$m := match($main, qr/var version = "([0-9]+\.[0-9]+\.[0-9]+)"/)
+if !$m {
+	die("version_lint: no `var version = \"X.Y.Z\"` in cmd/drang/main.go")
+}
+$V ::= $m[1]
+$checks := [
+	{
+		file: "README.md",
+		needle: "drang " ~ $V,
+		why: "the Status section must mention the current version"
+	},
+	{
+		file: "tools/gen_manual.dr",
+		needle: "drang " ~ $V,
+		why: "the manual.html footer must carry the current version"
+	},
+	{
+		file: "CHANGELOG.md",
+		needle: "## [" ~ $V ~ "]",
+		why: "the release section for the current version must exist"
+	}
+]
+$failed := 0
+for $c in $checks {
+	$text := read_file($c.file)?
+	if contains($text, $c.needle) {
+		say($"  ok    ${c.file}  (found ${c.needle})")
+	} else {
+		say($"  FAIL  ${c.file} — missing \"${c.needle}\": ${c.why}")
+		$failed = $failed + 1
+	}
+}
+say("")
+if $failed == 0 {
+	say($"VERSION OK — every stamp says ${V}")
+	exit(0)
+} else {
+	say($"VERSION DRIFT — ${failed} stamp(s) behind source version ${V}")
+	exit(1)
+}
