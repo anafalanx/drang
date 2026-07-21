@@ -39,6 +39,19 @@ fn .first_code_line($code) {
 	""
 }
 
+# A block whose first non-empty line is a `# norun` comment is shown, not run —
+# for examples that would block or need a display (a serve() call opens a window
+# and waits on it). The marker stays visible in the rendered manual, telling the
+# reader why this one is not auto-verified.
+fn .is_norun($code) {
+	for $l in split($code, "\n") {
+		if trim($l) != "" {
+			return starts_with(trim($l), "# norun")
+		}
+	}
+	false
+}
+
 # A shell-invocation example documents command-line usage, not a drang program.
 fn .is_shell($code) {
 	$first := .first_code_line($code)
@@ -97,8 +110,13 @@ $pass := 0
 $fail := 0
 $nondet := 0
 $shell := 0
+$norun := 0
 $noout := 0
 for $c in $cases {
+	if .is_norun($c.code) {
+		$norun = $norun + 1
+		next
+	}
 	if .is_shell($c.code) {
 		$shell = $shell + 1
 		next
@@ -146,6 +164,7 @@ say($"  passed:            ${pass}")
 say($"  mismatches:        ${fail}")
 say($"  non-deterministic: ${nondet} (run, not compared)")
 say($"  shell-skipped:     ${shell}")
+say($"  norun-skipped:     ${norun} (shown, not run — blocking/display examples)")
 say($"  no-output:         ${noout} (run to catch an unexpected abort)")
 say("")
 if $fail == 0 {

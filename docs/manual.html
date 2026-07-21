@@ -21,7 +21,7 @@
 <blockquote>Every code example in this manual was executed against the interpreter; the shown output is real.</blockquote>
 <p>This manual is the worked, example-driven guide. For a terse formal specification (the grammar, the semantics, and every builtin with exact signatures and error modes), see <a href="https://github.com/anafalanx/drang/blob/main/REFERENCE.md">REFERENCE.md</a>.</p>
 <h2 id="contents">Contents</h2>
-<ul><li><a href="#introduction">Introduction</a></li><li><a href="#lexical-structure-declarations-types-and-operators">Lexical structure, declarations, types, and operators</a></li><li><a href="#strings">Strings</a></li><li><a href="#control-flow">Control flow</a></li><li><a href="#functions-lambdas-closures-and-pipelines">Functions, lambdas, closures, and pipelines</a></li><li><a href="#arrays-maps-and-the-collection-toolkit">Arrays, maps, and the collection toolkit</a></li><li><a href="#errors-as-values">Errors as values</a></li><li><a href="#regular-expressions">Regular expressions</a></li><li><a href="#external-commands-and-concurrency">External commands and concurrency</a></li><li><a href="#in-language-concurrency">In-language concurrency</a></li><li><a href="#files-and-paths">Files and paths</a></li><li><a href="#persistent-storage">Persistent storage</a></li><li><a href="#json">JSON</a></li><li><a href="#csv">CSV</a></li><li><a href="#date-and-time">Date and time</a></li><li><a href="#hashing-encoding-and-randomness">Hashing, encoding, and randomness</a></li><li><a href="#http-client">HTTP client</a></li><li><a href="#task-dispatch">Task dispatch</a></li><li><a href="#one-liner-mode">One-liner mode</a></li><li><a href="#modules-use">Modules: <code>use</code></a></li><li><a href="#validation-validate">Validation: <code>validate</code></a></li><li><a href="#testing">Testing</a></li><li><a href="#formatting">Formatting</a></li><li><a href="#not-yet-known-gaps-and-surprises">Not yet: known gaps and surprises</a></li></ul>
+<ul><li><a href="#introduction">Introduction</a></li><li><a href="#lexical-structure-declarations-types-and-operators">Lexical structure, declarations, types, and operators</a></li><li><a href="#strings">Strings</a></li><li><a href="#control-flow">Control flow</a></li><li><a href="#functions-lambdas-closures-and-pipelines">Functions, lambdas, closures, and pipelines</a></li><li><a href="#arrays-maps-and-the-collection-toolkit">Arrays, maps, and the collection toolkit</a></li><li><a href="#errors-as-values">Errors as values</a></li><li><a href="#regular-expressions">Regular expressions</a></li><li><a href="#external-commands-and-concurrency">External commands and concurrency</a></li><li><a href="#in-language-concurrency">In-language concurrency</a></li><li><a href="#files-and-paths">Files and paths</a></li><li><a href="#persistent-storage">Persistent storage</a></li><li><a href="#json">JSON</a></li><li><a href="#csv">CSV</a></li><li><a href="#date-and-time">Date and time</a></li><li><a href="#hashing-encoding-and-randomness">Hashing, encoding, and randomness</a></li><li><a href="#http-client">HTTP client</a></li><li><a href="#task-dispatch">Task dispatch</a></li><li><a href="#local-guis-serve">Local GUIs: <code>serve</code></a></li><li><a href="#one-liner-mode">One-liner mode</a></li><li><a href="#modules-use">Modules: <code>use</code></a></li><li><a href="#validation-validate">Validation: <code>validate</code></a></li><li><a href="#testing">Testing</a></li><li><a href="#formatting">Formatting</a></li><li><a href="#not-yet-known-gaps-and-surprises">Not yet: known gaps and surprises</a></li></ul>
 <hr>
 <h2 id="introduction">Introduction</h2>
 <p>drang is a small scripting language for text processing and system glue: the work of wrangling text, shelling out to other programs, and orchestrating small jobs. It is implemented in Go and is Windows-only.</p>
@@ -2168,6 +2168,47 @@ drang: cmd exited with code 42
 $ echo $?
 42</code></pre>
 <p>One sharp edge to know. <code>exit(n)</code> and <code>die(...)</code> do <strong>not</strong> work from inside a dispatched task. They are program-level controls, and calling either within a task function produces <code>drang: exit outside of a program</code> on stderr and an exit code of 1, discarding the code you asked for. Inside a task, choose your exit code by returning or propagating an <code>Err</code>, as above, and reserve <code>exit</code>/<code>die</code> for the top level of an ordinary script.</p>
+<h2 id="local-guis-serve">Local GUIs: <code>serve</code></h2>
+<p>A drang script can be a windowed tool. <code>serve</code> runs a <strong>local, single-user</strong> htmx GUI: it binds <code>127.0.0.1</code>, routes request paths to your drang functions, and opens the page in a clamped browser app window. It is deliberately <em>not</em> a web framework — no deployment, no accounts, no public listening — just the shortest path from "script" to "cockpit with buttons."</p>
+<p>The blocks in this chapter carry a <code># norun</code> first line: the example checker shows them but does not execute them, because a <code>serve</code> call opens a window and blocks until it closes.</p>
+<pre><code class="language-drang"># norun: opens a browser window and serves until it is closed
+$page := &lt;&lt;'HTML'
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;script src="/_/htmx.js"&gt;&lt;/script&gt;&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;drang cockpit&lt;/h1&gt;
+  &lt;button hx-get="/tick" hx-target="#out"&gt;Ping the server&lt;/button&gt;
+  &lt;div id="out"&gt;(click the button)&lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+HTML
+
+fn .home($req) { $page }
+
+fn .tick($req) {
+	"&lt;strong&gt;pong&lt;/strong&gt; — server time is " ~ format_time(now(), "%H:%M:%S")
+}
+
+serve({routes: {"/": .home, "/tick": .tick}})</code></pre>
+<p>Run it and a chrome-less app window opens showing the page; the button fires an htmx <code>GET /tick</code>, your <code>.tick</code> runs, and its HTML fragment lands in <code>#out</code>. Close the window and the script ends. The htmx runtime (2.0.4) is baked into the drang binary and served at <code>/_/htmx.js</code> — nothing to install, fully offline.</p>
+<h3 id="handlers">Handlers</h3>
+<p>A route maps a path to a function of zero or one parameters. The parameter, if declared, receives a request map — <code>{method, path, query, form, headers}</code> — with <code>query</code> and <code>form</code> already parsed into maps. A handler returns one of three things: a <strong>string</strong> (sent as <code>text/html</code>), a <strong>map</strong> <code>{status?, headers?, body}</code> for full control, or <strong>nil</strong> (a 204, for fire-and-forget actions). Handler calls are serialized — one at a time, which is exactly right for a single browser window — and a handler that dies becomes a 500 response, never a crashed server.</p>
+<p>Privacy composes here the way it does everywhere: routes hold function <em>values</em>, so in a module a private handler works fine — <code>serve({routes: {"/": .home}})</code> needs no <code>export</code>.</p>
+<h3 id="options-assets-and-shipping-it">Options, assets, and shipping it</h3>
+<pre><code class="language-drang"># norun: serve options
+serve({
+	routes: {"/": .home, "/tick": .tick},
+	static: "web",     # serve files from ./web at /  (index.html, style.css, ...)
+	port:   0,         # 0 or omitted = an ephemeral port; fixed number to pin it
+	open:   true       # false = start the server, open no window (tests, curl)
+})</code></pre>
+<p><code>static</code> serves a directory of plain files alongside your routes — and this is the dev-to-ship hinge: run the script and <code>static: "web"</code> reads from disk; build it with</p>
+<pre><code>drang build tool.dr --web web --gui -o tool.exe</code></pre>
+<p>and the same program serves the <strong>embedded</strong> copy of <code>web/</code> from memory — one double-clickable, signable exe (<code>--gui</code> suppresses the console window; see the standalone section of the README).</p>
+<h3 id="lifetime-and-clamping">Lifetime and clamping</h3>
+<p>Every request is gated on a per-launch random token (delivered on the first navigation, then carried by a cookie), so no other local process can drive your tool. The window is Microsoft Edge in <code>--app</code> mode against a <strong>throwaway profile</strong> — background networking, sync, and extensions off — launched inside a dedicated Job Object so drang watches the <em>whole</em> browser process tree: closing the window shuts the server down and wipes the profile, even when Edge hands the window off to a helper process. If Edge is absent, the default browser opens the page unclamped; with <code>open: false</code> nothing opens at all and the server just runs until the process is killed.</p>
+<p>Two worked examples ship in the repo: <a href="examples/gui/cockpit.dr"><code>examples/gui/cockpit.dr</code></a> (the minimal ping button above) and <a href="examples/gui/git_tree.dr"><code>examples/gui/git_tree.dr</code></a> (an interactive Git history viewer — metrics, debounced search, a graph table — in ~400 lines of drang).</p>
 <h2 id="one-liner-mode">One-liner mode</h2>
 <p><code>-n</code> and <code>-p</code> turn drang into a stream processor: the program runs once per input line, in the tradition of the classic line-oriented text tools. <code>-n</code> just loops over the lines. <code>-p</code> loops and, after each line, prints the topic variable <code>$_</code> — the filter mode, where you edit <code>$_</code> in place and let drang do the writing.</p>
 <p>Short flags combine. A trailing <code>e</code> takes the program source as its argument, exactly like a standalone <code>-e</code>, so <code>-ne</code>, <code>-pe</code>, and <code>-ane</code> are the usual forms:</p>

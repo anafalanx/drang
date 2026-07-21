@@ -3,7 +3,7 @@ type: guide
 title: testing drang
 description: How to run drang's local preflight — the -race suite, the fuzzers, the example checks, and the release gate.
 tags: [drang, testing, preflight, quality]
-timestamp: 2026-07-09
+timestamp: 2026-07-21
 ---
 
 # Testing drang
@@ -16,12 +16,12 @@ guarantees.
 The single entry point is the **preflight**:
 
 ```
-drang tools/verify.dr          # full build + vet + -race suite, then a 20s fuzz burst per target
+drang tools/verify.dr          # build + vet + -race suite + docs checks, then a 20s fuzz burst per target
 drang tools/verify.dr 60s      # longer fuzz burst per target
-drang tools/verify.dr none     # gate only (build + vet + -race), no fuzzing
+drang tools/verify.dr none     # gate + docs checks only, no fuzzing
 ```
 
-or, via the [`z.json`](z.json) task runner, `z verify` (which runs it straight from
+or, via the [`z.json`](z.json) task runner, `z check` (which runs it straight from
 source with `go run`, so there is never a stale interpreter).
 
 > **Run the preflight before cutting a release, and after any major work.** With no CI
@@ -40,13 +40,18 @@ runs these stages and exits non-zero if any fails:
 | build | `go build ./...` | anything that doesn't compile (incl. `cmd/drang`) |
 | vet | `go vet ./...` | suspicious constructs the compiler allows |
 | race suite | `go test -race ./...` | logic regressions **and** data races, across every package |
+| fmt gate | `drang fmt --check bench tools examples` | canonical-format drift in the repo's own scripts |
+| manual examples | `drang tools/check_examples.dr MANUAL.md` | manual/reality drift — shown output byte-compared |
+| reference examples | `drang tools/check_examples.dr REFERENCE.md` | the same, for any runnable REFERENCE blocks |
+| OKF lint | `drang tools/okf_lint.dr` | a concept doc missing its OKF `type` frontmatter |
 | fuzz: parser | `go test -fuzz=FuzzParse ./internal/parser` | inputs that panic/hang the front end |
 | fuzz: printer | `go test -fuzz=FuzzFmtRoundTrip ./internal/printer` | `drang fmt` losing its fixed point |
 | fuzz: eval | `go test -fuzz=FuzzBackendParity ./internal/eval` | the VM and the oracle disagreeing |
 
 The build/vet/race stages are a **gate**: the first failure stops the run (no point
-fuzzing a broken tree). The three fuzz stages then all run even if one fails, so a
-single pass surfaces every parse, format, and parity regression at once.
+checking docs or fuzzing a broken tree). The docs group then runs as a batch (so one
+pass surfaces every doc regression), and the three fuzz stages all run even if one
+fails — ten stages in all, and a single pass reports everything at once.
 
 The `-race` suite runs the **full** suite with no `-short`, so the slow behavioral
 tests (e.g. the Job-Object resource-limit and CPU-breach tests, which spin a real
@@ -68,7 +73,8 @@ go test -run TestVMParity ./internal/eval   # one test
 ```
 
 The toolchain is **Go 1.26** (it is not on the global `PATH` in this environment — it
-lives under `z/r/go/1.26.4/bin`).
+lives in the z workspace tree, e.g. `.z/go/1.26.4/bin`; the `-race` suite additionally
+needs `CGO_ENABLED=1` and the workspace's MSYS2 gcc).
 
 ---
 

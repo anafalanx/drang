@@ -3,7 +3,7 @@ type: overview
 title: drang
 description: A small, parallel, Perl-inspired scripting language for text, system glue, and orchestration — implemented in Go, Windows-only.
 tags: [drang, overview, readme, scripting-language]
-timestamp: 2026-07-09
+timestamp: 2026-07-21
 ---
 
 # drang
@@ -29,9 +29,14 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
   `qr//` regex literals, `q//`/`qq//`/`qw//` quotes, and `|>` pipelines.
 - **Glue built in**: `run`/`capture`/`pipe`/`start` with `{cwd, env, env_add, stdin, timeout}` options and
   process-tree kill on timeout, `stream_lines` streaming, plus channels and tasks.
-- **Batteries, curated**: modules (`use`) with frozen exports, a standard library of ~120 builtins
-  plus a drang-written prelude, JSON & CSV, `qr//` regexes, date/time, hashing/encoding, and a minimal
-  robust HTTP client (`http_get`/`http_post`). Broad, not a kitchen sink.
+- **Batteries, curated**: modules (`use`) — private-by-default, `export` names the API, exports
+  deeply frozen — a standard library of ~120 builtins plus a drang-written prelude, JSON & CSV,
+  `qr//` regexes, date/time, hashing/encoding, a persistent key-value store, boundary shape
+  checking (`validate`), and a minimal robust HTTP client (`http_get`/`http_post`). Broad, not a
+  kitchen sink.
+- **Local GUI cockpits**: `serve({routes: ...})` runs a token-gated local htmx server and opens a
+  clamped browser app window; `drang build tool.dr --web web --gui` packs the tool, its assets, and
+  the runtime into one double-clickable exe.
 - **Functions are first-class**: pass any lambda *or builtin* by name: `map($xs, basename)`,
   `reduce(0, max)`, `filter(bool)`.
 - **Tooling**: `drang fmt` formats faithfully (provenance-preserving), `drang test` runs `example`
@@ -92,16 +97,17 @@ a console, so stdout/stderr and startup errors are normally invisible; use it fo
 
 ## Status
 
-**drang 0.8**: a speed release — *change nothing except the speed*. Behavior is identical to 0.7
-(verified program-for-program against the 0.7 binary; the only observable difference is that
-`drang_gc()` reports the relaxed startup baseline). The register VM gained int-specialized
-arithmetic, comparison, compound-assignment, and index/slot compound; `while` loops are now
-bottom-testing (no per-iteration back-edge jump); and one-shot runs relax the GC. Pure numeric
-loops now run about as fast as CPython 3.14. See [CHANGELOG.md](CHANGELOG.md). The 0.7 feature set —
-kernel-enforced resource caps, the frozen process-control surface, and the pre-1.0 vocabulary freeze
-— is unchanged. See the *"Not Yet"* section of the manual for the remaining gaps: no structs (maps
-stand in as records), no character ranges, no implicit string↔number coercion (deliberate), and no
-in-place one-liner mode (`-i`).
+**drang 0.12.0**: modules are **private-by-default** (`export` marks the API; unmarked top-level
+names never leave their file), **`validate`** checks map shapes at boundaries (type tokens are the
+conversion builtins used first-class: `{host: str, port: int}`), and local GUI tools ship as single
+signed executables (`serve` + `drang build --web --gui`). The road here: 0.11.0 brought local htmx
+GUIs to a clamped browser window; 0.10.0 completed single-process orchestration
+(`recv_stdout`/`recv_stderr` — drive a child both ways); 0.9 added the persistent store, `walk`,
+and in-place one-liner editing (`-i`); 0.7–0.8 froze the pre-1.0 vocabulary, added kernel-enforced
+resource caps, and made the VM fast. Full history in [CHANGELOG.md](CHANGELOG.md). See the
+*"Not Yet"* section of the manual for the remaining gaps: no character ranges, no `match`/`switch`
+dispatch yet, no implicit string↔number coercion (deliberate), and no structs — maps plus
+`validate` stand in, deliberately.
 
 ## License
 

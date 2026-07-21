@@ -36,6 +36,7 @@ This manual is the worked, example-driven guide. For a terse formal specificatio
 - [Hashing, encoding, and randomness](#hashing-encoding-and-randomness)
 - [HTTP client](#http-client)
 - [Task dispatch](#task-dispatch)
+- [Local GUIs: `serve`](#local-guis-serve)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
 - [Validation: `validate`](#validation-validate)
@@ -4445,6 +4446,69 @@ $ echo $?
 ```
 
 One sharp edge to know. `exit(n)` and `die(...)` do **not** work from inside a dispatched task. They are program-level controls, and calling either within a task function produces `drang: exit outside of a program` on stderr and an exit code of 1, discarding the code you asked for. Inside a task, choose your exit code by returning or propagating an `Err`, as above, and reserve `exit`/`die` for the top level of an ordinary script.
+
+## Local GUIs: `serve`
+
+A drang script can be a windowed tool. `serve` runs a **local, single-user** htmx GUI: it binds `127.0.0.1`, routes request paths to your drang functions, and opens the page in a clamped browser app window. It is deliberately *not* a web framework — no deployment, no accounts, no public listening — just the shortest path from "script" to "cockpit with buttons."
+
+The blocks in this chapter carry a `# norun` first line: the example checker shows them but does not execute them, because a `serve` call opens a window and blocks until it closes.
+
+```drang
+# norun: opens a browser window and serves until it is closed
+$page := <<'HTML'
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><script src="/_/htmx.js"></script></head>
+<body>
+  <h1>drang cockpit</h1>
+  <button hx-get="/tick" hx-target="#out">Ping the server</button>
+  <div id="out">(click the button)</div>
+</body>
+</html>
+HTML
+
+fn .home($req) { $page }
+
+fn .tick($req) {
+	"<strong>pong</strong> — server time is " ~ format_time(now(), "%H:%M:%S")
+}
+
+serve({routes: {"/": .home, "/tick": .tick}})
+```
+
+Run it and a chrome-less app window opens showing the page; the button fires an htmx `GET /tick`, your `.tick` runs, and its HTML fragment lands in `#out`. Close the window and the script ends. The htmx runtime (2.0.4) is baked into the drang binary and served at `/_/htmx.js` — nothing to install, fully offline.
+
+### Handlers
+
+A route maps a path to a function of zero or one parameters. The parameter, if declared, receives a request map — `{method, path, query, form, headers}` — with `query` and `form` already parsed into maps. A handler returns one of three things: a **string** (sent as `text/html`), a **map** `{status?, headers?, body}` for full control, or **nil** (a 204, for fire-and-forget actions). Handler calls are serialized — one at a time, which is exactly right for a single browser window — and a handler that dies becomes a 500 response, never a crashed server.
+
+Privacy composes here the way it does everywhere: routes hold function *values*, so in a module a private handler works fine — `serve({routes: {"/": .home}})` needs no `export`.
+
+### Options, assets, and shipping it
+
+```drang
+# norun: serve options
+serve({
+	routes: {"/": .home, "/tick": .tick},
+	static: "web",     # serve files from ./web at /  (index.html, style.css, ...)
+	port:   0,         # 0 or omitted = an ephemeral port; fixed number to pin it
+	open:   true       # false = start the server, open no window (tests, curl)
+})
+```
+
+`static` serves a directory of plain files alongside your routes — and this is the dev-to-ship hinge: run the script and `static: "web"` reads from disk; build it with
+
+```
+drang build tool.dr --web web --gui -o tool.exe
+```
+
+and the same program serves the **embedded** copy of `web/` from memory — one double-clickable, signable exe (`--gui` suppresses the console window; see the standalone section of the README).
+
+### Lifetime and clamping
+
+Every request is gated on a per-launch random token (delivered on the first navigation, then carried by a cookie), so no other local process can drive your tool. The window is Microsoft Edge in `--app` mode against a **throwaway profile** — background networking, sync, and extensions off — launched inside a dedicated Job Object so drang watches the *whole* browser process tree: closing the window shuts the server down and wipes the profile, even when Edge hands the window off to a helper process. If Edge is absent, the default browser opens the page unclamped; with `open: false` nothing opens at all and the server just runs until the process is killed.
+
+Two worked examples ship in the repo: [`examples/gui/cockpit.dr`](examples/gui/cockpit.dr) (the minimal ping button above) and [`examples/gui/git_tree.dr`](examples/gui/git_tree.dr) (an interactive Git history viewer — metrics, debounced search, a graph table — in ~400 lines of drang).
 
 ## One-liner mode
 

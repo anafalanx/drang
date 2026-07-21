@@ -818,8 +818,10 @@ drang [flags] program.dr [args...]
 drang -e '<source>' [args...]
 drang fmt [--fix] <files...>       # format
 drang test <files...>              # run tests
-drang build [-o out] ./cmd/...     # compile a static binary
+drang build script.dr [-o out.exe] [--web <dir>] [--gui]   # standalone executable
 ```
+
+- `drang build` embeds the script (and, with `--web <dir>`, a web asset tree) into a copy of the interpreter — one self-contained exe. `--gui` flips the standalone's Windows subsystem so Explorer launches it without a console window (console stays the default so development errors remain visible).
 
 - `-e <src>` — run source from the argument instead of a file.
 - `--run` (default), `--ast` (print the AST), `--tokens` (print the token stream), `--version`/`-V`, `--help`/`-h`.
