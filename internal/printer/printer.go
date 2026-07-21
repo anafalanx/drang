@@ -296,7 +296,7 @@ func (p *printer) stmt(s ast.Stmt) {
 			op = "::="
 		}
 		if n.Exported {
-			p.write("e ")
+			p.write("export ")
 		}
 		p.write("$" + n.Name + " " + op + " ")
 		p.expr(n.Value)
@@ -316,7 +316,7 @@ func (p *printer) stmt(s ast.Stmt) {
 		p.forStmt(n)
 	case *ast.FnDecl:
 		if n.Exported {
-			p.write("e ")
+			p.write("export ")
 		}
 		p.write("fn " + n.Name + "(")
 		p.params(n.Params, n.Defaults)

@@ -288,3 +288,23 @@ fn retry($n, $delay_ms, $f) {
   }
   $r
 }
+
+# --- validation (see the validate builtin) ---
+
+# a shape term matching any of the alternative terms: {retries: one_of([int, bool])}
+fn one_of($terms) {
+  |$v| {
+    for $t in $terms {
+      if !is_err(validate($v, $t)) { return true }
+    }
+    fail("matches none of the alternatives")
+  }
+}
+
+# a shape term requiring one exact value: {method: lit("GET")}
+fn lit($want) {
+  |$v| {
+    if $v == $want { return true }
+    fail("want exactly " ~ $want)
+  }
+}

@@ -27,7 +27,7 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.11.0"
+var version = "0.12.0"
 
 func main() {
 	// Make the console render drang's UTF-8 output correctly (no-op when output is

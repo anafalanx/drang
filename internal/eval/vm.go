@@ -555,7 +555,7 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			regs[in.A] = v
 		case OpDeclVar:
 			name := p.Consts[in.B].AsStr()
-			// C is a flag word: bit 0 = frozen (::=), bit 1 = exported (`e`).
+			// C is a flag word: bit 0 = frozen (::=), bit 1 = exported (`export`).
 			if err := env.defineWith(name, regs[in.A], in.C&1 != 0, in.C&2 != 0); err != nil {
 				return value.MakeNil(), err
 			}

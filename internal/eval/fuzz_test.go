@@ -51,7 +51,10 @@ var pureIdents = map[string]bool{
 	"round": true, "sqrt": true, "pow": true, "log": true, "div": true,
 	"sin": true, "cos": true, "tan": true, "asin": true, "acos": true, "atan": true,
 	"atan2": true, "exp": true,
-	"pi": true,
+	"pi": true, "e": true,
+	// validation — pure given pure predicates (an impure builtin inside a user
+	// predicate appears bare in the AST and trips this gate itself)
+	"validate": true,
 	// regex — compiling and matching are pure
 	"re": true, "matches": true, "match": true, "match_all": true,
 }

@@ -38,7 +38,7 @@ type binding struct {
 	v        value.Value
 	frozen   bool
 	merged   bool // imported into this scope by `use` (flat-merge) — not re-exported
-	exported bool // marked `e` at the top level — part of the module's export surface
+	exported bool // marked `export` at the top level — part of the module's export surface
 }
 
 // Env is a lexical scope chain.
@@ -220,7 +220,7 @@ func (e *Env) define(name string, v value.Value, frozen bool) error {
 	return nil
 }
 
-// defineWith is define plus the module-export marker (`e`): the flag is recorded
+// defineWith is define plus the module-export marker (`export`): the flag is recorded
 // on the binding so collectExports can tell the export surface from the private
 // interior. Exported is inert outside a module load — a plain run never reads it.
 func (e *Env) defineWith(name string, v value.Value, frozen, exported bool) error {
@@ -1655,6 +1655,9 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 	if name == "with_store" {
 		return evalWithStore(args, depth)
 	}
+	if name == "validate" {
+		return evalValidate(args, depth)
+	}
 	if hofNames[name] {
 		return evalHOF(name, args, depth)
 	}
@@ -1668,7 +1671,8 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 // a user-defined function) — a candidate for direct dispatch when unshadowed.
 func isNonUserName(name string) bool {
 	if name == "dispatch" || name == "spawn" || name == "stream_lines" || name == "use" ||
-		name == "store" || name == "store_update" || name == "with_store" || hofNames[name] {
+		name == "store" || name == "store_update" || name == "with_store" ||
+		name == "validate" || hofNames[name] {
 		return true
 	}
 	_, ok := builtins[name]
@@ -1986,6 +1990,7 @@ var builtins = map[string]builtin{
 	"atan2": builtinAtan2,
 	"exp":   builtinExp,
 	"pi":    builtinPi,
+	"e":     builtinE,
 
 	// regex (RE2; regex-needle replacement is replace_first/replace_all above)
 	"re":        builtinRe,

@@ -3,12 +3,12 @@ type: roadmap
 title: drang roadmap
 description: What is built, what is deliberately out of scope, and what remains — drang's status ledger.
 tags: [drang, roadmap, status]
-timestamp: 2026-07-20
+timestamp: 2026-07-21
 ---
 
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-05 — **drang 0.10.0 released** (single-process orchestration completed: `recv_stdout` + `recv_stderr`; see CHANGELOG.md).
+*Inventory refreshed 2026-07-21 — **drang 0.12.0 released** (module privacy via `export`, `validate` boundary shape checking; see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -79,6 +79,21 @@ Ruby, thinks like Perl, runs like Go").*
   ways** — write its stdin, read its stdout and stderr. Graceful `stop`/`signal` stays reserved and
   deferred (decision record in DESIGN.md); ConPTY and the *sturm* tree remain future work. Additive
   and backward-compatible. Full log in CHANGELOG.md.
+- **0.11.0 (2026-07-09) — RELEASED: the GUI release.** Local htmx GUIs: `serve` (127.0.0.1 +
+  per-launch token, embedded htmx at `/_/htmx.js`, clamped Edge `--app` window with throwaway
+  profile) and `drang build --web <dir>` asset bundling (payload v3). The docs became an OKF v0.1
+  bundle, and `tools/verify.dr` grew into the full 10-stage preflight (build/vet/`-race`,
+  `fmt --check`, MANUAL/REFERENCE example checks, OKF lint, 3 fuzz targets). Additive and
+  backward-compatible. Full log in CHANGELOG.md.
+- **0.12.0 (2026-07-21) — RELEASED: module privacy + validation.** Modules are
+  **private-by-default**: exports are marked with the contextual `export` keyword (`export fn .foo`,
+  `export $C ::=`) — breaking for module files, with the exports-nothing warning as the migration
+  guide (decision record in DESIGN.md, including the one-day `e` spelling and the rename ground:
+  agent legibility). **`validate(value, shape)`** boundary shape checking — type tokens are the
+  first-class conversion builtins, `"key?"` optional / `"..."` open-map keys, predicate fns +
+  prelude `one_of`/`lit`; structs declined and `valid` autocheck parked (records in DESIGN.md).
+  Plus **`e()`** (Euler, beside `pi()`), **`drang build --gui`** (GUI-subsystem standalones), and
+  the Job-Object **Edge lifetime** fix for `serve`. Full log in CHANGELOG.md.
 - **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-05 — build on real daily-driver need,
   not speculatively).** Ordered by likely use: **named-capture `match` → map** is the most likely to
   be hit and a genuine *power*; then `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed:
@@ -159,6 +174,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~Local htmx GUI serving (`serve`)~~ | **DONE in 0.11.0** — a *local, single-user* htmx server for tool cockpits: 127.0.0.1 + per-launch token, embedded htmx, clamped Edge `--app` window, `drang build --web` asset bundling. Deliberately narrow — a production web server / framework stays out of scope | Go | ✅ DONE |
 | TOML / INI config parsing | no Go-stdlib parser → would need a third-party library (against the dependency-light pillar) | Go | GATED (decision-record first) |
 | ~~First-class builtin values (`map($xs, basename)`)~~ | the long-standing HOF wart — **DONE**: a bare builtin name is a function value on both backends | (language) | ✅ DONE |
+| ~~`validate` boundary shape checking~~ | **DONE (2026-07-21)** — value-or-Err shape check with path'd mismatch reports; type tokens are the first-class conversion builtins; `"key?"` optional / `"..."` open-map keys; predicate fns + prelude `one_of`/`lit` combinators. Structs/`valid` autocheck considered and declined/parked — decision record in DESIGN.md | Go + prelude | ✅ DONE |
 | `sh()` shell-escape; SQL; templating; compressed I/O; `embed()`; signals | lower-frequency batteries; build on demand | mixed | DEFERRED-BY-DESIGN |
 
 ## (c) Tooling & developer experience
@@ -188,7 +204,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 
 | Item | Status |
 |------|--------|
-| ~~Module privacy (every top-level `.foo` is exported)~~ | ✅ DONE — modules are private-by-default; exports are marked with the contextual `e` keyword (`e fn .foo`, `e $C ::=`). Breaking for module files; decision record in DESIGN.md |
+| ~~Module privacy (every top-level `.foo` is exported)~~ | ✅ DONE — modules are private-by-default; exports are marked with the contextual `export` keyword (`export fn .foo`, `export $C ::=`). Breaking for module files; decision record in DESIGN.md |
 | ~~Duplicate `fn .foo` in one file = silent last-wins~~ | ✅ DONE — 0.7 warns on stderr while preserving last-definition-wins |
 | Extensionless path precedence (bare file shadows `<name>.dr`) | DEFERRED-BY-DESIGN |
 | Bare `use("x")` with parens as a discarded statement = silent no-op | DEFERRED-BY-DESIGN |

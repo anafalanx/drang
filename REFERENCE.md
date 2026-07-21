@@ -3,7 +3,7 @@ type: reference
 title: drang formal reference
 description: The precise specification of drang — grammar, semantics, the value and error models, and every builtin.
 tags: [drang, reference, specification]
-timestamp: 2026-07-20
+timestamp: 2026-07-21
 ---
 
 # drang — Formal Reference (v0.11.0)
@@ -58,7 +58,7 @@ VAR          = "$" ident ;                              (* $-sigil variable; Lit
 dotname      = "." ident ;                              (* user-function reference; see prefix rules *)
 ```
 
-The language has exactly **three name forms**: `$name` (VAR — variables/parameters, the only sigil'd form), a **bare** `IDENT` (builtins and, in statement/call position, contextual words), and a leading-dot `.name` (user-defined functions, kept as an `Ident` whose name literally begins with `.`, disjoint from bare builtins). A **keyword** is any `IDENT` matching: `fn return if else unless for in while until break next true false or and not`. Additionally, `use`, `example`, `BEGIN`/`END`, and `e` (export marker) are **contextual** — keywords only in their statement-leading positions, ordinary identifiers elsewhere. A bare `IDENT` cannot be assigned to and is not an lvalue.
+The language has exactly **three name forms**: `$name` (VAR — variables/parameters, the only sigil'd form), a **bare** `IDENT` (builtins and, in statement/call position, contextual words), and a leading-dot `.name` (user-defined functions, kept as an `Ident` whose name literally begins with `.`, disjoint from bare builtins). A **keyword** is any `IDENT` matching: `fn return if else unless for in while until break next true false or and not`. Additionally, `use`, `example`, `BEGIN`/`END`, and `export` are **contextual** — keywords only in their statement-leading positions, ordinary identifiers elsewhere. A bare `IDENT` cannot be assigned to and is not an lvalue.
 
 ```ebnf
 (* --- numeric literals --- *)
@@ -161,8 +161,8 @@ for-stmt    = "for" VAR [ "," VAR ] "in" expr block ;   (* one var = element; tw
 special-block = ( "BEGIN" | "END" ) block ;
 use-stmt      = "use" ( STRING | RAWSTR ) ;             (* the '$u := use("path")' captured form is an ordinary call *)
 example-stmt  = "example" expr [ "==" expr | "fails" ] ;
-export-decl   = "e" ( fn-decl | VAR "::=" expr ) ;      (* marks a module export; 'e' before a mutable ':=' or in
-                                                           a nested position is a parse error *)
+export-decl   = "export" ( fn-decl | VAR "::=" expr ) ; (* marks a module export; 'export' before a mutable ':='
+                                                           or in a nested position is a parse error *)
 ```
 
 **Expressions** — binding powers, lowest to highest. `//` is looser than `|>` (so `$x // $y |> f()` parses as `$x // ($y |> f())`). All binary operators are **left-associative** (verified: `10-3-2` → `(- (- 10 3) 2)`; `$a//$b//$c` → `(// (// $a $b) $c)`; `1<2<3` → `(< (< 1 2) 3)`; `1..2..3` → `(range (range 1 2) 3)`).
@@ -324,7 +324,7 @@ Safe *by subtraction*: frozen top-level constants + lexical-only scope + immutab
 
 ### Modules
 
-Any `.dr` file is a module; its **exports are the top-level definitions marked `e`** — `e fn .foo(...)` and `e $CONST ::= …`. Unmarked top-level names are **module-private** (never merged, absent from the record); a mutable top-level `:=` var is rejected at import even when private. One keyword, `use`; **whether the result is captured** chooses the mode:
+Any `.dr` file is a module; its **exports are the top-level definitions marked `export`** — `export fn .foo(...)` and `export $CONST ::= …`. Unmarked top-level names are **module-private** (never merged, absent from the record); a mutable top-level `:=` var is rejected at import even when private. One keyword, `use`; **whether the result is captured** chooses the mode:
 
 - **Flat merge** — `use "./util"` (statement): merges the module's exported `.foo` into your `.`-space and exported `$CONST` into your `$`-space, as if pasted.
 - **Isolated** — `$u := use("./util")` (captured call): binds the export **record**; reach exports via `$u.foo()` / `$u.CONST`. Injects nothing. This is the aliased-import form (no `as`).
@@ -339,7 +339,11 @@ Resolution & rules:
 - **`exit`/`die` propagate** through loading, even through the captured `$u := use(...)` form (not downgraded to a catchable Err).
 - A **failed captured** import is a **catchable Err** (`use("./x") // {}`); a **failed flat-merge** statement **aborts** with the import error.
 - **Exports are deeply immutable** (record and every container within frozen), safe to share across the import cache.
-- **Visibility**: `e` is legal only at the top level (elsewhere a parse error) and never on a mutable `:=` (parse error). Importing a module whose top level is entirely unmarked warns `exports nothing` on stderr (the pre-`e` migration guide). Privacy binds **names, not values** — a private fn passed as a value (`serve` route, `map` callback) is fully callable. Deliberate re-export: `e $dep ::= use("./dep")`.
+- **Visibility**: `export` is legal only at the top level (elsewhere a parse error) and never on a mutable `:=` (parse error). Importing a module whose top level is entirely unmarked warns `exports nothing` on stderr (the migration guide for older modules). Privacy binds **names, not values** — a private fn passed as a value (`serve` route, `map` callback) is fully callable. Deliberate re-export: `export $dep ::= use("./dep")`.
+
+### Validation
+
+`validate(value, shape) -> value | Err` — the boundary shape check. On success the **value passes through unchanged**; on failure one catchable Err lists **every** mismatch with its path (`child.args[2]: want str, got int 7`). A shape **term** is: a first-class conversion builtin `str`/`int`/`float`/`bool` (exact tag, no coercion); `true` (any value); a map literal (**strict** — an undeclared key is a mismatch; a `"key?"` shape key is optional; a `"..."` shape key holds the term undeclared keys' values must match, making the map open); `[term]` (every element) or `[]` (any array); or any function (a predicate — truthy passes, falsy rejects, a returned `fail(...)` Err rejects with its message). A missing key and a nil-valued key are the same thing throughout (required, optional, and extra alike). Prelude combinators build predicate terms: `one_of([t1, t2, …])` (alternatives) and `lit(v)` (exact value). **err:** mismatches are a catchable Err; a **malformed shape** (e.g. the string `"int"` as a term, a two-term array shape) is a programming mistake and **aborts** uncatchably, so `//` can never silently absorb a typo'd shape.
 
 ## Builtins
 
@@ -384,7 +388,7 @@ Notes:
 
 ### Numeric
 
-Daily-driver math plus a trig/exp line; no bignum, complex, or matrix support. **Type preservation:** `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round`/`div` always return `int`; `sqrt`/`log`/`exp`/`sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`/`pi` always return `float`; `pow` returns `int` when both operands are `int` and `exp >= 0` (else `float`). **Shared failure convention:** a non-number operand returns a catchable Err; a wrong argument *count* aborts the program (`drang: <name> expects N arguments, got M`) and is uncatchable. Trig arguments/results are in **radians**.
+Daily-driver math plus a trig/exp line; no bignum, complex, or matrix support. **Type preservation:** `abs`/`sum`/`min`/`max` preserve int vs float; `floor`/`ceil`/`round`/`div` always return `int`; `sqrt`/`log`/`exp`/`sin`/`cos`/`tan`/`asin`/`acos`/`atan`/`atan2`/`pi`/`e` always return `float`; `pow` returns `int` when both operands are `int` and `exp >= 0` (else `float`). **Shared failure convention:** a non-number operand returns a catchable Err; a wrong argument *count* aborts the program (`drang: <name> expects N arguments, got M`) and is uncatchable. Trig arguments/results are in **radians**.
 
 `abs(n: int|float) -> int|float` — absolute value, preserving numeric type (the path builtin is `abs_path`). **err:** non-number -> Err; wrong arity aborts.
 `sum(arr: array) -> int|float` / `sum(a: int|float, rest...) -> int|float` — adds an array or a variadic list of numbers; empty/zero-arg -> `0`; preserves int vs float. **err:** non-number element/arg or overflow -> Err; never aborts (0–N args accepted).
@@ -406,6 +410,7 @@ Daily-driver math plus a trig/exp line; no bignum, complex, or matrix support. *
 `atan(x: int|float) -> float` — inverse tangent (radians). **err:** non-number -> Err; wrong arity aborts.
 `atan2(y: int|float, x: int|float) -> float` — angle in radians of point `(x, y)`, quadrant-correct (`atan2(1,1)` is π/4). **err:** non-number -> Err; wrong arity (not exactly 2) aborts.
 `pi() -> float` — the constant π (`3.141592653589793`) as a zero-arg builtin; bind a constant with `$PI ::= pi()`. **err:** never; passing any argument aborts (`pi expects no arguments`).
+`e() -> float` — Euler's number (`2.718281828459045`) as a zero-arg builtin, the sibling of `pi()`; `e() == exp(1)`. **err:** never; passing any argument aborts (`e expects no arguments`).
 
 ### Strings
 

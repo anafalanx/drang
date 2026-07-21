@@ -109,16 +109,16 @@ func TestPipeRHSMustBeCallable(t *testing.T) {
 	}
 }
 
-// TestExportMarker: `e` before a top-level fn / `::=` constant sets Exported; bad
-// placements are parse errors so the marker can never silently mean nothing.
+// TestExportMarker: `export` before a top-level fn / `::=` constant sets Exported;
+// bad placements are parse errors so the marker can never silently mean nothing.
 func TestExportMarker(t *testing.T) {
 	good := map[string]string{
-		`e fn .f() { 1 }`:      "(e fn .f () (block 1))",
-		`e $C ::= 5`:           "(e ::= $C 5)",
+		`export fn .f() { 1 }`: "(export fn .f () (block 1))",
+		`export $C ::= 5`:      "(export ::= $C 5)",
 		`fn .f() { 1 }`:        "(fn .f () (block 1))",
 		`$C ::= 5`:             "(::= $C 5)",
-		`e fn .f() { 1 }
-e $C ::= 5`: "(e fn .f () (block 1))\n(e ::= $C 5)",
+		`export fn .f() { 1 }
+export $C ::= 5`: "(export fn .f () (block 1))\n(export ::= $C 5)",
 	}
 	for src, want := range good {
 		p := New(src)
@@ -132,11 +132,11 @@ e $C ::= 5`: "(e fn .f () (block 1))\n(e ::= $C 5)",
 		}
 	}
 	bad := map[string]string{
-		`e $x := 5`:                 "mutable",              // e cannot export a mutable variable
-		`fn .f() { e fn .g() {} }`:  "top level",            // nested in a function
-		`if true { e $C ::= 1 }`:    "top level",            // nested in a block
-		`e $x`:                      "must be followed by",  // no ::= after the var
-		`e $x + 1`:                  "must be followed by",  // an expression, not a decl
+		`export $x := 5`:                "mutable",             // cannot mark a mutable variable
+		`fn .f() { export fn .g() {} }`: "top level",           // nested in a function
+		`if true { export $C ::= 1 }`:   "top level",           // nested in a block
+		`export $x`:                     "must be followed by", // no ::= after the var
+		`export $x + 1`:                 "must be followed by", // an expression, not a decl
 	}
 	for src, wantSub := range bad {
 		p := New(src)
@@ -150,7 +150,7 @@ e $C ::= 5`: "(e fn .f () (block 1))\n(e ::= $C 5)",
 			t.Errorf("%q: error %v should mention %q", src, errs, wantSub)
 		}
 	}
-	// `e` not followed by fn/$ stays an ordinary identifier (a builtin-name
+	// `export` not followed by fn/$ stays an ordinary identifier (a builtin-name
 	// expression), so existing code using none of this parses unchanged.
 	p := New(`say(1)`)
 	p.ParseProgram()

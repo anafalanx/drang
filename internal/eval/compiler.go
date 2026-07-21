@@ -460,7 +460,7 @@ func (c *compiler) compileStmt(s ast.Stmt, resultReg int32) {
 		idx := c.addTemplate(n.Name, n.Params, n.Defaults, n.Body)
 		r := c.reserve()
 		c.emit(OpMakeClosure, r, idx, 0)
-		flags := int32(0) // bit 1: exported (`e`); a fn binding is never frozen
+		flags := int32(0) // bit 1: exported (`export`); a fn binding is never frozen
 		if n.Exported {
 			flags |= 2
 		}
@@ -571,7 +571,7 @@ func (c *compiler) compileDecl(n *ast.DeclStmt, resultReg int32) {
 	}
 	r, tmp := c.resultOrTemp(resultReg)
 	c.compileExpr(n.Value, r)
-	flags := int32(0) // bit 0: frozen (::=), bit 1: exported (`e`)
+	flags := int32(0) // bit 0: frozen (::=), bit 1: exported (`export`)
 	if n.Const {
 		flags |= 1
 	}

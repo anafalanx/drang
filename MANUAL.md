@@ -3,7 +3,7 @@ type: manual
 title: drang manual
 description: The drang language end to end — values, control flow, functions, the builtin library, one-liner mode, concurrency, process control, and the GUI server.
 tags: [drang, manual, guide, language]
-timestamp: 2026-07-20
+timestamp: 2026-07-21
 ---
 
 # drang: Language Manual
@@ -38,6 +38,7 @@ This manual is the worked, example-driven guide. For a terse formal specificatio
 - [Task dispatch](#task-dispatch)
 - [One-liner mode](#one-liner-mode)
 - [Modules: `use`](#modules-use)
+- [Validation: `validate`](#validation-validate)
 - [Testing](#testing)
 - [Formatting](#formatting)
 - [Not yet: known gaps and surprises](#not-yet-known-gaps-and-surprises)
@@ -4596,20 +4597,20 @@ That rewrites `notes.txt` with every line uppercased, printing nothing. Give `-i
 
 ## Modules: `use`
 
-A program can be split across files. Any `.dr` file is a **module**. Its exports are the top-level definitions **marked with the `e` keyword** — `e fn .foo(...) {...}` and `e $CONST ::= …` — and nothing else: an unmarked top-level name is **module-private**, invisible to every importer. A mutable top-level variable in a module is rejected at import time even when private, so a module's surface is always functions and constants, never mutable state.
+A program can be split across files. Any `.dr` file is a **module**. Its exports are the top-level definitions **marked with the `export` keyword** — `export fn .foo(...) {...}` and `export $CONST ::= …` — and nothing else: an unmarked top-level name is **module-private**, invisible to every importer. A mutable top-level variable in a module is rejected at import time even when private, so a module's surface is always functions and constants, never mutable state.
 
 There is exactly one keyword, `use`, and it has two modes. Which one you get is decided by a single thing: **whether you capture the result**. Used bare as a statement, `use` merges. Used as a call whose value you bind, it isolates. There is no `import`/`from`/`as` vocabulary to learn beyond this.
 
 ### Flat merge: `use "./util"`
 
-As a statement, `use` merges the module's exports into the current scope, as if the source had been pasted in: the module's `e`-marked `.foo` functions join your `.`-space, its `e`-marked `$CONST`s join your `$`-space. You then call them with no prefix.
+As a statement, `use` merges the module's exports into the current scope, as if the source had been pasted in: the module's `export`-marked `.foo` functions join your `.`-space, its `export`-marked `$CONST`s join your `$`-space. You then call them with no prefix.
 
 Given this module:
 
 ```drang
 # util.dr
-e fn .shout($s) { .bang(upper($s)) }
-e $GREETING ::= "hi"
+export fn .shout($s) { .bang(upper($s)) }
+export $GREETING ::= "hi"
 fn .bang($s) { $s ~ "!" }
 ```
 
@@ -4667,11 +4668,11 @@ Entry points that have no source file of their own — `-e`, standard input, the
 ```drang
 # count.dr
 say("loading count")
-e fn .n() { 1 }
+export fn .n() { 1 }
 ```
 
 ```drang
-# left.dr and right.dr each contain:  use "./count"  and an e-marked .left() / .right()
+# left.dr and right.dr each contain:  use "./count"  and an exported .left() / .right()
 $l := use("./left")
 $r := use("./right")
 say($l.left())
@@ -4716,7 +4717,7 @@ The module's top level ran both times.
 drang: use "./cyc_a": … use "./cyc_b": … use "./cyc_a": import cycle through …\cyc_a.dr
 ```
 
-**Flat merge is not transitive.** If module `b` does `use "./d"`, importing `b` gives you `b`'s own exports only; `d`'s names are not re-exported through `b`. A merge injects names into the importing module's scope and stops there. (A *deliberate* re-export is spelled, like everything else, with `e`: a module containing `e $d ::= use("./d")` exposes the whole captured record as `$u.d`.) Reaching for a name that was merged one level down is an unknown-name error:
+**Flat merge is not transitive.** If module `b` does `use "./d"`, importing `b` gives you `b`'s own exports only; `d`'s names are not re-exported through `b`. A merge injects names into the importing module's scope and stops there. (A *deliberate* re-export is spelled, like everything else, with `export`: a module containing `export $d ::= use("./d")` exposes the whole captured record as `$u.d`.) Reaching for a name that was merged one level down is an unknown-name error:
 
 ```
 drang: unknown function .fromD
@@ -4790,12 +4791,12 @@ drang: use "./badmod": …\badmod.dr: a module may not hold mutable top-level st
 $counter must be a `::=` constant (or live inside a function)
 ```
 
-This rule has a consequence worth internalizing. To capture a nested import *inside* a module, bind it to a **constant**, not a variable: `$DEP ::= use("./dep")` keeps the dependency private, `e $DEP ::= use("./dep")` re-exports it, and `$dep := use("./dep")` would make the enclosing module itself unimportable.
+This rule has a consequence worth internalizing. To capture a nested import *inside* a module, bind it to a **constant**, not a variable: `$DEP ::= use("./dep")` keeps the dependency private, `export $DEP ::= use("./dep")` re-exports it, and `$dep := use("./dep")` would make the enclosing module itself unimportable.
 
 **Exports are deeply immutable.** A module's export record and every container reachable through it (each array and map inside) are frozen. Since exports are shared across the import cache, this guarantees one importer cannot mutate a value out from under another. An attempted write fails loudly at the point of mutation:
 
 ```drang
-# frozen.dr contains:  e $CONF ::= {host: "local", port: 80}
+# frozen.dr contains:  export $CONF ::= {host: "local", port: 80}
 $c := use("./frozen")
 say($c.CONF.host)
 $c.CONF.host = "other"
@@ -4806,9 +4807,9 @@ local
 drang: cannot modify a frozen map
 ```
 
-**Private by default; `e` names the API.** Everything a module does not mark is implementation, free to be renamed or deleted without breaking an importer — and free to *collide*: two modules may each keep a private `.check` helper, and a program can flat-merge both, because private names never leave their file. The export decision is made once, at the definition site, and the whole API is one grep away (`e fn`, `e $`).
+**Private by default; `export` names the API.** Everything a module does not mark is implementation, free to be renamed or deleted without breaking an importer — and free to *collide*: two modules may each keep a private `.check` helper, and a program can flat-merge both, because private names never leave their file. The export decision is made once, at the definition site, and the whole API is one grep away (`export fn`, `export $`).
 
-The marker is only legal at the top level of a file — `e` inside a function or block is a parse error, and `e $x := …` (a mutable variable) is rejected outright, so the keyword can never silently mean nothing. Forgetting to mark anything is loud too: importing a module whose top level is entirely private prints `warning: … exports nothing — top-level names are module-private unless marked with `e``, which is also the one-line migration guide for pre-`e` module files.
+The marker is only legal at the top level of a file — `export` inside a function or block is a parse error, and `export $x := …` (a mutable variable) is rejected outright, so the keyword can never silently mean nothing. Forgetting to mark anything is loud too: importing a module whose top level is entirely private prints `warning: … exports nothing — top-level names are module-private unless marked with `export``, which is also the one-line migration guide for older module files.
 
 Privacy binds **names, not values**. A function value handed out by the module works wherever it flows — `serve({routes: {"/": .home}})` may pass a private `.home` to the server, `map($xs, .clean)` may pass a private `.clean` to a builtin — because possession of the value is the permission. What privacy removes is the ability of *other files* to reach the name.
 
@@ -4824,6 +4825,99 @@ drang: unknown function .shout
 ```
 
 Write `use "./util"` to merge, or `$u := use("./util")` to capture.
+
+## Validation: `validate`
+
+Maps are drang's record type, and maps are open — the right choice for *building* data, the wrong one for *trusting* it. `validate(value, shape)` is the boundary check: it returns the value unchanged when it matches the shape, and a catchable error listing **every** mismatch, with its path, when it does not. Use it where foreign data enters a program — JSON off the wire, a request map in a `serve` handler, an options map at a module boundary — and the shape doubles as that boundary's documentation.
+
+```drang
+$cfg := validate({host: "local", port: 8080}, {host: str, port: int})
+say($cfg.port)
+```
+```
+8080
+```
+
+On success the *same* value passes through, so `validate` composes inline with `?` and `//` like any other error-producing call. On failure, one ordinary error value carries every problem at once — not just the first:
+
+```drang
+$r := validate({port: "80", extra: 1}, {host: str, port: int})
+say(err_msg($r))
+```
+```
+validate: host: missing (want str); port: want int, got str "80"; extra: unexpected key
+```
+
+### Shapes are pictures of the data
+
+A shape term is one of five things — all existing values; there is no schema language to learn:
+
+| Term | Meaning |
+|------|---------|
+| `str` / `int` / `float` / `bool` | the value has exactly that type |
+| `{...}` map literal | a map with this shape (strict: an undeclared key is a mismatch) |
+| `[term]` / `[]` | an array whose every element matches `term` / any array |
+| any function | a predicate: truthy passes; falsy or a `fail(...)` error rejects |
+| `true` | any value |
+
+The type tokens are the conversion builtins themselves, used first-class — the same four words you already convert with, and the sigil walls guarantee a bare `str` in a shape can only ever mean the builtin. Containers describe containers, so a shape reads like the map it validates:
+
+```drang
+$SHAPE ::= {cmd: str, args: [str], env: {"...": str}}
+say(is_err(validate({cmd: "git", args: ["st"], env: {A: "1"}}, $SHAPE)))
+```
+```
+false
+```
+
+### Optional keys and open maps
+
+A shape key ending in `?` is **optional**: absent is fine; present must match. A missing key and a key holding nil are the same thing here, as everywhere in drang. A `"..."` shape key holds the term that any *undeclared* keys' values must match — its presence makes the map open (`"...": true` accepts any extras):
+
+```drang
+$S ::= {host: str, "port?": int, "...": true}
+say(is_err(validate({host: "h", anything: [1, 2]}, $S)))
+say(err_msg(validate({host: "h", port: "80"}, $S)))
+```
+```
+false
+validate: port: want int, got str "80"
+```
+
+### Predicates, `one_of`, `lit`
+
+Any function is a shape term: `validate` calls it with the value, truthy passes, and a `fail("...")` rejects with your message at the right path. The prelude ships two combinators that *return* predicates — `one_of([t1, t2, ...])` matches any alternative term, `lit(v)` requires one exact value — and because a combinator is just a function returning a function, you can write your own in plain drang:
+
+```drang
+$POSITIVE ::= |$v| {
+	if type($v) == "int" and $v > 0 { return true }
+	fail("want a positive int")
+}
+$S ::= {retries: one_of([int, bool]), method: lit("GET"), port: $POSITIVE}
+say(is_err(validate({retries: true, method: "GET", port: 8080}, $S)))
+say(err_msg(validate({retries: [], method: "GET", port: 8080}, $S)))
+```
+```
+false
+validate: retries: matches none of the alternatives
+```
+
+### A malformed shape aborts
+
+A shape is code, not data. A string where a term belongs (`{port: "int"}`), a two-term array shape, or a non-string shape key aborts the program uncatchably — like a wrong argument count — rather than producing an error a `//` could silently absorb. For an exact string value, say so: `lit("int")`.
+
+### Checked once, valid forever
+
+Pair `validate` with a frozen constant and revalidation becomes unnecessary by construction: a frozen value can never drift, so one boundary check holds for the value's whole life.
+
+```drang
+$CONFIG_SHAPE ::= {host: str, "port?": int}
+$CFG ::= validate({host: "local", port: 80}, $CONFIG_SHAPE)?
+say($CFG.host)
+```
+```
+local
+```
 
 ## Testing
 
@@ -5107,7 +5201,7 @@ drang is a daily-driver under active construction, not a finished language. This
 
 ### Math is sized for glue scripts, not for science
 
-The math family covers everyday arithmetic and nothing heavier. You get `abs`, `sum`, `min`, `max`, `floor`, `ceil`, `round`, `sqrt`, `pow`, `log`, `exp`, and `div`; the full trig set (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, all in radians); and the constant `pi()`. The prelude adds `mean` and `median`.
+The math family covers everyday arithmetic and nothing heavier. You get `abs`, `sum`, `min`, `max`, `floor`, `ceil`, `round`, `sqrt`, `pow`, `log`, `exp`, and `div`; the full trig set (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, all in radians); and the constants `pi()` and `e()`. The prelude adds `mean` and `median`.
 
 ```drang
 say([abs(-3), max([2, 9, 4]), floor(3.7), div(17, 5), pow(2, 10)])

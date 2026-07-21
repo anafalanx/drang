@@ -409,7 +409,7 @@ push($h, $body)
 push($h, "</div></main>")
 push(
 	$h,
-	"<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.11.0 · built by drang</div></footer>"
+	"<footer><nav><a href=\"/\">Home</a><a href=\"https://github.com/anafalanx/drang\">GitHub</a><a href=\"https://github.com/anafalanx/drang/blob/main/DESIGN.md\">Design notes</a></nav><div>MIT licensed · drang 0.12.0 · built by drang</div></footer>"
 )
 push($h, "<script src=\"site.js\"></script>")
 push($h, "</body></html>")

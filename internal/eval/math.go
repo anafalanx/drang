@@ -329,3 +329,10 @@ func builtinPi(args []value.Value) (value.Value, error) {
 	}
 	return value.MakeFloat(math.Pi), nil
 }
+
+func builtinE(args []value.Value) (value.Value, error) {
+	if len(args) != 0 {
+		return value.MakeNil(), fmt.Errorf("e expects no arguments, got %d", len(args))
+	}
+	return value.MakeFloat(math.E), nil
+}

@@ -3,7 +3,7 @@ type: changelog
 title: drang changelog
 description: The release history of drang, newest first (Keep a Changelog style).
 tags: [drang, changelog, releases]
-timestamp: 2026-07-20
+timestamp: 2026-07-21
 ---
 
 # Changelog
@@ -11,29 +11,54 @@ timestamp: 2026-07-20
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
 
-## [Unreleased]
+## [0.12.0] — 2026-07-21
+
+The module-hygiene release. drang modules become **private by default** — the new
+contextual `export` keyword names the API, and everything unmarked stays internal —
+and `validate` arrives as the boundary shape checker for the map-shaped data the
+language runs on. **One breaking change** (the export marker; scripts that are never
+imported are untouched), plus the GUI-build polish the first serious `serve`
+application demanded: `drang build --gui` and a Job-Object-watched Edge lifetime.
+Still Windows-only.
 
 ### Added
 - **`drang build --gui`.** Produces a Windows GUI-subsystem standalone for polished
   double-clickable tools without a stray console window. Console builds remain the
   default so development diagnostics stay visible.
+- **`validate` — boundary shape checking.** `validate(value, shape)` returns the
+  value unchanged on a match, or one catchable Err listing **every** mismatch with
+  its path (`child.args[2]: want str, got int 7`). Shapes are pictures of the data,
+  made of existing values only: the conversion builtins `str`/`int`/`float`/`bool`
+  used first-class as type tokens (exact tag, no coercion), `true` (any value), map
+  literals (strict by default; a `"key?"` shape key is optional; a `"..."` shape key
+  holds the term undeclared keys must match), `[term]`/`[]` arrays, and any function
+  as a predicate (truthy passes; a `fail(...)` Err rejects with its message).
+  Absent and nil-valued keys are the same thing throughout. A malformed shape (a
+  string where a term belongs) is a programming mistake and aborts uncatchably, so
+  `//` can never silently absorb a typo'd shape. Prelude combinators build predicate
+  terms — `one_of([t1, t2, …])`, `lit(v)` — and are user-extensible by construction.
+  Pairs with freeze for checked-once-valid-forever configs:
+  `$CFG ::= validate(from_json($body), $SHAPE)?`. Decision record in DESIGN.md.
+- **`e()` — Euler's number.** The sibling of `pi()`: a zero-arg builtin returning
+  `2.718281828459045` (`e() == exp(1)`).
 
 ### Changed
-- **Modules are private-by-default: the `e` export marker (breaking).** A module's
-  exports are now the top-level definitions marked with the contextual keyword `e` —
-  `e fn .foo(...)` and `e $CONST ::= …`; every unmarked top-level name is
-  **module-private** (never flat-merged, absent from the captured record). Same-named
-  private helpers in two merged modules no longer collide. `e` is legal only at the
-  top level and only before `fn` or a `::=` constant — anywhere else, or on a mutable
-  `:=`, it is a parse error, so the marker can never silently mean nothing. Importing
-  a module whose top level is entirely unmarked warns `exports nothing` (the one-line
-  migration guide for pre-`e` module files). Deliberate re-export is explicit:
-  `e $dep ::= use("./dep")`. Privacy binds names, not values — a private fn passed as
-  a value (a `serve` route, a `map` callback) is fully callable. The mutable-top-level
-  rule is unchanged in force but clearer in scope: a module may not hold mutable
-  top-level state even privately (its once-loaded env is shared by every importer).
-  Scripts that are never imported are unaffected. `drang fmt` canonicalizes the
-  marker; decision record in DESIGN.md.
+- **Modules are private-by-default: the `export` marker (breaking).** A module's
+  exports are now the top-level definitions marked with the contextual keyword
+  `export` — `export fn .foo(...)` and `export $CONST ::= …`; every unmarked
+  top-level name is **module-private** (never flat-merged, absent from the captured
+  record). Same-named private helpers in two merged modules no longer collide.
+  `export` is legal only at the top level and only before `fn` or a `::=` constant —
+  anywhere else, or on a mutable `:=`, it is a parse error, so the marker can never
+  silently mean nothing. Importing a module whose top level is entirely unmarked
+  warns `exports nothing` (the one-line migration guide for older module files).
+  Deliberate re-export is explicit: `export $dep ::= use("./dep")`. Privacy binds
+  names, not values — a private fn passed as a value (a `serve` route, a `map`
+  callback) is fully callable. The mutable-top-level rule is unchanged in force but
+  clearer in scope: a module may not hold mutable top-level state even privately
+  (its once-loaded env is shared by every importer). Scripts that are never imported
+  are unaffected. `drang fmt` canonicalizes the marker; decision record (including
+  the one-day `e` spelling and why it became `export`) in DESIGN.md.
 
 ### Fixed
 - **Clamped Edge lifetime.** `serve(open:true)` now launches Edge born into a

@@ -220,7 +220,7 @@ say(.down(0) // "caught")`, "true\ncaught\n")
 // see the same per-run count — not an accumulating one.
 func TestModuleOverflowChargesImporterCounter(t *testing.T) {
 	dir := t.TempDir()
-	writeMod(t, dir, "deep.dr", "fn .deep($n) { .deep($n + 1) }\ne fn .probe() { .deep(0) // \"caught\" }")
+	writeMod(t, dir, "deep.dr", "fn .deep($n) { .deep($n + 1) }\nexport fn .probe() { .deep(0) // \"caught\" }")
 	env := NewEnv()
 	env.SetModuleDir(dir)
 	var buf bytes.Buffer

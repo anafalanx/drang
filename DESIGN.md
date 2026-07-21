@@ -3,7 +3,7 @@ type: design
 title: drang design notes
 description: The architecture and locked design decisions behind drang — the pillars, the scope, and the rationale for what is in and out.
 tags: [drang, design, architecture, decisions]
-timestamp: 2026-07-20
+timestamp: 2026-07-21
 ---
 
 # drang — Language Design
@@ -2828,6 +2828,95 @@ records), and privacy binds **names, not values** — a private handler passed t
 `serve({routes})` or `map` is fully callable, which is the capability model and covers
 the legitimate need "protected" gestures at. Two levels + first-class values span the
 space; do not re-propose without new information.
+
+### Amendment (2026-07-21): spelled `export`, not `e`
+
+Renamed the day after, before any release carried it. Two grounds. (1) The Huffman
+defense of `e` conflated frequencies: the q-family earns single letters in *expression*
+positions; the export marker appears only on definition lines, a handful per module —
+at that frequency the spell-words-out law applies with no exemption. (2) **Agent
+legibility**, the new decision force: drang has no training-corpus presence, so agents
+write it from priors plus in-context docs. `export` sits in those priors at massive
+weight (JS/TS, shell, Raku's `is export`, Perl's `@EXPORT`); a bare `e fn` risks being
+"corrected" as a typo by an LLM editor and is near-invisible in diffs. The same ruler
+picked `validate` over `vet`. Semantics unchanged in every respect; `e` returns to the
+bare-name pool, where it now names Euler's number beside `pi`.
+
+## Decision: structured data — maps + `validate`, no structs (2026-07-21)
+
+**The map is drang's record type.** Everything already converges on it: `capture_all`
+results, `serve` request maps, JSON, CSV rows, store values, module export records,
+and the planned named-capture `match`. A second record kind (structs, classes, tagged
+records) would not slot beside maps — it would compete with them at every integration
+point — and each classic struct benefit is either already held (immutability = freeze;
+field sugar = `$m.field`) or deliberately locked out (nominal identity, methods,
+inheritance). **Struct declarations are declined**; in a dynamic single-pass language
+they'd degrade to runtime checks with syntax tax, while creaking open the classes door.
+
+What was genuinely missing was *boundary* shape-checking, and it ships as a **verb,
+not a type**: `validate(value, shape)` — value passes through unchanged, or one
+catchable Err lists every mismatch with its path. The shape vocabulary is existing
+values only:
+
+- **Type tokens are the conversion builtins first-class** (`{port: int}`): the word
+  that converts to a type is the word that names it, and the sigil wall makes the
+  spelling safe forever (a bare `int` in value position can only be the builtin).
+  Exact tags, no coercion — matching the language.
+- **Containers describe containers**: a map-literal term is a strict map shape
+  (undeclared key = mismatch, per the 0.6 rejected-not-ignored exec-options
+  precedent); `"key?"` marks an optional key (TS-prior, agent-legible); a `"..."`
+  key holds the term undeclared keys must match (spread-prior), making the map open;
+  `[term]`/`[]` for arrays. `true` = any value. **Absent ≡ nil** throughout — the
+  language's own absence stance.
+- **Any function is a predicate term**; combinators are plain prelude functions
+  returning predicates (`one_of([…])`, `lit(v)`) — user-extensible by construction,
+  calling back into `validate` for sub-matches.
+- **A malformed shape aborts uncatchably** (a string as a term, a two-term array
+  shape): shapes are code, and a typo'd shape absorbed by `//` would silently
+  disable the validation layer. Mismatches, by contrast, are catchable data.
+
+**Spelling:** `validate` over `check` (the z ecosystem reserves *check* for the test
+gate, and bare generic verbs belong to headline domains) and over `vet` (agent
+legibility; `valid`-family coherence). **Parked, not declined:** binding-attached
+autochecking (`valid $x := …`) — per the Racket contracts lineage, enforcement
+belongs at boundaries (per-mutation checking is both costly and semantically wrong
+mid-construction, when every half-built map is invalid); freeze + one boundary
+`validate` already yields checked-once-valid-forever. Reopen only on a demonstrated
+drift-between-boundaries bug; the shape vocabulary carries over unchanged. Sealed
+(closed-key) maps likewise deferred behind demonstrated need.
+
+## Decision: no nil literal (rationale assembled 2026-07-21)
+
+The rule is old (nil exists as a value; there is no literal to write it — MANUAL
+"there is no nil literal"; the asymmetry fork above: array miss = Err, *a bug*; map
+miss = nil, *a question*) but the reasoning lived scattered. Assembled:
+
+1. **Nil is an answer, not a word.** It is what the runtime says about absence (map
+   miss, bare `return`, drained channel). Programs never need to *create* absence,
+   only to *respond* to it — and the response tool is `//`.
+2. **The broken idiom is unspellable.** Every nullable language's bug factory is the
+   comparison (`exists` vs `defined`, `null` vs `undefined`, `NULL = NULL`,
+   `is None` vs sentinel). drang doesn't discourage `if $x == nil`; it makes it
+   unwritable. One door: `//`. (`type($x) == "nil"` is the deliberate, unadvertised
+   service entrance; there is no `is_nil`.)
+3. **It collapses Perl's three-way absence.** Unable to utter nil, you cannot
+   deliberately *store* nil, so present-with-nil loses its constituency and
+   absent ≡ nil-read is one state (`has()` answers the rare structural question).
+   `validate`'s optional keys lean on exactly this.
+4. **It protects errors-as-values — the deepest ground.** Wherever a cheap
+   nothing-literal exists, it becomes the lazy error channel (`return nil` on
+   failure) and every caller nil-checks forever. With no literal, a failure must be
+   an Err — which carries a message and a code. Bugs get errors; questions get nil;
+   only the runtime says nil.
+5. **Every "I need nil" case has a more honest tool.** Clear a key → `delete`.
+   Default a read → `// fallback`. Empty accumulator → a zero value, or skip the
+   sentinel pattern with `find_index`/`filter`. End a stream → `close(ch)`. Produce
+   no value → bare `return` — the one deliberate gate, and it is control flow, not
+   data.
+
+Residual costs, accepted: no explicit-skip argument (defaults and options maps
+cover); nil can still flow indirectly (`{a: $m.missing}`) — the design never invites
+it, and `has()` exists.
 
 ## Development pause (2026-07-05)
 
