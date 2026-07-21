@@ -413,5 +413,18 @@ push(
 )
 push($h, "<script src=\"site.js\"></script>")
 push($h, "</body></html>")
-write_file("docs/manual.html", join($h, "\n"))
+$html := join($h, "\n")
+# --check: compare against the committed site artifact instead of writing —
+# the preflight's site-freshness stage. CRLF-normalized on both sides, since a
+# fresh checkout may carry autocrlf line endings while this generator emits LF.
+if contains($ARGV, "--check") {
+	$disk := read_file("docs/manual.html") // ""
+	if replace_all($disk, "\r\n", "\n") == replace_all($html, "\r\n", "\n") {
+		say("site fresh: docs/manual.html matches MANUAL.md (" ~ str(len($out)) ~ " blocks)")
+		exit(0)
+	}
+	say("site STALE: docs/manual.html does not match MANUAL.md — run: drang tools/gen_manual.dr")
+	exit(1)
+}
+write_file("docs/manual.html", $html)
 say("wrote docs/manual.html (" ~ str(len($out)) ~ " blocks)")

@@ -31,6 +31,16 @@ $checks := [
 		file: "CHANGELOG.md",
 		needle: "## [" ~ $V ~ "]",
 		why: "the release section for the current version must exist"
+	},
+	{
+		file: "docs/index.html",
+		needle: "drang " ~ $V,
+		why: "the drang.dev landing-page footer must carry the current version"
+	},
+	{
+		file: "docs/index.html",
+		needle: "v" ~ $V,
+		why: "the drang.dev hero pill / download button must name the current release"
 	}
 ]
 $failed := 0

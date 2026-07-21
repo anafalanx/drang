@@ -71,7 +71,8 @@ if !$broke {
 			args: ["tools/check_examples.dr", "REFERENCE.md"]
 		},
 		{name: "OKF docs lint", cmd: $drang, args: ["tools/okf_lint.dr"]},
-		{name: "version stamps", cmd: $drang, args: ["tools/version_lint.dr"]}
+		{name: "version stamps", cmd: $drang, args: ["tools/version_lint.dr"]},
+		{name: "site freshness", cmd: $drang, args: ["tools/gen_manual.dr", "--check"]}
 	]
 	for $s in $docStages {
 		$ok := .stage($s.name, $s.cmd, $s.args)
