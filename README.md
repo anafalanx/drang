@@ -3,7 +3,7 @@ type: overview
 title: drang
 description: A small, parallel, Perl-inspired scripting language for text, system glue, and orchestration — implemented in Go, Windows-only.
 tags: [drang, overview, readme, scripting-language]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
 # drang
@@ -22,15 +22,20 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
 ## Highlights
 
 - **First-class errors**: failures are ordinary values; `?` propagates them, `//` recovers. No
-  exceptions by default, so a dropped failure is a deliberate choice, not an accident.
-- **Effortless parallelism**: `pmap` runs across every core with no GIL, made safe *by subtraction*:
-  top-level bindings are frozen and there are no mutable globals, so data-parallel code is lock-free.
+  exceptions by default; migration lint warns at directly recognizable discarded, boolean, and
+  output-stringification sites without changing runtime semantics.
+- **Parallelism with isolation**: `pmap` and `spawn` run without a GIL, snapshot mutable callback
+  captures, and share bounded process-wide capacity. Channels, stores, tasks, and process handles
+  are the deliberate shared coordination points.
+- **Bounded under hostile input**: whole-value strings and source reads, materialized collections,
+  recursive parser/snapshot depth, subprocess output, and standalone payloads have explicit ceilings and fail
+  loudly instead of exhausting the process. Streaming paths remain available for larger flows.
 - **Perl's soul, not its warts**: one `$` sigil on every variable, string interpolation and heredocs,
   `qr//` regex literals, `q//`/`qq//`/`qw//` quotes, and `|>` pipelines.
 - **Glue built in**: `run`/`capture`/`pipe`/`start` with `{cwd, env, env_add, stdin, timeout}` options and
   process-tree kill on timeout, `stream_lines` streaming, plus channels and tasks.
 - **Batteries, curated**: modules (`use`) — private-by-default, `export` names the API, exports
-  deeply frozen — a standard library of ~120 builtins plus a drang-written prelude, JSON & CSV,
+  deeply frozen — 161 direct builtins, 15 higher-order forms, and a 25-function drang prelude, JSON & CSV,
   `qr//` regexes, date/time, hashing/encoding, a persistent key-value store, boundary shape
   checking (`validate`), and a minimal robust HTTP client (`http_get`/`http_post`). Broad, not a
   kitchen sink.
@@ -39,11 +44,12 @@ say(map(filter($xs, |$x| $x % 2 == 0), |$x| $x * $x))   # [4, 16]
   the runtime into one double-clickable exe.
 - **Functions are first-class**: pass any lambda *or builtin* by name: `map($xs, basename)`,
   `reduce(0, max)`, `filter(bool)`.
-- **Tooling**: `drang fmt` formats faithfully (provenance-preserving), `drang test` runs `example`
-  assertions, and `drang build` produces a standalone executable.
+- **Tooling**: `drang fmt` formats faithfully (provenance-preserving) and rewrites atomically,
+  `drang test` runs `example` assertions, and `drang build` produces a bounded, validated standalone
+  executable.
 - **Fast for an interpreter**: a register bytecode VM kept byte-for-byte in lockstep with a
-  tree-walking oracle. Roughly 3× CPython's wall-clock (geometric mean) on a mixed suite, with faster
-  startup, and real multi-core parallelism the GIL can't match.
+  tree-walking oracle. The current mixed benchmark is about 1.6× CPython's wall-clock (geometric
+  mean), with faster startup and real multi-core parallelism the GIL can't match.
 - **A REPL**: run `drang` with no arguments (or `drang --repl`); state persists across lines.
 
 ## Install
@@ -87,21 +93,28 @@ interpreter, and writes atomically. Console mode remains the default so errors s
 development. `--gui` changes only the standalone's Windows subsystem: Explorer launches it without
 a console, so stdout/stderr and startup errors are normally invisible; use it for finished GUI apps.
 
+The generated standalone is a new executable image. Appending its payload does not preserve an
+Authenticode signature from the interpreter it was copied from, so sign and timestamp the **final**
+`.exe` after `drang build` when distributing it.
+
 ## Documentation
 
-- **[MANUAL.md](MANUAL.md)**: the full language manual. Every example in it was executed against the
-  interpreter, so the shown output is real.
+- **[MANUAL.md](MANUAL.md)**: the full language manual. Every self-contained runnable example has
+  its exit status and declared output stream checked against the interpreter; contextual and shell
+  examples are marked and reported separately.
 - **[DESIGN.md](DESIGN.md)**: the design and build log.
-- **[TESTING.md](TESTING.md)**: how drang is verified — the local preflight (`drang tools/verify.dr`),
+- **[TESTING.md](TESTING.md)**: how drang is verified — the local preflight (`C:\dev\z.exe check`),
   the `-race` suite, and the three fuzzers. There is no hosted CI; the preflight is the release gate.
 
 ## Status
 
-**drang 0.12.0**: modules are **private-by-default** (`export` marks the API; unmarked top-level
-names never leave their file), **`validate`** checks map shapes at boundaries (type tokens are the
-conversion builtins used first-class: `{host: str, port: int}`), and local GUI tools ship as single
-signed executables (`serve` + `drang build --web --gui`). The road here: 0.11.0 brought local htmx
-GUIs to a clamped browser window; 0.10.0 completed single-process orchestration
+**drang 0.12.1**: a compatibility-preserving hardening release. Untrusted whole-value work has
+explicit ceilings; concurrent callbacks isolate mutable captures; child processes, module/store
+lifecycles, recursive copy, formatter writes, and standalone payloads fail safely; and migration
+lint points out directly recognizable Err misuse. The 0.12 language remains unchanged: modules are
+**private-by-default** (`export` marks the API), and **`validate`** checks map shapes at boundaries.
+The road here: 0.11.0 brought local htmx GUIs to a clamped browser window; 0.10.0 completed
+single-process orchestration
 (`recv_stdout`/`recv_stderr` — drive a child both ways); 0.9 added the persistent store, `walk`,
 and in-place one-liner editing (`-i`); 0.7–0.8 froze the pre-1.0 vocabulary, added kernel-enforced
 resource caps, and made the VM fast. Full history in [CHANGELOG.md](CHANGELOG.md). See the

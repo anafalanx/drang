@@ -28,8 +28,9 @@ fn .compute_row($py) {
 }
 
 $rows := []
+# Fixed-size setup remains below the collection cap; keep propagation overhead out of this benchmark.
 for $py in 0..$H - 1 {
-	push($rows, $py)
+	push($rows, $py)  # lint:ignore err-discard
 }
 $total := reduce(map($rows, |$py| .compute_row($py)), 0, |$a, $b| $a + $b)
 say($total)

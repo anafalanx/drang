@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,28 +86,204 @@ func builtinRun(args []value.Value) (value.Value, error) {
 	return value.MakeBool(true), nil // truthy success, composes with // and if
 }
 
+var (
+	maxStartedPipeBufferBytes int64 = 16 << 20 // aggregate unread stdout+stderr per started process
+	// After a started root exits, an unsupervised descendant may intentionally survive while still
+	// holding inherited stdout/stderr handles. Give ordinary queued root output time to drain, then
+	// close our read ends so await/status cannot hang on that unrelated descendant forever.
+	startedPipeDrainGrace = 750 * time.Millisecond
+)
+
+type pipeBufferBudget struct {
+	limit    int64
+	used     atomic.Int64
+	exceeded atomic.Bool
+	once     sync.Once
+	onLimit  func()
+}
+
+func (b *pipeBufferBudget) reserve(n int) int {
+	for {
+		used := b.used.Load()
+		room := b.limit - used
+		allowed := n
+		if room <= 0 {
+			allowed = 0
+		} else if int64(allowed) > room {
+			allowed = int(room)
+		}
+		if b.used.CompareAndSwap(used, used+int64(allowed)) {
+			if allowed < n {
+				b.exceeded.Store(true)
+				b.once.Do(func() {
+					if b.onLimit != nil {
+						b.onLimit()
+					}
+				})
+			}
+			return allowed
+		}
+	}
+}
+
+func (b *pipeBufferBudget) release(n int) { b.used.Add(-int64(n)) }
+
+// procStream continuously drains a started child's OS pipe into a bounded
+// in-memory queue. This prevents await(proc) from deadlocking merely because the
+// caller did not read concurrently; recv_stdout/recv_stderr consume the queue.
+type procStream struct {
+	mu         sync.Mutex
+	cond       *sync.Cond
+	buf        bytes.Buffer
+	r          *os.File
+	budget     *pipeBufferBudget
+	done       chan struct{}
+	closeOnce  sync.Once
+	finishOnce sync.Once
+	closed     bool
+	err        error
+}
+
+func newProcStream(r *os.File, budget *pipeBufferBudget) *procStream {
+	s := &procStream{r: r, budget: budget, done: make(chan struct{})}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+func (s *procStream) drain() {
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := s.r.Read(buf)
+		if n > 0 {
+			allowed := s.budget.reserve(n)
+			s.mu.Lock()
+			if allowed > 0 {
+				_, _ = s.buf.Write(buf[:allowed])
+			}
+			s.cond.Broadcast()
+			s.mu.Unlock()
+			if allowed < n {
+				s.finish(nil)
+				return
+			}
+		}
+		if err != nil {
+			if err == io.EOF || errors.Is(err, os.ErrClosed) {
+				err = nil
+			}
+			s.finish(err)
+			return
+		}
+	}
+}
+
+func (s *procStream) finish(err error) {
+	s.finishOnce.Do(func() {
+		s.close()
+		s.mu.Lock()
+		s.closed = true
+		s.err = err
+		s.cond.Broadcast()
+		s.mu.Unlock()
+		close(s.done)
+	})
+}
+
+func (s *procStream) read() (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.buf.Len() == 0 && !s.closed {
+		s.cond.Wait()
+	}
+	if s.buf.Len() > 0 {
+		n := s.buf.Len()
+		if n > 64*1024 {
+			n = 64 * 1024
+		}
+		chunk := string(s.buf.Next(n))
+		s.budget.release(n)
+		return chunk, false, nil
+	}
+	if s.err != nil {
+		return "", false, s.err
+	}
+	return "", true, nil
+}
+
+// close interrupts a blocked pipe read. The drain goroutine alone publishes done after it has
+// stopped touching the buffer; callers can therefore close then wait without racing a final read.
+func (s *procStream) close() {
+	s.closeOnce.Do(func() { _ = s.r.Close() })
+}
+
+func (s *procStream) wait() { <-s.done }
+
+func waitProcStreamUntil(s *procStream, deadline time.Time) bool {
+	if s == nil {
+		return true
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		select {
+		case <-s.done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-s.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// finishPipeDrains waits for natural EOF under one aggregate grace deadline. If any inherited
+// writer remains open, closing both read streams unblocks their drain goroutines but preserves
+// bytes already buffered in procStream for later recv_stdout/recv_stderr calls.
+func (p *Proc) finishPipeDrains(grace time.Duration) {
+	if p.stdout == nil && p.stderr == nil {
+		return
+	}
+	if grace < 0 {
+		grace = 0
+	}
+	deadline := time.Now().Add(grace)
+	stdoutDone := waitProcStreamUntil(p.stdout, deadline)
+	stderrDone := waitProcStreamUntil(p.stderr, deadline)
+	if !stdoutDone || !stderrDone {
+		p.closeStdout()
+		p.closeStderr()
+	}
+	if p.stdout != nil {
+		p.stdout.wait()
+	}
+	if p.stderr != nil {
+		p.stderr.wait()
+	}
+}
+
 // Proc is a handle to a started external process — the process analogue of Task.
 // It is an intentionally SHARED reference (DeepCopy returns itself); a goroutine
 // reaps the child and records its exit status, which await(proc) reads.
 type Proc struct {
-	mu     sync.Mutex  // guards job: kill's Terminate vs. the reaping goroutine's Close
-	job    *winjob.Job // the command job — Terminate kills the tree, Close releases; nil once closed
-	pid    int
-	done   chan struct{}
-	res    value.Value // exit status: true on 0, else a catchable Err carrying the code
-	killed atomic.Bool // set by kill() so the reaper reports "was killed", not a bare exit code
+	mu          sync.Mutex  // guards job: kill's Terminate vs. the reaping goroutine's Close
+	job         *winjob.Job // the command job — Terminate kills the tree, Close releases; nil once closed
+	pid         int
+	done        chan struct{}
+	res         value.Value // exit status: true on 0, else a catchable Err carrying the code
+	killed      atomic.Bool // set by kill() so the reaper reports "was killed", not a bare exit code
+	outputLimit atomic.Bool
 
 	stdinMu     sync.Mutex // guards the writable-stdin handle below
 	stdinW      *os.File   // writable stdin, set when started with {stdin_pipe: true}; nil otherwise
 	stdinClosed bool
 
-	stdoutMu     sync.Mutex // guards the readable-stdout handle below
-	stdoutR      *os.File   // readable stdout, set when started with {stdout_pipe: true}; nil otherwise
-	stdoutClosed bool
-
-	stderrMu     sync.Mutex // guards the readable-stderr handle below
-	stderrR      *os.File   // readable stderr, set when started with {stderr_pipe: true}; nil otherwise
-	stderrClosed bool
+	stdout *procStream
+	stderr *procStream
 }
 
 // writeStdin feeds s to a process started with {stdin_pipe: true}. It errors if the process has no
@@ -137,45 +314,20 @@ func (p *Proc) closeStdin() {
 
 // readStdout reads the next chunk of stdout from a process started with {stdout_pipe: true}. It
 // blocks until the child writes, reports EOF once the child has closed its stdout (it exited and
-// its output is drained), and errors if the process has no readable stdout. The read is DIRECT
-// (the script is the drainer): a child that outruns the read pace back-pressures, and a script
-// that awaits a large output without draining it will block — drain to EOF first, or kill().
-// Returns (chunk, eof, err). The read is done outside stdoutMu so a concurrent closeStdout (which
-// *os.File tolerates) cannot deadlock against it.
+// its output is drained), and errors if the process has no readable stdout.
 func (p *Proc) readStdout() (string, bool, error) {
-	p.stdoutMu.Lock()
-	r, closed := p.stdoutR, p.stdoutClosed
-	p.stdoutMu.Unlock()
-	if r == nil {
+	if p.stdout == nil {
 		return "", false, fmt.Errorf("process was not started with {stdout_pipe: true}")
 	}
-	if closed {
-		return "", true, nil // already drained to EOF
-	}
-	buf := make([]byte, 64*1024)
-	n, err := r.Read(buf)
-	if n > 0 {
-		return string(buf[:n]), false, nil
-	}
-	if err != nil {
-		p.closeStdout() // stream ended (or closed under us): release the read end
-		if err == io.EOF || errors.Is(err, os.ErrClosed) {
-			return "", true, nil
-		}
-		return "", false, err
-	}
-	return "", false, nil
+	return p.stdout.read()
 }
 
 // closeStdout closes the readable stdout end. Idempotent, and a no-op when the process has no
 // readable stdout. readStdout calls it at EOF; the reaper deliberately does NOT, so output the
 // child wrote just before exiting is not discarded before the script reads it.
 func (p *Proc) closeStdout() {
-	p.stdoutMu.Lock()
-	defer p.stdoutMu.Unlock()
-	if p.stdoutR != nil && !p.stdoutClosed {
-		p.stdoutClosed = true
-		p.stdoutR.Close()
+	if p.stdout != nil {
+		p.stdout.close()
 	}
 }
 
@@ -185,39 +337,18 @@ func (p *Proc) closeStdout() {
 // stderr are independent pipes, a script that wants both must drain them concurrently (e.g. read
 // one in a spawned task) — leaving one undrained can back-pressure the child and stall the other.
 func (p *Proc) readStderr() (string, bool, error) {
-	p.stderrMu.Lock()
-	r, closed := p.stderrR, p.stderrClosed
-	p.stderrMu.Unlock()
-	if r == nil {
+	if p.stderr == nil {
 		return "", false, fmt.Errorf("process was not started with {stderr_pipe: true}")
 	}
-	if closed {
-		return "", true, nil // already drained to EOF
-	}
-	buf := make([]byte, 64*1024)
-	n, err := r.Read(buf)
-	if n > 0 {
-		return string(buf[:n]), false, nil
-	}
-	if err != nil {
-		p.closeStderr() // stream ended (or closed under us): release the read end
-		if err == io.EOF || errors.Is(err, os.ErrClosed) {
-			return "", true, nil
-		}
-		return "", false, err
-	}
-	return "", false, nil
+	return p.stderr.read()
 }
 
 // closeStderr closes the readable stderr end. Idempotent, and a no-op when the process has no
 // readable stderr. Like closeStdout, the reaper does NOT call it, so stderr written just before
 // exit survives until the script drains it.
 func (p *Proc) closeStderr() {
-	p.stderrMu.Lock()
-	defer p.stderrMu.Unlock()
-	if p.stderrR != nil && !p.stderrClosed {
-		p.stderrClosed = true
-		p.stderrR.Close()
+	if p.stderr != nil {
+		p.stderr.close()
 	}
 }
 
@@ -345,14 +476,33 @@ func builtinStart(args []value.Value) (value.Value, error) {
 	if stderrW != nil {
 		stderrW.Close() // same for the stderr write end
 	}
-	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW, stdoutR: stdoutR, stderrR: stderrR}
+	p := &Proc{job: c.job, pid: c.proc.Pid(), done: make(chan struct{}), res: value.MakeBool(true), stdinW: stdinW}
+	pipeBudget := &pipeBufferBudget{limit: maxStartedPipeBufferBytes}
+	pipeBudget.onLimit = func() {
+		p.outputLimit.Store(true)
+		p.terminate()
+	}
+	if stdoutR != nil {
+		p.stdout = newProcStream(stdoutR, pipeBudget)
+		go p.stdout.drain()
+	}
+	if stderrR != nil {
+		p.stderr = newProcStream(stderrR, pipeBudget)
+		go p.stderr.drain()
+	}
 	go func() {
 		defer close(p.done)
-		code, werr := c.proc.Wait() // reap the child; NUL stdio needs no draining, and {stdout_pipe} is drained by the script via recv_stdout
-		c.stopMonitor()             // finalize limitHit before reading breachErr
-		p.closeStdin()              // release the write end once the child is gone
+		code, werr := c.proc.Wait()
+		c.stopMonitor() // finalize limitHit before reading breachErr
+		p.closeStdin()  // release the write end once the child is gone
 		p.closeJob()
+		// A fast-exiting root may still have queued output, while an unsupervised surviving
+		// descendant can retain inherited writers indefinitely. Drain under one bounded grace,
+		// then close our read ends and join before publishing the result so await/status is final.
+		p.finishPipeDrains(startedPipeDrainGrace)
 		switch {
+		case p.outputLimit.Load():
+			p.res = value.MakeErr(fmt.Sprintf("%s unread pipe output exceeded the %d-byte limit", argv[0], maxStartedPipeBufferBytes), 137)
 		case p.killed.Load():
 			p.res = value.MakeErr(fmt.Sprintf("%s was killed", argv[0]), 137)
 		case c.limitHit.Load() != nil:
@@ -432,7 +582,11 @@ func builtinSendStdin(args []value.Value) (value.Value, error) {
 	if !ok {
 		return errv, nil
 	}
-	if err := p.writeStdin(args[1].Display()); err != nil {
+	content, ok := displayWithin(args[1], maxStringBytes)
+	if !ok {
+		return value.MakeErr(fmt.Sprintf("send_stdin: content exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	if err := p.writeStdin(content); err != nil {
 		return value.MakeErr(fmt.Sprintf("send_stdin: %v", err), 1), nil
 	}
 	return value.MakeBool(true), nil
@@ -594,11 +748,42 @@ func evalStreamLines(args []value.Value, depth int) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
-// maxCaptureBytes backstops the buffering exec forms (capture / capture_all / pipe), which
-// collect a child's output into memory. Without a bound, a child that streams without end
-// would grow the buffer until the process OOMs; past this the capture is a catchable Err (or
-// code 137 for capture_all). Generous (256 MiB) so it never trips on ordinary command output.
-const maxCaptureBytes = 256 << 20
+// maxCaptureBytes is one aggregate budget across captured stdout and stderr. On
+// overflow the command job is terminated immediately; continuing to drain an
+// endless producer would never return the promised Err.
+var maxCaptureBytes int64 = 64 << 20 // variable only so focused tests can exercise overflow cheaply
+
+type captureBudget struct {
+	limit    int64
+	used     atomic.Int64
+	exceeded atomic.Bool
+	once     sync.Once
+	onLimit  func()
+}
+
+func (b *captureBudget) reserve(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	end := b.used.Add(int64(n))
+	start := end - int64(n)
+	room := b.limit - start
+	allowed := n
+	if room <= 0 {
+		allowed = 0
+	} else if int64(allowed) > room {
+		allowed = int(room)
+	}
+	if allowed < n {
+		b.exceeded.Store(true)
+		b.once.Do(func() {
+			if b.onLimit != nil {
+				b.onLimit()
+			}
+		})
+	}
+	return allowed
+}
 
 // capWriter buffers a captured stream up to limit bytes. Past the limit it keeps DRAINING the
 // child — Write still reports the full count, so the copier never blocks or errors and the
@@ -606,14 +791,28 @@ const maxCaptureBytes = 256 << 20
 // callers turn that into a catchable Err (or code 137) rather than silently returning a
 // truncated string. Each capWriter is written by a single copier goroutine, so it needs no lock.
 type capWriter struct {
-	buf   bytes.Buffer
-	limit int
-	over  bool
+	buf    bytes.Buffer
+	limit  int // standalone writer limit; ignored when budget is non-nil
+	over   bool
+	budget *captureBudget
 }
 
-func newCapWriter() capWriter { return capWriter{limit: maxCaptureBytes} }
+func newCapturePair() (*capWriter, *capWriter, *captureBudget) {
+	b := &captureBudget{limit: maxCaptureBytes}
+	return &capWriter{budget: b}, &capWriter{budget: b}, b
+}
 
 func (w *capWriter) Write(p []byte) (int, error) {
+	if w.budget != nil {
+		allowed := w.budget.reserve(len(p))
+		if allowed > 0 {
+			_, _ = w.buf.Write(p[:allowed])
+		}
+		if allowed < len(p) {
+			w.over = true
+		}
+		return len(p), nil
+	}
 	if room := w.limit - w.buf.Len(); room > 0 {
 		if len(p) <= room {
 			w.buf.Write(p)
@@ -627,8 +826,10 @@ func (w *capWriter) Write(p []byte) (int, error) {
 	return len(p), nil // always claim a full write so the child's stdio copier keeps draining
 }
 
-func (w *capWriter) String() string   { return w.buf.String() }
-func (w *capWriter) overflowed() bool { return w.over }
+func (w *capWriter) String() string { return w.buf.String() }
+func (w *capWriter) overflowed() bool {
+	return w.over || (w.budget != nil && w.budget.exceeded.Load())
+}
 
 // builtinCapture spawns a command capturing stdout, returning the trimmed stdout
 // string on success or a catchable Err (with the child's stderr folded into the
@@ -638,11 +839,12 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	out, errBuf := newCapWriter(), newCapWriter()
-	c, err := newJobCmd(argv, opts, nil, &out, &errBuf)
+	out, errBuf, budget := newCapturePair()
+	c, err := newJobCmd(argv, opts, nil, out, errBuf)
 	if err != nil {
 		return execError(argv[0], err, ""), nil
 	}
+	budget.onLimit = c.killTree
 	if startErr := c.start(); startErr != nil {
 		return execError(argv[0], startErr, ""), nil
 	}
@@ -654,7 +856,7 @@ func builtinCapture(args []value.Value) (value.Value, error) {
 		b, _ := c.breachErr(argv[0])
 		return b, nil
 	case out.overflowed() || errBuf.overflowed():
-		return value.MakeErr(fmt.Sprintf("capture: %s output exceeded the %d-byte limit", argv[0], maxCaptureBytes), 137), nil
+		return value.MakeErr(fmt.Sprintf("capture: %s aggregate output exceeded the %d-byte limit", argv[0], maxCaptureBytes), 137), nil
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("capture: %v", werr), 1), nil
 	case code != 0:
@@ -673,26 +875,29 @@ func builtinCaptureAll(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	out, errBuf := newCapWriter(), newCapWriter()
+	out, errBuf, budget := newCapturePair()
 	code := 0
-	c, cerr := newJobCmd(argv, opts, nil, &out, &errBuf)
+	c, cerr := newJobCmd(argv, opts, nil, out, errBuf)
 	if cerr != nil {
 		code = 127 // could not resolve the command
-	} else if startErr := c.start(); startErr != nil {
-		code = 127 // could not start
 	} else {
-		ec, timedOut, werr := c.wait()
-		switch {
-		case timedOut:
-			code = 124
-		case c.limitHit.Load() != nil:
-			code = 137 // a resource cap was breached
-		case out.overflowed() || errBuf.overflowed():
-			code = 137 // the output-size cap was breached (out/err are the capped prefix)
-		case werr != nil:
-			code = 1 // a post-start wait/system failure — generic, not 127 (which means could-not-start)
-		default:
-			code = ec // Windows exit codes are non-negative
+		budget.onLimit = c.killTree
+		if startErr := c.start(); startErr != nil {
+			code = 127 // could not start
+		} else {
+			ec, timedOut, werr := c.wait()
+			switch {
+			case timedOut:
+				code = 124
+			case c.limitHit.Load() != nil:
+				code = 137 // a resource cap was breached
+			case out.overflowed() || errBuf.overflowed():
+				code = 137 // the output-size cap was breached (out/err are the capped prefix)
+			case werr != nil:
+				code = 1 // a post-start wait/system failure — generic, not 127 (which means could-not-start)
+			default:
+				code = ec // Windows exit codes are non-negative
+			}
 		}
 	}
 	rec := value.MakeMap()
@@ -745,7 +950,7 @@ func builtinPipe(args []value.Value) (value.Value, error) {
 func runPipeline(argvs [][]string, o execOpts) value.Value {
 	n := len(argvs)
 	stages := make([]*jobCmd, n)
-	out, lastErr := &capWriter{limit: maxCaptureBytes}, &capWriter{limit: maxCaptureBytes} // capped like capture, so a runaway final stage can't OOM
+	out, lastErr, budget := newCapturePair()
 
 	for i, av := range argvs {
 		stderrW := lockedShared(stderr) // intermediate diagnostics stay visible; serialize the shared sink
@@ -757,6 +962,13 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 			return value.MakeErr(fmt.Sprintf("pipe: cannot start stage %d (%s): %v", i+1, av[0], err), 127)
 		}
 		stages[i] = c
+	}
+	budget.onLimit = func() {
+		for _, stage := range stages {
+			if stage != nil {
+				stage.killTree()
+			}
+		}
 	}
 	if o.hasStdin {
 		stages[0].stdin = strings.NewReader(o.stdin)
@@ -827,7 +1039,7 @@ func runPipeline(argvs [][]string, o execOpts) value.Value {
 		b, _ := stages[breachStage].breachErr(argvs[breachStage][0])
 		return b
 	case out.overflowed() || lastErr.overflowed():
-		return value.MakeErr(fmt.Sprintf("pipe: %s output exceeded the %d-byte limit", argvs[n-1][0], maxCaptureBytes), 137)
+		return value.MakeErr(fmt.Sprintf("pipe: %s aggregate output exceeded the %d-byte limit", argvs[n-1][0], maxCaptureBytes), 137)
 	case werr != nil:
 		return value.MakeErr(fmt.Sprintf("pipe: stage %d (%s): %v", werrStage+1, argvs[werrStage][0], werr), 1)
 	case lastCode != 0:
@@ -862,19 +1074,41 @@ func splitExecArgs(name string, args []value.Value) ([]string, execOpts, error) 
 
 func execArgStrings(name string, raw []value.Value) ([]string, error) {
 	var out []string
+	remaining := maxStringBytes
+	appendArg := func(v value.Value) error {
+		if len(out) >= maxCollectionItems {
+			return fmt.Errorf("%s: command arguments exceed the %d-element collection limit", name, maxCollectionItems)
+		}
+		var s string
+		if v.Tag() == value.Str {
+			s = v.AsStr()
+			if int64(len(s)) > remaining {
+				return fmt.Errorf("%s: command arguments exceed the %d-byte string limit", name, maxStringBytes)
+			}
+		} else {
+			var ok bool
+			s, ok = displayWithin(v, remaining)
+			if !ok {
+				return fmt.Errorf("%s: command arguments exceed the %d-byte string limit", name, maxStringBytes)
+			}
+		}
+		out = append(out, s)
+		remaining -= int64(len(s))
+		return nil
+	}
 	for _, v := range raw {
 		switch v.Tag() {
-		case value.Str:
-			out = append(out, v.AsStr())
-		case value.Int, value.Float, value.Bool:
-			out = append(out, v.Display())
+		case value.Str, value.Int, value.Float, value.Bool:
+			if err := appendArg(v); err != nil {
+				return nil, err
+			}
 		case value.Arr:
 			for _, e := range v.Obj().(*value.Array).Elems {
 				switch e.Tag() {
-				case value.Str:
-					out = append(out, e.AsStr())
-				case value.Int, value.Float, value.Bool:
-					out = append(out, e.Display())
+				case value.Str, value.Int, value.Float, value.Bool:
+					if err := appendArg(e); err != nil {
+						return nil, err
+					}
 				default:
 					return nil, fmt.Errorf("%s: cannot use a %s as a command argument", name, e.TypeName())
 				}
@@ -955,6 +1189,9 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			if ms < 0 {
 				return o, fmt.Errorf("%s: timeout must be >= 0 milliseconds", name)
 			}
+			if ms > math.MaxInt64/int64(time.Millisecond) {
+				return o, fmt.Errorf("%s: timeout is too large", name)
+			}
 			if ms > 0 { // 0 = no limit
 				o.timeout = time.Duration(ms) * time.Millisecond
 			}
@@ -997,17 +1234,26 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 			if err != nil {
 				return o, err
 			}
+			if n > math.MaxInt64/int64(time.Millisecond) {
+				return o, fmt.Errorf("%s: max_cpu is too large", name)
+			}
 			o.limits.ProcessCPUTime = time.Duration(n) * time.Millisecond
 		case "max_job_cpu": // whole-job user CPU time, MILLISECONDS
 			n, err := limitInt(name, "max_job_cpu", vals[i])
 			if err != nil {
 				return o, err
 			}
+			if n > math.MaxInt64/int64(time.Millisecond) {
+				return o, fmt.Errorf("%s: max_job_cpu is too large", name)
+			}
 			o.limits.JobCPUTime = time.Duration(n) * time.Millisecond
 		case "max_job_procs": // max concurrent processes in the whole job (count)
 			n, err := limitInt(name, "max_job_procs", vals[i])
 			if err != nil {
 				return o, err
+			}
+			if n > math.MaxUint32 {
+				return o, fmt.Errorf("%s: max_job_procs is too large", name)
 			}
 			o.limits.ActiveProcessCap = uint32(n)
 		default:
@@ -1024,11 +1270,19 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 		return o, fmt.Errorf("%s: env_exact and env_add are mutually exclusive", name)
 	}
 	if exactEnv != nil {
-		o.env = buildEnv(exactEnv, false)
+		env, err := buildEnv(exactEnv, false)
+		if err != nil {
+			return o, fmt.Errorf("%s: %w", name, err)
+		}
+		o.env = env
 		o.hasEnv = true
 		o.resolveWithEnv = true
 	} else if overlayEnv != nil {
-		o.env = buildEnv(overlayEnv, true)
+		env, err := buildEnv(overlayEnv, true)
+		if err != nil {
+			return o, fmt.Errorf("%s: %w", name, err)
+		}
+		o.env = env
 		o.hasEnv = true
 		o.resolveWithEnv = true
 	}
@@ -1037,24 +1291,57 @@ func execOptions(name string, m *value.OrderedMap) (execOpts, error) {
 
 // mergeEnv overlays the given key/value map onto the inherited environment, matching existing
 // keys case-insensitively (Windows env-var names; see envKeyEqual).
-func mergeEnv(overlay *value.OrderedMap) []string {
+func mergeEnv(overlay *value.OrderedMap) ([]string, error) {
 	return buildEnv(overlay, true)
 }
 
-func buildEnv(overlay *value.OrderedMap, inherit bool) []string {
+func buildEnv(overlay *value.OrderedMap, inherit bool) ([]string, error) {
 	result := []string{}
+	total := int64(0)
 	if inherit {
 		result = append(result, os.Environ()...)
+		for _, entry := range result {
+			if int64(len(entry)) > maxStringBytes-total {
+				return nil, fmt.Errorf("environment exceeds the %d-byte string limit", maxStringBytes)
+			}
+			total += int64(len(entry))
+		}
 	}
 	if overlay == nil {
-		return result
+		return result, nil
 	}
 	keys, vals := overlay.Keys(), overlay.Vals()
 	for i, k := range keys {
-		key := k.Display()
-		result = setEnvFold(result, key, vals[i].Display())
+		key, ok := displayWithin(k, maxStringBytes)
+		if !ok {
+			return nil, fmt.Errorf("environment exceeds the %d-byte string limit", maxStringBytes)
+		}
+		replace := -1
+		base := total
+		for j, entry := range result {
+			if eq := strings.IndexByte(entry, '='); eq >= 0 && envKeyEqual(entry[:eq], key) {
+				replace = j
+				base -= int64(len(entry))
+				break
+			}
+		}
+		overhead := int64(len(key)) + 1 // '='
+		if overhead > maxStringBytes-base {
+			return nil, fmt.Errorf("environment exceeds the %d-byte string limit", maxStringBytes)
+		}
+		val, ok := displayWithin(vals[i], maxStringBytes-base-overhead)
+		if !ok {
+			return nil, fmt.Errorf("environment exceeds the %d-byte string limit", maxStringBytes)
+		}
+		entry := key + "=" + val
+		if replace >= 0 {
+			result[replace] = entry
+		} else {
+			result = append(result, entry)
+		}
+		total = base + int64(len(entry))
 	}
-	return result
+	return result, nil
 }
 
 // envKeyEqual reports whether two environment-variable names denote the same variable. Windows

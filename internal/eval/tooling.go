@@ -14,13 +14,26 @@ import (
 // builtinWarn prints to stderr, exactly as say prints to stdout (same separator,
 // same lock so parallel workers can't interleave with each other or with say).
 func builtinWarn(args []value.Value) (value.Value, error) {
-	parts := make([]string, len(args))
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i, a := range args {
-		parts[i] = a.Display()
+		if i > 0 {
+			_ = b.WriteByte(' ')
+		}
+		s, ok := displayWithin(a, maxStringBytes-int64(b.Len()))
+		if !ok {
+			return value.MakeNil(), fmt.Errorf("warn: result exceeds the %d-byte string limit", maxStringBytes)
+		}
+		_, _ = b.WriteString(s)
+		if err := b.Err(); err != nil {
+			return value.MakeNil(), fmt.Errorf("warn: %w", err)
+		}
 	}
 	outMu.Lock()
-	fmt.Fprintln(stderr, strings.Join(parts, " "))
+	_, err := fmt.Fprintln(stderr, b.String())
 	outMu.Unlock()
+	if err != nil {
+		return value.MakeNil(), fmt.Errorf("warn: write stderr: %w", err)
+	}
 	return value.MakeNil(), nil
 }
 
@@ -43,7 +56,9 @@ func builtinExit(args []value.Value) (value.Value, error) {
 // builtinDie prints its message to stderr and exits with code 1 — the common
 // fatal-error convention for a tool.
 func builtinDie(args []value.Value) (value.Value, error) {
-	_, _ = builtinWarn(args)
+	if _, err := builtinWarn(args); err != nil {
+		return value.MakeNil(), err
+	}
 	return value.MakeNil(), exitSignal{code: 1}
 }
 
@@ -78,6 +93,9 @@ func builtinParseArgs(args []value.Value) (value.Value, error) {
 			if o.Tag() != value.Str {
 				return value.MakeNil(), fmt.Errorf("parse_args value_opts names must be strings, got %s", o.TypeName())
 			}
+			if !valueOpts[o.AsStr()] && len(valueOpts) >= maxCollectionItems {
+				return value.MakeErr(fmt.Sprintf("parse_args: value_opts exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+			}
 			valueOpts[o.AsStr()] = true
 		}
 	}
@@ -86,12 +104,38 @@ func builtinParseArgs(args []value.Value) (value.Value, error) {
 	m := out.Obj().(*value.OrderedMap)
 	var positionals []value.Value
 	optsEnded := false
+	resultHasRoom := func(add int) bool {
+		// Reserve one map entry for the positional "_" key, even when its array
+		// is empty, because it is always present in the returned shape.
+		used := len(positionals) + m.Len() + 1
+		return add >= 0 && add <= maxCollectionItems-used
+	}
+	appendPositional := func(s string) bool {
+		if !resultHasRoom(1) {
+			return false
+		}
+		positionals = append(positionals, value.MakeStr(s))
+		return true
+	}
+	setOption := func(key string, v value.Value) bool {
+		kv := value.MakeStr(key)
+		if !m.Has(kv) && !resultHasRoom(1) {
+			return false
+		}
+		m.Set(kv, v)
+		return true
+	}
+	if !resultHasRoom(0) {
+		return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+	}
 
 	for i := 0; i < len(argv); i++ {
 		a := argv[i].AsStr()
 		switch {
 		case optsEnded || a == "" || a == "-" || !strings.HasPrefix(a, "-"):
-			positionals = append(positionals, value.MakeStr(a))
+			if !appendPositional(a) {
+				return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+			}
 		case a == "--":
 			optsEnded = true
 		default:
@@ -105,19 +149,29 @@ func builtinParseArgs(args []value.Value) (value.Value, error) {
 			case key == "_":
 				// "_" is reserved for positionals; keep the raw token instead of
 				// overwriting the positionals array or dropping the value.
-				positionals = append(positionals, value.MakeStr(a))
+				if !appendPositional(a) {
+					return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+				}
 			case eq >= 0:
-				m.Set(value.MakeStr(key), value.MakeStr(name[eq+1:]))
+				if !setOption(key, value.MakeStr(name[eq+1:])) {
+					return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+				}
 			case valueOpts[key]:
 				// Consume the next token as the value, but never the `--` terminator.
 				if i+1 < len(argv) && argv[i+1].AsStr() != "--" {
 					i++
-					m.Set(value.MakeStr(key), value.MakeStr(argv[i].AsStr()))
+					if !setOption(key, value.MakeStr(argv[i].AsStr())) {
+						return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+					}
 				} else {
-					m.Set(value.MakeStr(key), value.MakeStr("")) // value missing (end of args or "--")
+					if !setOption(key, value.MakeStr("")) { // value missing (end of args or "--")
+						return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+					}
 				}
 			default:
-				m.Set(value.MakeStr(key), value.MakeBool(true))
+				if !setOption(key, value.MakeBool(true)) {
+					return value.MakeErr(fmt.Sprintf("parse_args: result exceeds the %d-item collection limit", maxCollectionItems), 1), nil
+				}
 			}
 		}
 	}

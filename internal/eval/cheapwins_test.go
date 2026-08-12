@@ -3,6 +3,7 @@ package eval
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -145,6 +146,12 @@ func TestStreamInPlace(t *testing.T) {
 	got, _ := os.ReadFile(f)
 	if string(got) != "HELLO\nWORLD\n" {
 		t.Errorf("in-place result = %q, want %q", got, "HELLO\nWORLD\n")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".drang-stream-") {
+			t.Errorf("in-place edit left temporary file %s", entry.Name())
+		}
 	}
 }
 

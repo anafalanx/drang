@@ -32,6 +32,26 @@ func TestCapWriterCaps(t *testing.T) {
 	}
 }
 
+func TestCaptureBudgetIsAggregateAndSignalsOnce(t *testing.T) {
+	a, b, budget := newCapturePair()
+	budget.limit = 10
+	calls := 0
+	budget.onLimit = func() { calls++ }
+	if n, err := a.Write([]byte("123456")); n != 6 || err != nil {
+		t.Fatalf("first write = (%d, %v)", n, err)
+	}
+	if n, err := b.Write([]byte("abcdef")); n != 6 || err != nil {
+		t.Fatalf("second write = (%d, %v)", n, err)
+	}
+	_, _ = a.Write([]byte("more"))
+	if got := len(a.String()) + len(b.String()); got != 10 {
+		t.Fatalf("aggregate retained bytes = %d, want 10", got)
+	}
+	if !a.overflowed() || !b.overflowed() || calls != 1 {
+		t.Fatalf("overflow state: a=%v b=%v callback calls=%d", a.overflowed(), b.overflowed(), calls)
+	}
+}
+
 // TestMatchSegsCorrect pins ** semantics (spans zero or more segments) across the memoized
 // matcher, including adjacent-** collapse.
 func TestMatchSegsCorrect(t *testing.T) {
@@ -74,11 +94,8 @@ func TestMatchSegsBoundedNoHang(t *testing.T) {
 	}
 }
 
-// TestReCacheBounded: with the compile cache full, further distinct patterns still compile
-// correctly (just uncached) and the size counter is never pushed past the cap.
+// TestReCacheBounded: compilation remains correct and the LRU stays within both caps.
 func TestReCacheBounded(t *testing.T) {
-	saved := reCacheSize.Swap(maxReCache)
-	defer reCacheSize.Store(saved)
 	re, err := compilePattern(`sec2_(uniq|cap)+\d`)
 	if err != nil || re == nil {
 		t.Fatalf("compile while cache full failed: re=%v err=%v", re, err)
@@ -86,8 +103,33 @@ func TestReCacheBounded(t *testing.T) {
 	if !re.MatchString("sec2_uniq7") {
 		t.Error("a regex compiled while the cache was full does not match")
 	}
-	if got := reCacheSize.Load(); got > maxReCache {
-		t.Errorf("cache grew past the cap while full: %d > %d", got, maxReCache)
+	reCache.Lock()
+	entries, bytes := len(reCache.items), reCache.bytes
+	reCache.Unlock()
+	if entries > maxReCache || bytes > maxReCacheBytes {
+		t.Errorf("cache grew past its bounds: entries=%d/%d bytes=%d/%d", entries, maxReCache, bytes, maxReCacheBytes)
+	}
+}
+
+func TestReCacheRejectsHugeAndDoesNotRetainInvalidPatterns(t *testing.T) {
+	if _, err := compilePattern(strings.Repeat("a", maxRegexPatternBytes+1)); err == nil {
+		t.Fatal("oversized regex pattern was accepted")
+	}
+	bad := "[invalid-security-cache-probe"
+	reCache.Lock()
+	_, before := reCache.items[bad]
+	reCache.Unlock()
+	if before {
+		t.Fatal("test invalid pattern unexpectedly already cached")
+	}
+	if _, err := compilePattern(bad); err == nil {
+		t.Fatal("invalid regex unexpectedly compiled")
+	}
+	reCache.Lock()
+	_, after := reCache.items[bad]
+	reCache.Unlock()
+	if after {
+		t.Fatal("invalid regex was retained in the cache")
 	}
 }
 

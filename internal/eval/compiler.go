@@ -797,16 +797,21 @@ func (c *compiler) compileExpr(e ast.Expr, dst int32) {
 	case *ast.StringLit:
 		c.emit(OpLoadConst, dst, c.konst(value.MakeStr(n.Value)), 0)
 	case *ast.Interp:
-		// Compile as the equivalent "" ~ p0 ~ p1 ~ ... fold (the pre-Interp desugaring),
-		// so interpolated strings stay on the VM with byte-identical bytecode.
-		var expr ast.Expr = n.Parts[0]
-		if _, isStr := expr.(*ast.StringLit); !isStr {
-			expr = &ast.Binary{Pos: n.Pos, Op: token.TILDE, L: &ast.StringLit{Pos: n.Pos}, R: expr}
+		// Interpolation is a bounded left fold, but unlike the general ~ operator an
+		// overflow Err must stop evaluation of later parts. Emit each append followed
+		// by a local Err jump so the VM matches the walker's short-circuit behavior.
+		c.emit(OpLoadConst, dst, c.konst(value.MakeStr("")), 0)
+		jumps := make([]int, 0, len(n.Parts))
+		for _, part := range n.Parts {
+			tmp := c.reserve()
+			c.compileExpr(part, tmp)
+			c.emit(OpConcat, dst, dst, tmp)
+			c.release(1)
+			jumps = append(jumps, c.emit(OpJumpIfErr, dst, 0, 0))
 		}
-		for _, op := range n.Parts[1:] {
-			expr = &ast.Binary{Pos: n.Pos, Op: token.TILDE, L: expr, R: op}
+		for _, jump := range jumps {
+			c.patchJump(jump)
 		}
-		c.compileExpr(expr, dst)
 	case *ast.BoolLit:
 		c.emit(OpLoadConst, dst, c.konst(value.MakeBool(n.Value)), 0)
 	case *ast.RegexLit:

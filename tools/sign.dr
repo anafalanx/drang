@@ -20,19 +20,23 @@ $TSA ::= "http://time.certum.pl"  # Certum RFC-3161 timestamp server (mandatory:
 # resolve_signtool locates signtool.exe: prefer the Windows SDK's own copy (glob picks the
 # highest installed version, so an SDK update just works), then the z workspace junction, then PATH.
 fn .resolve_signtool() {
-	$sdk := glob("C:/Program Files (x86)/Windows Kits/10/bin/*/x64/signtool.exe")
-	if len($sdk) > 0 {
-		return $sdk[len($sdk) - 1]
+	$sdk := glob("C:/Program Files (x86)/Windows Kits/10/bin/*/x64/signtool.exe")?
+	$sdkCount := len($sdk)?
+	if $sdkCount > 0 {
+		return $sdk[$sdkCount - 1]
 	}
 	$junction := env("Z_HOME", "C:/dev/.z") ~ "/r/winsdk/10.0.26100.0/signtool.exe"
-	if exists($junction) {
+	if exists($junction)? {
 		return $junction
 	}
 	$w := capture_all("where", "signtool")
-	if $w.ok and len(lines($w.out)) > 0 {
-		$first := trim(lines($w.out)[0])
-		if $first != "" {
-			return $first
+	if $w.ok {
+		$whereLines := lines($w.out)?
+		if len($whereLines)? > 0 {
+			$first := trim($whereLines[0])?
+			if $first != "" {
+				return $first
+			}
 		}
 	}
 	die("signtool.exe not found. Install the Windows SDK \"Signing Tools for Desktop Apps\".")
@@ -41,26 +45,31 @@ fn .resolve_signtool() {
 # resolve_target picks the file to sign: the argument if given, else the lone
 # drang_*_windows_amd64.exe in the current directory.
 fn .resolve_target() {
-	if len($ARGV) > 0 {
+	$argc := len($ARGV)?
+	if $argc > 1 {
+		die("usage: z sign [file.exe]")
+	}
+	if $argc == 1 {
 		$f := $ARGV[0]
-		if !exists($f) {
+		if !exists($f)? {
 			die("file not found: " ~ $f)
 		}
 		return $f
 	}
-	$g := glob("drang_*_windows_amd64.exe")
-	if len($g) == 0 {
+	$g := glob("drang_*_windows_amd64.exe")?
+	$candidates := len($g)?
+	if $candidates == 0 {
 		die("no file given and no drang_*_windows_amd64.exe here.\n  usage: z sign <file.exe>")
 	}
-	if len($g) > 1 {
-		die("multiple candidates: " ~ join($g, ", ") ~ "\n  pass one explicitly: z sign <file.exe>")
+	if $candidates > 1 {
+		die("multiple candidates: " ~ join($g, ", ")? ~ "\n  pass one explicitly: z sign <file.exe>")
 	}
 	$g[0]
 }
 
 # --- run ---
-$signtool := .resolve_signtool()
-$exe := .resolve_target()
+$signtool := .resolve_signtool()?
+$exe := .resolve_target()?
 say("file:      " ~ $exe)
 say("signtool:  " ~ $signtool)
 say("")
@@ -79,30 +88,49 @@ $s := capture_all(
 	"/v",
 	$exe
 )
-if trim($s.out) != "" {
-	say(trim($s.out))
+$signOut := trim($s.out)?
+if $signOut != "" {
+	say($signOut)
 }
 if !$s.ok {
-	if contains($s.out, "No certificates were found") or contains($s.err, "No certificates were found") {
+	if contains($s.out, "No certificates were found")? or contains(
+		$s.err,
+		"No certificates were found"
+	)? {
 		die(
 			"no code-signing certificate found — SimplySign is not connected.\n" ~ "  -> Open SimplySign Desktop, tray icon -> Connect to SimplySign\n" ~ "     (your SimplySign e-mail + the 6-digit phone token), then re-run.\n" ~ "     Refusing to emit an unsigned binary."
 		)
 	}
-	die("signtool sign failed (code " ~ str($s.code) ~ "): " ~ trim($s.err))
+	die("signtool sign failed (code " ~ str($s.code)? ~ "): " ~ trim($s.err)?)
 }
 # Verify: the signature must validate AND be timestamped.
 $v := capture_all($signtool, "verify", "/pa", "/all", "/v", $exe)
 if !$v.ok {
-	die("signature verify FAILED:\n" ~ trim($v.out) ~ trim($v.err))
+	die("signature verify FAILED:\n" ~ trim($v.out)? ~ trim($v.err)?)
 }
-if !contains($v.out, "timestamp") {
+if !contains($v.out, "timestamp")? {
 	die("signature is NOT timestamped — it would expire with the certificate. Aborting.")
 }
-# Report the release checksum (drang hashing its own release — the full-file SHA-256 that
-# goes in the GitHub release notes, computed by reading the bytes back).
-$sum := sha256(read_file($exe))
+# Report the release checksum. A legal standalone can exceed read_file's 64 MiB
+# whole-value limit, so use the z-system's streaming sha256sum tool rather than
+# materialising the executable inside drang. Persist the standard two-space checksum
+# line beside the asset so publishing is not a copy/paste step.
+$z := env("Z_ROOT", "C:/dev") ~ "/z.exe"
+# --zero disables GNU's escaped-filename record form for Windows backslash paths.
+$hashed := capture_all($z, "sha256sum", "--zero", "--", $exe)
+if !$hashed.ok {
+	die("sha256sum failed (code " ~ str($hashed.code)? ~ "): " ~ trim($hashed.err)?)
+}
+$fields := split(trim($hashed.out)?)?
+if len($fields)? < 1 or !matches($fields[0], qr/^[0-9a-fA-F]{64}$/)? {
+	die("sha256sum returned an invalid checksum: " ~ trim($hashed.out)?)
+}
+$sum := lower($fields[0])
+$sumFile := $exe ~ ".sha256"
+write_file($sumFile, $sum ~ "  " ~ basename($exe)? ~ "\n")?
 say("")
 say("OK — signed, verified, timestamped.")
 say("  file    " ~ $exe)
 say("  sha256  " ~ $sum)
+say("  record  " ~ $sumFile)
 true

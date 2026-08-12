@@ -37,6 +37,17 @@ func (ph *procHandle) get() windows.Handle {
 	return ph.handle
 }
 
+// take transfers ownership of the handle to one caller. It makes Wait and Release linearizable:
+// once Wait takes the handle, a racing Release sees zero and cannot close it out from under the
+// blocking kernel call; a second Wait likewise gets the documented already-waited error.
+func (ph *procHandle) take() windows.Handle {
+	ph.mu.Lock()
+	defer ph.mu.Unlock()
+	h := ph.handle
+	ph.handle = 0
+	return h
+}
+
 func (ph *procHandle) release() {
 	ph.mu.Lock()
 	defer ph.mu.Unlock()
@@ -60,7 +71,8 @@ func (p *Process) Pid() int { return p.pid }
 func (p *Process) Handle() windows.Handle { return p.ph.get() }
 
 // Release closes the process handle without waiting — for the tree-kill / job fan-out where a
-// per-child Wait is skipped. Idempotent; do not call concurrently with an in-flight Wait.
+// per-child Wait is skipped. It is idempotent and safe to race with Wait; whichever takes ownership
+// first wins, and the other returns without touching that handle.
 func (p *Process) Release() { p.ph.release() }
 
 var errWaitDone = errors.New("winjob: Wait already called")
@@ -69,11 +81,11 @@ var errWaitDone = errors.New("winjob: Wait already called")
 // it at most once; a second call returns an error rather than touching a closed handle.
 func (p *Process) Wait() (int, error) {
 	defer runtime.KeepAlive(p) // keep p reachable so its GC cleanup can't close the handle mid-Wait
-	h := p.ph.get()
+	h := p.ph.take()
 	if h == 0 {
 		return -1, errWaitDone
 	}
-	defer p.ph.release()
+	defer windows.CloseHandle(h)
 	s, err := windows.WaitForSingleObject(h, windows.INFINITE)
 	if err != nil {
 		return -1, fmt.Errorf("WaitForSingleObject: %w", err)
@@ -195,10 +207,32 @@ func LaunchExe(exe string, argv []string, dir string, env []string, jobs []*Job,
 	runtime.KeepAlive(io.Stderr)
 	defer closeDups()
 
-	jobHandles := make([]windows.Handle, len(jobs))
+	// Use private duplicates in the attribute list. A caller may Close a Job concurrently; holding
+	// our own references prevents a stale/recycled raw handle from reaching CreateProcess. Closing
+	// these duplicates after the spawn preserves KILL_ON_JOB_CLOSE semantics if the owner closed its
+	// original while launch was in flight.
+	jobHandles := make([]windows.Handle, 0, len(jobs))
 	for i, j := range jobs {
-		jobHandles[i] = j.handle
+		if j == nil {
+			for _, h := range jobHandles {
+				windows.CloseHandle(h)
+			}
+			return nil, fmt.Errorf("winjob.Launch: job %d is nil", i)
+		}
+		h, derr := j.duplicateHandle()
+		if derr != nil {
+			for _, opened := range jobHandles {
+				windows.CloseHandle(opened)
+			}
+			return nil, fmt.Errorf("winjob.Launch: job %d: %w", i, derr)
+		}
+		jobHandles = append(jobHandles, h)
 	}
+	defer func() {
+		for _, h := range jobHandles {
+			windows.CloseHandle(h)
+		}
+	}()
 
 	al, err := windows.NewProcThreadAttributeList(2)
 	if err != nil {

@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -74,5 +75,28 @@ func TestJSONEdgeCases(t *testing.T) {
 		value.MakeInt(1_000_000),
 	}); err == nil {
 		t.Error("to_json oversized indent: want an aborting error")
+	}
+}
+
+func TestJSONRenderDepthAndSizeAreBounded(t *testing.T) {
+	v := value.MakeInt(1)
+	for range maxJSONDepth + 2 {
+		v = value.MakeArray([]value.Value{v})
+	}
+	got, err := builtinToJSON([]value.Value{v})
+	if err != nil || !got.IsErr() || !strings.Contains(got.ErrMsg(), "nested too deeply") {
+		t.Fatalf("deep to_json = (%s, %v), want catchable depth Err", got.Display(), err)
+	}
+
+	oldLimit := maxJSONBytes
+	maxJSONBytes = 16
+	defer func() { maxJSONBytes = oldLimit }()
+	got, err = builtinToJSON([]value.Value{value.MakeStr(strings.Repeat("x", 32))})
+	if err != nil || !got.IsErr() || !strings.Contains(got.ErrMsg(), "16-byte limit") {
+		t.Fatalf("large to_json = (%s, %v), want catchable size Err", got.Display(), err)
+	}
+	got, err = builtinFromJSON([]value.Value{value.MakeStr(`"` + strings.Repeat("x", 32) + `"`)})
+	if err != nil || !got.IsErr() || !strings.Contains(got.ErrMsg(), "16-byte limit") {
+		t.Fatalf("large from_json = (%s, %v), want catchable size Err", got.Display(), err)
 	}
 }

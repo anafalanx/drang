@@ -11,7 +11,7 @@ for $i in 1..$n {
 	$cat := $cats[int($seed / 256) % 6]
 	$seed = ($seed * 1103515245 + 12345) % 2147483648
 	$amount := $seed % 1000
-	$row := $cat ~ "," ~ str($amount)
+	$row := $cat ~ "," ~ str($amount)  # lint:ignore err-output
 	$parts := split($row, ",")
 	$k := $parts[0]
 	$v := int($parts[1])

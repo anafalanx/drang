@@ -48,7 +48,12 @@ type Env struct {
 	moduleDir    string          // base directory for relative `use` paths (set on the top env per run/module)
 	scriptPath   string          // path of the running script file (for store()'s default location); "" or "<-e>"/"<stdin>" when there is none
 	loadingChain map[string]bool // canonical paths being loaded up the import chain (cycle detection)
-	callDepth    int             // dynamic user-function call depth at this env; the recursion guard (see callFunction)
+	moduleLoad   *moduleEntry    // non-nil on a module's top env while/after its single-flight load
+	modules      *moduleRegistry // shared only within this run/session; owns module cache + wait graph
+	stores       *storeSession   // shared session store registry + cleanup reachability target
+	exec         *executionContext
+	strand       *executionStrand
+	callDepth    int // dynamic user-function call depth at this env; the recursion guard (see callFunction)
 	// overflowFires counts depth-guard fires across a whole env universe (see the
 	// runaway-recursion escalation in callFunction). Allocated once per NewEnv root and
 	// found by walking the chain; atomic because pmap/spawn workers share the pointer
@@ -93,14 +98,52 @@ var (
 )
 
 // NewEnv returns a fresh top-level scope.
-func NewEnv() *Env { return &Env{vars: map[string]binding{}, overflowFires: new(atomic.Int64)} }
+func NewEnv() *Env {
+	return &Env{
+		vars:          map[string]binding{},
+		modules:       newModuleRegistry(),
+		stores:        newStoreSession(),
+		exec:          newExecutionContext(),
+		strand:        newExecutionStrand(),
+		overflowFires: new(atomic.Int64),
+	}
+}
 
 // child returns a nested scope. It inherits callDepth so the recursion guard tracks
 // depth across block scopes (if/for bodies) within one call; a function body's local
 // scope has its callDepth set explicitly by callFunction/vmCallFunction. snapshot
 // deliberately does NOT copy callDepth: a spawned/pmap goroutine runs on a fresh Go
 // stack and so starts counting from zero.
-func (e *Env) child() *Env { return &Env{vars: map[string]binding{}, parent: e, callDepth: e.callDepth} }
+func (e *Env) child() *Env {
+	return &Env{vars: map[string]binding{}, parent: e, stores: e.storeSession(), exec: e.executionContext(), strand: e.executionStrand(), callDepth: e.callDepth}
+}
+
+func (e *Env) storeSession() *storeSession {
+	for scope := e; scope != nil; scope = scope.parent {
+		if scope.stores != nil {
+			return scope.stores
+		}
+	}
+	return nil
+}
+
+func (e *Env) executionContext() *executionContext {
+	for scope := e; scope != nil; scope = scope.parent {
+		if scope.exec != nil {
+			return scope.exec
+		}
+	}
+	return nil
+}
+
+func (e *Env) executionStrand() *executionStrand {
+	for scope := e; scope != nil; scope = scope.parent {
+		if scope.strand != nil {
+			return scope.strand
+		}
+	}
+	return nil
+}
 
 // SetModuleDir sets the base directory for resolving relative `use` paths. The CLI
 // sets it on the top env: the importing file's directory, or cwd for -e/stdin/REPL.
@@ -155,20 +198,207 @@ func (e *Env) chainWith(canon string) map[string]bool {
 	return m
 }
 
-// snapshot returns an isolated copy of the env CHAIN (each scope's bindings map
-// is copied) so a spawned goroutine reads its own maps and never races the main
-// goroutine's ongoing defines/sets. Binding VALUES are shared: frozen constants
-// and immutable scalars/strings are safe; a captured MUTABLE container remains
-// the documented "pure callback" caveat. This fixes the shared-map data race.
-func (e *Env) snapshot() *Env {
+// closureSnapshot copies the complete mutable graph reachable from a captured
+// environment. Envs and user functions form a graph, not merely a parent chain:
+// an env binds its named functions, and every function points back at the env it
+// closed over. Arrays/maps add aliases and cycles of their own. The two visited
+// maps make that graph copy cycle-safe and preserve identity within the snapshot.
+//
+// Only mutable language state is copied. Synchronization/resource handles
+// (channel, task, process, store) deliberately remain shared, as do immutable
+// ranges and regexes. Stateless nil-Env builtin functions remain shared, while an
+// env-bound builtin is cloned so its scheduler/transaction identity is rebound to
+// the snapshot strand. Frozen containers are copied too because they may contain
+// a closure whose Env must be rebound; their frozen bit is restored after cloning.
+type closureSnapshot struct {
+	envs     map[*Env]*Env
+	objs     map[value.Obj]value.Obj
+	nodes    int
+	maxDepth int
+	maxNodes int
+	strand   *executionStrand
+}
+
+// Snapshot traversal is recursive, so it needs a much shallower ceiling than
+// the language's user-call guard. The node budget reuses the process-wide
+// materialized-collection ceiling and also counts scalar leaves, bounding the
+// work for broad as well as deep capture graphs.
+const maxClosureSnapshotDepth = 512
+
+func newClosureSnapshot() *closureSnapshot {
+	return newClosureSnapshotForStrand(newExecutionStrand())
+}
+
+func newClosureSnapshotForStrand(strand *executionStrand) *closureSnapshot {
+	if strand == nil {
+		strand = newExecutionStrand()
+	}
+	return newClosureSnapshotWithLimitsAndStrand(maxClosureSnapshotDepth, maxCollectionItems, strand)
+}
+
+func newClosureSnapshotWithLimits(maxDepth, maxNodes int) *closureSnapshot {
+	return newClosureSnapshotWithLimitsAndStrand(maxDepth, maxNodes, newExecutionStrand())
+}
+
+func newClosureSnapshotWithLimitsAndStrand(maxDepth, maxNodes int, strand *executionStrand) *closureSnapshot {
+	return &closureSnapshot{
+		envs:     make(map[*Env]*Env),
+		objs:     make(map[value.Obj]value.Obj),
+		maxDepth: maxDepth,
+		maxNodes: maxNodes,
+		strand:   strand,
+	}
+}
+
+func (s *closureSnapshot) visit(depth int) error {
+	if depth > s.maxDepth {
+		return fmt.Errorf("snapshot exceeds depth limit %d", s.maxDepth)
+	}
+	if s.nodes >= s.maxNodes {
+		return fmt.Errorf("snapshot exceeds node limit %d", s.maxNodes)
+	}
+	s.nodes++
+	return nil
+}
+
+// snapshot returns a closure-aware isolated copy of the environment graph. A
+// spawned/pmap goroutine can therefore mutate captured arrays/maps (directly or
+// through another captured function) without touching the caller or a sibling.
+func (e *Env) snapshot() (*Env, error) { return newClosureSnapshot().cloneEnv(e, 0) }
+
+func (s *closureSnapshot) cloneEnv(e *Env, depth int) (*Env, error) {
 	if e == nil {
-		return nil
+		return nil, nil
 	}
-	vars := make(map[string]binding, len(e.vars))
-	for k, b := range e.vars {
-		vars[k] = b
+	if cp, ok := s.envs[e]; ok {
+		return cp, nil
 	}
-	return &Env{vars: vars, parent: e.parent.snapshot(), moduleDir: e.moduleDir, scriptPath: e.scriptPath, loadingChain: e.loadingChain, overflowFires: e.overflowFires}
+	if err := s.visit(depth); err != nil {
+		return nil, err
+	}
+	cp := &Env{
+		vars:          make(map[string]binding, len(e.vars)),
+		moduleDir:     e.moduleDir,
+		scriptPath:    e.scriptPath,
+		loadingChain:  e.loadingChain,
+		moduleLoad:    e.moduleLoad,
+		modules:       e.modules,
+		stores:        e.storeSession(),
+		exec:          e.executionContext(),
+		strand:        s.strand,
+		overflowFires: e.overflowFires,
+	}
+	// Register before following parent/binding edges: named functions commonly
+	// point straight back at this Env.
+	s.envs[e] = cp
+	parent, err := s.cloneEnv(e.parent, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	cp.parent = parent
+	for name, b := range e.vars {
+		b.v, err = s.cloneValue(b.v, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		cp.vars[name] = b
+	}
+	return cp, nil
+}
+
+func (s *closureSnapshot) cloneFunction(f *Function, depth int) (*Function, error) {
+	if f == nil || (f.Builtin != nil && f.Env == nil) {
+		return f, nil // a stateless host-created builtin has no environment to rebind
+	}
+	if cp, ok := s.objs[f]; ok {
+		return cp.(*Function), nil
+	}
+	if err := s.visit(depth); err != nil {
+		return nil, err
+	}
+	cp := &Function{
+		Name:     f.Name,
+		Params:   f.Params,
+		Defaults: f.Defaults,
+		Body:     f.Body,
+		Proto:    f.Proto,
+		Builtin:  f.Builtin,
+	}
+	s.objs[f] = cp
+	env, err := s.cloneEnv(f.Env, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	cp.Env = env
+	return cp, nil
+}
+
+func (s *closureSnapshot) cloneValue(v value.Value, depth int) (value.Value, error) {
+	o := v.Obj()
+	if o == nil {
+		if err := s.visit(depth); err != nil {
+			return value.MakeNil(), err
+		}
+		return v, nil // scalar/string/error
+	}
+	if cp, ok := s.objs[o]; ok {
+		return value.MakeObj(v.Tag(), cp), nil
+	}
+
+	switch x := o.(type) {
+	case *Function:
+		cp, err := s.cloneFunction(x, depth)
+		if err != nil {
+			return value.MakeNil(), err
+		}
+		return value.MakeObj(v.Tag(), cp), nil
+	case *value.Array:
+		if err := s.visit(depth); err != nil {
+			return value.MakeNil(), err
+		}
+		cp := &value.Array{Elems: make([]value.Value, len(x.Elems))}
+		s.objs[x] = cp
+		for i, elem := range x.Elems {
+			cloned, err := s.cloneValue(elem, depth+1)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			cp.Elems[i] = cloned
+		}
+		out := value.MakeObj(v.Tag(), cp)
+		if x.IsFrozen() {
+			value.Freeze(out)
+		}
+		return out, nil
+	case *value.OrderedMap:
+		if err := s.visit(depth); err != nil {
+			return value.MakeNil(), err
+		}
+		out := value.MakeMap()
+		cp := out.Obj().(*value.OrderedMap)
+		s.objs[x] = cp
+		keys, vals := x.Keys(), x.Vals()
+		for i, key := range keys {
+			// Map keys are scalar by construction; values carry the mutable graph.
+			cloned, err := s.cloneValue(vals[i], depth+1)
+			if err != nil {
+				return value.MakeNil(), err
+			}
+			cp.Set(key, cloned)
+		}
+		if x.IsFrozen() {
+			value.Freeze(out)
+		}
+		return out, nil
+	default:
+		// Range/regex are immutable. Chan/Task/Proc/Store are synchronized
+		// capabilities whose identity is their purpose, so they remain shared.
+		if err := s.visit(depth); err != nil {
+			return value.MakeNil(), err
+		}
+		s.objs[o] = o
+		return v, nil
+	}
 }
 
 // stormCounter finds the env universe's overflow-fire counter (on the NewEnv root, or
@@ -392,6 +622,9 @@ func ErrorPos(err error) (line, col int, ok bool) {
 
 // RunProgram evaluates a whole program against env.
 func RunProgram(prog *ast.Program, env *Env) error {
+	ctx := env.executionContext()
+	owned := ctx.beginRun()
+	defer ctx.endRun(owned)
 	env.resetOverflowBudget()
 	for _, s := range prog.Stmts {
 		if _, err := evalStmt(s, env); err != nil {
@@ -415,6 +648,9 @@ func NewREPLEnv() *Env {
 // tree-walker — the VM's behavioral oracle, so results match normal execution —
 // while functions defined here still compile and run on the VM when later called.
 func EvalREPL(prog *ast.Program, env *Env) (value.Value, error) {
+	ctx := env.executionContext()
+	owned := ctx.beginRun()
+	defer ctx.endRun(owned)
 	env.resetOverflowBudget()
 	last := value.MakeNil()
 	for _, s := range prog.Stmts {
@@ -812,7 +1048,7 @@ func compound(op token.Kind, cur, rhs value.Value) (value.Value, error) {
 		if cur.Tag() == value.Nil {
 			cur = value.MakeStr("")
 		}
-		return value.MakeStr(cur.Display() + rhs.Display()), nil
+		return concatValues(cur, rhs), nil
 	}
 	if cur.Tag() == value.Nil {
 		cur = value.MakeInt(0)
@@ -883,6 +1119,9 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 			return newv, nil
 		}
 		if i == length {
+			if a.Len() >= maxCollectionItems {
+				return value.MakeNil(), fmt.Errorf("array exceeds the %d-element collection limit", maxCollectionItems)
+			}
 			a.Elems = append(a.Elems, newv)
 			return newv, nil
 		}
@@ -894,6 +1133,9 @@ func assignSlot(container, key value.Value, op token.Kind, rhs value.Value) (val
 		m := container.Obj().(*value.OrderedMap)
 		if m.IsFrozen() {
 			return value.MakeNil(), fmt.Errorf("cannot modify a frozen map")
+		}
+		if !m.Has(key) && m.Len() >= maxCollectionItems {
+			return value.MakeNil(), fmt.Errorf("map exceeds the %d-entry collection limit", maxCollectionItems)
 		}
 		newv := rhs
 		if op != token.ILLEGAL {
@@ -1102,8 +1344,7 @@ func arraySlice(a *value.Array, lo, hi int64) value.Value {
 // stringIndex returns the i-th rune of s as a one-character string (negatives count
 // from the end); an out-of-range index is an Err.
 func stringIndex(s string, i int64) value.Value {
-	rs := []rune(s)
-	n := int64(len(rs))
+	n := int64(utf8.RuneCountInString(s))
 	idx := i
 	if idx < 0 {
 		idx += n
@@ -1112,18 +1353,54 @@ func stringIndex(s string, i int64) value.Value {
 		// Report the original index and use the same wording as the array path.
 		return value.MakeErr(fmt.Sprintf("index %d out of range (len %d)", i, n), 1)
 	}
-	return value.MakeStr(string(rs[idx]))
+	pos := int64(0)
+	for _, r := range s {
+		if pos == idx {
+			return value.MakeStr(string(r))
+		}
+		pos++
+	}
+	return value.MakeErr(fmt.Sprintf("index %d out of range (len %d)", i, n), 1)
 }
 
 // stringSlice returns the substring s[lo..hi] by rune (inclusive); bounds clamp and
 // an empty/reversed range yields "".
 func stringSlice(s string, lo, hi int64) value.Value {
-	rs := []rune(s)
-	from, to, ok := clampSlice(lo, hi, int64(len(rs)))
+	n := int64(utf8.RuneCountInString(s))
+	from, to, ok := clampSlice(lo, hi, n)
 	if !ok {
 		return value.MakeStr("")
 	}
-	return value.MakeStr(string(rs[from:to]))
+	if !utf8.ValidString(s) {
+		b := newLimitedStringBuilder(maxStringBytes)
+		pos := int64(0)
+		for _, r := range s {
+			if pos >= from && pos < to {
+				_, _ = b.WriteRune(r)
+			}
+			if pos >= to {
+				break
+			}
+			pos++
+		}
+		if err := b.Err(); err != nil {
+			return value.MakeErr("string slice: "+err.Error(), 1)
+		}
+		return value.MakeStr(b.String())
+	}
+	start, end := 0, len(s)
+	pos := int64(0)
+	for byteAt := range s {
+		if pos == from {
+			start = byteAt
+		}
+		if pos == to {
+			end = byteAt
+			break
+		}
+		pos++
+	}
+	return value.MakeStr(s[start:end])
 }
 
 // evalFieldRead reads c.name: a string-keyed map lookup (miss is undef), else Err.
@@ -1170,13 +1447,19 @@ func evalExprInner(e ast.Expr, env *Env) (value.Value, error) {
 	case *ast.Interp:
 		// Stringify each part via Display and concatenate — byte-identical to the old
 		// left-folded "" ~ p0 ~ p1 ~ ... chain (~ is l.Display()+r.Display()).
-		var b strings.Builder
+		b := newLimitedStringBuilder(maxStringBytes)
 		for _, p := range n.Parts {
 			v, err := evalExpr(p, env)
 			if err != nil {
 				return value.MakeNil(), err
 			}
-			b.WriteString(v.Display())
+			s, ok := displayWithin(v, maxStringBytes-int64(b.Len()))
+			if !ok {
+				return value.MakeErr(fmt.Sprintf("concatenation exceeds the %d-byte string limit", maxStringBytes), 1), nil
+			}
+			if _, err := b.WriteString(s); err != nil {
+				return value.MakeErr("interpolation: "+err.Error(), 1), nil
+			}
 		}
 		return value.MakeStr(b.String()), nil
 	case *ast.BoolLit:
@@ -1196,7 +1479,7 @@ func evalExprInner(e ast.Expr, env *Env) (value.Value, error) {
 		if b, ok := builtins[n.Name]; ok {
 			// a bare builtin name in value position is a first-class function value, so it
 			// can be passed to HOFs: map($xs, basename). A user binding (above) still wins.
-			return value.MakeObj(value.Func, &Function{Name: n.Name, Builtin: b}), nil
+			return value.MakeObj(value.Func, &Function{Name: n.Name, Env: env, Builtin: b}), nil
 		}
 		return value.MakeNil(), fmt.Errorf("undefined: %s%s", n.Name, loopKeywordHint(n.Name))
 	case *ast.Unary:
@@ -1325,6 +1608,9 @@ func evalUnary(n *ast.Unary, env *Env) (value.Value, error) {
 	case token.MINUS:
 		switch x.Tag() {
 		case value.Int:
+			if x.AsInt() == math.MinInt64 {
+				return value.MakeNil(), fmt.Errorf("integer overflow: cannot negate %d", x.AsInt())
+			}
 			return value.MakeInt(-x.AsInt()), nil
 		case value.Float:
 			return value.MakeFloat(-x.AsFloat()), nil
@@ -1349,7 +1635,7 @@ func evalBinary(n *ast.Binary, env *Env) (value.Value, error) {
 	}
 	switch n.Op {
 	case token.TILDE:
-		return value.MakeStr(l.Display() + r.Display()), nil
+		return concatValues(l, r), nil
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH, token.PERCENT:
 		return arith(n.Op, l, r)
 	case token.EQ:
@@ -1511,26 +1797,11 @@ func equal(l, r value.Value) bool { return value.Equal(l, r) }
 // It is the shared core of compare, the <=> operator, and the ordering builtins.
 func threeway(l, r value.Value) (int, error) {
 	switch {
-	case l.Tag() == value.Int && r.Tag() == value.Int:
-		// Compare as int64: routing two ints through float64 collapses values above 2^53
-		// (e.g. adjacent nanosecond timestamps or large ids would order as equal).
-		a, b := l.AsInt(), r.AsInt()
-		switch {
-		case a < b:
-			return -1, nil
-		case a > b:
-			return 1, nil
-		}
-		return 0, nil
 	case l.IsNumber() && r.IsNumber():
-		a, b := l.Num(), r.Num()
-		switch {
-		case a < b:
-			return -1, nil
-		case a > b:
-			return 1, nil
+		if cmp, ok := value.CompareNumbers(l, r); ok {
+			return cmp, nil
 		}
-		return 0, nil
+		return 0, fmt.Errorf("cannot compare NaN")
 	case l.Tag() == value.Str && r.Tag() == value.Str:
 		return strings.Compare(l.AsStr(), r.AsStr()), nil
 	}
@@ -1638,7 +1909,7 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 		return evalDispatch(args, env)
 	}
 	if name == "spawn" {
-		return evalSpawn(args)
+		return evalSpawnContext(args, env.executionContext())
 	}
 	if name == "stream_lines" {
 		return evalStreamLines(args, depth)
@@ -1650,18 +1921,24 @@ func dispatchNonUser(name string, args []value.Value, env *Env, depth int) (valu
 		return evalStore(args, env)
 	}
 	if name == "store_update" {
-		return evalStoreUpdate(args, depth)
+		return evalStoreUpdate(args, env, depth)
 	}
 	if name == "with_store" {
-		return evalWithStore(args, depth)
+		return evalWithStore(args, env, depth)
 	}
 	if name == "validate" {
 		return evalValidate(args, depth)
 	}
 	if hofNames[name] {
-		return evalHOF(name, args, depth)
+		return evalHOFContext(name, args, depth, env.executionContext())
 	}
 	if b, ok := builtins[name]; ok {
+		if isConcurrencyBuiltin(name) {
+			return callConcurrencyBuiltin(name, args, env.executionContext(), env.executionStrand())
+		}
+		if isStoreBuiltin(name) {
+			return callStoreBuiltin(name, args, env)
+		}
 		return safeBuiltin(name, b, args)
 	}
 	return value.MakeNil(), fmt.Errorf("unknown function %s", name)
@@ -1753,6 +2030,18 @@ func callFunction(fn *Function, args []value.Value, depth int) (value.Value, err
 		// route through safeBuiltin so a panicking builtin yields a catchable Err, exactly
 		// like by-name dispatch (this is the serial path; pmap has its own recover). The
 		// builtin still does its own arity/type checks.
+		if isConcurrencyBuiltin(fn.Name) {
+			var ctx *executionContext
+			var strand *executionStrand
+			if fn.Env != nil {
+				ctx = fn.Env.executionContext()
+				strand = fn.Env.executionStrand()
+			}
+			return callConcurrencyBuiltin(fn.Name, args, ctx, strand)
+		}
+		if isStoreBuiltin(fn.Name) {
+			return callStoreBuiltin(fn.Name, args, fn.Env)
+		}
 		return safeBuiltin(fn.Name, fn.Builtin, args)
 	}
 	if testCallBudget > 0 && testCallsUsed.Add(1) > testCallBudget {
@@ -1858,19 +2147,19 @@ func safeBuiltin(name string, b builtin, args []value.Value) (v value.Value, err
 }
 
 var builtins = map[string]builtin{
-	"say":         builtinSay,
-	"warn":        builtinWarn,
-	"fail":        builtinFail,
-	"die":         builtinDie,
-	"exit":        builtinExit,
-	"parse_args":  builtinParseArgs,
-	"int":         builtinInt,
-	"str":         builtinStr,
-	"float":       builtinFloat,
-	"bool":        builtinBool,
-	"type":        builtinType,
-	"is_err":      builtinIsErr,
-	"err_code":    builtinErrCode,
+	"say":        builtinSay,
+	"warn":       builtinWarn,
+	"fail":       builtinFail,
+	"die":        builtinDie,
+	"exit":       builtinExit,
+	"parse_args": builtinParseArgs,
+	"int":        builtinInt,
+	"str":        builtinStr,
+	"float":      builtinFloat,
+	"bool":       builtinBool,
+	"type":       builtinType,
+	"is_err":     builtinIsErr,
+	"err_code":   builtinErrCode,
 
 	// persistent JSON key-value store (store()/store_update/with_store are special
 	// forms in dispatchNonUser; these are the plain builtins)
@@ -1883,29 +2172,29 @@ var builtins = map[string]builtin{
 	"store_clear":  builtinStoreClear,
 	"store_path":   builtinStorePath,
 	"store_close":  builtinStoreClose,
-	"err_msg":     builtinErrMsg,
-	"run":         builtinRun,
-	"capture":     builtinCapture,
-	"capture_all": builtinCaptureAll,
-	"pipe":        builtinPipe,
-	"start":       builtinStart,
-	"kill":        builtinKill,
-	"pid":         builtinPid,
-	"status":      builtinStatus,
-	"send_stdin":  builtinSendStdin,
-	"close_stdin": builtinCloseStdin,
-	"recv_stdout": builtinRecvStdout,
-	"recv_stderr": builtinRecvStderr,
-	"len":         builtinLen,
-	"push":        builtinPush,
-	"pop":         builtinPop,
-	"keys":        builtinKeys,
-	"values":      builtinValues,
-	"pairs":       builtinPairs,
-	"has":         builtinHas,
-	"delete":      builtinDelete,
-	"chars":       builtinChars,
-	"contains":    builtinContains,
+	"err_msg":      builtinErrMsg,
+	"run":          builtinRun,
+	"capture":      builtinCapture,
+	"capture_all":  builtinCaptureAll,
+	"pipe":         builtinPipe,
+	"start":        builtinStart,
+	"kill":         builtinKill,
+	"pid":          builtinPid,
+	"status":       builtinStatus,
+	"send_stdin":   builtinSendStdin,
+	"close_stdin":  builtinCloseStdin,
+	"recv_stdout":  builtinRecvStdout,
+	"recv_stderr":  builtinRecvStderr,
+	"len":          builtinLen,
+	"push":         builtinPush,
+	"pop":          builtinPop,
+	"keys":         builtinKeys,
+	"values":       builtinValues,
+	"pairs":        builtinPairs,
+	"has":          builtinHas,
+	"delete":       builtinDelete,
+	"chars":        builtinChars,
+	"contains":     builtinContains,
 
 	// filesystem: path helpers
 	"path_join":     builtinPathJoin,
@@ -2111,14 +2400,35 @@ func swapStdout(w io.Writer) io.Writer {
 	return old
 }
 
+func swapStderr(w io.Writer) io.Writer {
+	outMu.Lock()
+	defer outMu.Unlock()
+	old := stderr
+	stderr = w
+	return old
+}
+
 func builtinSay(args []value.Value) (value.Value, error) {
-	parts := make([]string, len(args))
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i, a := range args {
-		parts[i] = a.Display()
+		if i > 0 {
+			_ = b.WriteByte(' ')
+		}
+		s, ok := displayWithin(a, maxStringBytes-int64(b.Len()))
+		if !ok {
+			return value.MakeNil(), fmt.Errorf("say: result exceeds the %d-byte string limit", maxStringBytes)
+		}
+		_, _ = b.WriteString(s)
+		if err := b.Err(); err != nil {
+			return value.MakeNil(), fmt.Errorf("say: %w", err)
+		}
 	}
 	outMu.Lock()
-	fmt.Fprintln(stdout, strings.Join(parts, " "))
+	_, err := fmt.Fprintln(stdout, b.String())
 	outMu.Unlock()
+	if err != nil {
+		return value.MakeNil(), fmt.Errorf("say: write stdout: %w", err)
+	}
 	return value.MakeNil(), nil
 }
 
@@ -2126,7 +2436,11 @@ func builtinSay(args []value.Value) (value.Value, error) {
 func builtinFail(args []value.Value) (value.Value, error) {
 	msg := "failed"
 	if len(args) > 0 {
-		msg = args[0].Display()
+		var ok bool
+		msg, ok = displayWithin(args[0], maxStringBytes)
+		if !ok {
+			return value.MakeErr(fmt.Sprintf("fail: message exceeds the %d-byte string limit", maxStringBytes), 1), nil
+		}
 	}
 	return value.MakeErr(msg, 1), nil
 }
@@ -2140,7 +2454,11 @@ func builtinInt(args []value.Value) (value.Value, error) {
 	case value.Int:
 		return a, nil
 	case value.Float:
-		return value.MakeInt(int64(a.AsFloat())), nil
+		f := a.AsFloat()
+		if math.IsNaN(f) || math.IsInf(f, 0) || f < math.MinInt64 || f >= math.MaxInt64 {
+			return value.MakeErr(fmt.Sprintf("cannot convert %s to int: out of range", a.Display()), 1), nil
+		}
+		return value.MakeInt(int64(f)), nil
 	case value.Str:
 		n, err := strconv.ParseInt(strings.TrimSpace(a.AsStr()), 10, 64)
 		if err != nil {
@@ -2182,6 +2500,9 @@ func builtinPush(args []value.Value) (value.Value, error) {
 	a := args[0].Obj().(*value.Array)
 	if a.IsFrozen() {
 		return value.MakeErr("cannot push to a frozen array", 1), nil
+	}
+	if len(args)-1 > maxCollectionItems-len(a.Elems) {
+		return value.MakeErr(fmt.Sprintf("push: array exceeds the %d-element collection limit", maxCollectionItems), 1), nil
 	}
 	a.Elems = append(a.Elems, args[1:]...)
 	return args[0], nil
@@ -2288,8 +2609,15 @@ func builtinChars(args []value.Value) (value.Value, error) {
 	if args[0].Tag() != value.Str {
 		return value.MakeErr(fmt.Sprintf("chars expects a string, got %s", args[0].TypeName()), 1), nil
 	}
+	s := args[0].AsStr()
+	if int64(len(s)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("chars: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	if utf8.RuneCountInString(s) > maxCollectionItems {
+		return value.MakeErr(fmt.Sprintf("chars: result exceeds the %d-element collection limit", maxCollectionItems), 1), nil
+	}
 	var out []value.Value
-	for _, r := range args[0].AsStr() {
+	for _, r := range s {
 		out = append(out, value.MakeStr(string(r)))
 	}
 	return value.MakeArray(out), nil

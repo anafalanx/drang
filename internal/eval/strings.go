@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -46,9 +47,15 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), typeErrf("split expects a string, got %s", args[0].TypeName())
 	}
 	s := args[0].AsStr()
+	if int64(len(s)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("split: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
 	var parts []string
 	switch {
 	case len(args) == 1:
+		if countFieldsOver(s, maxCollectionItems) {
+			return value.MakeErr(fmt.Sprintf("split: result exceeds the %d-element collection limit", maxCollectionItems), 1), nil
+		}
 		parts = strings.Fields(s)
 	default:
 		if args[1].Tag() != value.Str {
@@ -56,10 +63,16 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		}
 		sep := args[1].AsStr()
 		if sep == "" {
+			if utf8.RuneCountInString(s) > maxCollectionItems {
+				return value.MakeErr(fmt.Sprintf("split: result exceeds the %d-element collection limit", maxCollectionItems), 1), nil
+			}
 			for _, r := range s {
 				parts = append(parts, string(r))
 			}
 		} else {
+			if strings.Count(s, sep)+1 > maxCollectionItems {
+				return value.MakeErr(fmt.Sprintf("split: result exceeds the %d-element collection limit", maxCollectionItems), 1), nil
+			}
 			parts = strings.Split(s, sep)
 		}
 	}
@@ -68,6 +81,24 @@ func builtinSplit(args []value.Value) (value.Value, error) {
 		out[i] = value.MakeStr(p)
 	}
 	return value.MakeArray(out), nil
+}
+
+func countFieldsOver(s string, limit int) bool {
+	count, inField := 0, false
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			inField = false
+			continue
+		}
+		if !inField {
+			count++
+			if count > limit {
+				return true
+			}
+			inField = true
+		}
+	}
+	return false
 }
 
 // builtinTrim trims whitespace, or the given cutset of characters.
@@ -92,7 +123,14 @@ func builtinUpper(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	return value.MakeStr(strings.ToUpper(s)), nil
+	if int64(len(s)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("upper: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	out := strings.ToUpper(s)
+	if int64(len(out)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("upper: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	return value.MakeStr(out), nil
 }
 
 func builtinLower(args []value.Value) (value.Value, error) {
@@ -100,7 +138,14 @@ func builtinLower(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	return value.MakeStr(strings.ToLower(s)), nil
+	if int64(len(s)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("lower: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	out := strings.ToLower(s)
+	if int64(len(out)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("lower: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	return value.MakeStr(out), nil
 }
 
 func builtinStartsWith(args []value.Value) (value.Value, error) {
@@ -135,7 +180,7 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 	f := args[0].AsStr()
 	rest := args[1:]
 	ai, holes := 0, 0
-	var b strings.Builder
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i := 0; i < len(f); i++ {
 		c := f[i]
 		if c == '}' {
@@ -173,7 +218,11 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 		arg := rest[ai]
 		ai++
 		if inner == "" {
-			b.WriteString(arg.Display())
+			s, ok := displayWithin(arg, maxStringBytes-int64(b.Len()))
+			if !ok {
+				return value.MakeErr(fmt.Sprintf("format: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+			}
+			b.WriteString(s)
 			continue
 		}
 		s, err := formatArg(inner[1:], arg)
@@ -181,6 +230,9 @@ func builtinFormat(args []value.Value) (value.Value, error) {
 			return value.MakeErr("format: "+err.Error(), 1), nil
 		}
 		b.WriteString(s)
+	}
+	if err := b.Err(); err != nil {
+		return value.MakeErr("format: "+err.Error(), 1), nil
 	}
 	// Strict arity: one placeholder per argument and vice versa. Catches the common
 	// printf habit (format("%s", x) has no placeholders) and over/under-supply, as a
@@ -229,10 +281,16 @@ func builtinLines(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
+	if int64(len(s)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("lines: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.TrimSuffix(s, "\n")
 	if s == "" {
 		return value.MakeArray(nil), nil
+	}
+	if strings.Count(s, "\n")+1 > maxCollectionItems {
+		return value.MakeErr(fmt.Sprintf("lines: result exceeds the %d-element collection limit", maxCollectionItems), 1), nil
 	}
 	parts := strings.Split(s, "\n")
 	out := make([]value.Value, len(parts))
@@ -261,8 +319,7 @@ func builtinRepeat(args []value.Value) (value.Value, error) {
 	s := args[0].AsStr()
 	// Cap the result so an oversized count yields a catchable Err instead of a
 	// strings.Repeat allocation panic.
-	const maxLen = 1 << 30 // 1 GiB
-	if len(s) > 0 && n > int64(maxLen/len(s)) {
+	if len(s) > 0 && n > maxStringBytes/int64(len(s)) {
 		return value.MakeErr(fmt.Sprintf("repeat: result too large (%d copies of %d bytes)", n, len(s)), 1), nil
 	}
 	return value.MakeStr(strings.Repeat(s, int(n))), nil
@@ -276,12 +333,27 @@ func joinStrings(args []value.Value) (value.Value, error) {
 	}
 	arr := args[0].Obj().(*value.Array)
 	sep := ""
-	if len(args) == 2 {
-		sep = args[1].Display()
+	if len(args) == 2 && len(arr.Elems) > 1 {
+		var ok bool
+		sep, ok = displayWithin(args[1], maxStringBytes)
+		if !ok {
+			return value.MakeErr(fmt.Sprintf("join: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+		}
 	}
-	parts := make([]string, len(arr.Elems))
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i, e := range arr.Elems {
-		parts[i] = e.Display()
+		if i > 0 {
+			if _, err := b.WriteString(sep); err != nil {
+				return value.MakeErr("join: "+err.Error(), 1), nil
+			}
+		}
+		s, ok := displayWithin(e, maxStringBytes-int64(b.Len()))
+		if !ok {
+			return value.MakeErr(fmt.Sprintf("join: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+		}
+		if _, err := b.WriteString(s); err != nil {
+			return value.MakeErr("join: "+err.Error(), 1), nil
+		}
 	}
-	return value.MakeStr(strings.Join(parts, sep)), nil
+	return value.MakeStr(b.String()), nil
 }

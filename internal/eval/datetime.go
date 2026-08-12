@@ -2,8 +2,8 @@ package eval
 
 import (
 	"fmt"
+	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -19,7 +19,30 @@ func builtinNow(args []value.Value) (value.Value, error) {
 	if len(args) != 0 {
 		return value.MakeNil(), fmt.Errorf("now expects no arguments, got %d", len(args))
 	}
-	return value.MakeFloat(float64(time.Now().UnixNano()) / 1e9), nil
+	return value.MakeFloat(epochSeconds(time.Now())), nil
+}
+
+func epochSeconds(t time.Time) float64 {
+	sec := t.Unix()
+	epoch := float64(sec)
+	if t.Nanosecond() == 0 {
+		return epoch
+	}
+	epoch += float64(t.Nanosecond()) / 1e9
+
+	// A float64 epoch has progressively coarser spacing as its magnitude grows.
+	// Near the end of the supported calendar range, a value one nanosecond below
+	// the next second can therefore round up to that second. Keep the returned
+	// value inside the time's original Unix-second interval whenever that interval
+	// has a representable float; losing some fractional precision is preferable to
+	// changing the calendar second.
+	if sec < math.MaxInt64 && int64(math.Floor(epoch)) != sec {
+		beforeUpper := math.Nextafter(float64(sec+1), math.Inf(-1))
+		if int64(math.Floor(beforeUpper)) == sec {
+			epoch = beforeUpper
+		}
+	}
+	return epoch
 }
 
 func builtinSleep(args []value.Value) (value.Value, error) {
@@ -29,25 +52,44 @@ func builtinSleep(args []value.Value) (value.Value, error) {
 	if !args[0].IsNumber() {
 		return value.MakeErr(fmt.Sprintf("sleep expects a number, got %s", args[0].TypeName()), 1), nil
 	}
-	if secs := args[0].Num(); secs > 0 {
-		time.Sleep(time.Duration(secs * float64(time.Second)))
+	secs := args[0].Num()
+	nanos := secs * float64(time.Second)
+	if math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 || nanos >= 0x1p63 {
+		return value.MakeErr("sleep: seconds must be finite, non-negative, and within time.Duration range", 1), nil
+	}
+	if secs > 0 {
+		time.Sleep(time.Duration(nanos))
 	}
 	return value.MakeNil(), nil
 }
 
-// epochToTime converts epoch seconds (with fraction) to a LOCAL time.Time.
-func epochToTime(epoch float64) time.Time { return epochZone(epoch, false) }
-
 // epochZone converts epoch seconds (with fraction) to a time.Time in the local zone, or
 // UTC when utc is set.
-func epochZone(epoch float64, utc bool) time.Time {
-	sec := int64(epoch)
-	nsec := int64((epoch - float64(sec)) * 1e9)
-	t := time.Unix(sec, nsec)
-	if utc {
-		return t.UTC()
+func epochZone(epoch float64, utc bool) (time.Time, error) {
+	if math.IsNaN(epoch) || math.IsInf(epoch, 0) || epoch < -0x1p63 || epoch >= 0x1p63 {
+		return time.Time{}, fmt.Errorf("epoch must be finite and within int64 seconds range")
 	}
-	return t.Local()
+	// Unix fractional seconds use floor decomposition: -0.1 is second -1 plus
+	// 900 ms. Truncating toward zero can turn a value just below zero into second
+	// 0 after the fractional nanoseconds round, crossing the Unix-second boundary.
+	whole := math.Floor(epoch)
+	sec := int64(whole)
+	nsec := int64((epoch - whole) * 1e9)
+	t := time.Unix(sec, nsec)
+	// time.Unix accepts every int64, but time.Time's internal calendar epoch does
+	// not represent the very lowest Unix seconds. Calendar conversion then wraps
+	// those instants roughly 584 billion years forward (for example MinInt64
+	// formats as a large positive year). A negative Unix instant must be no later
+	// than 1970 in UTC, and a positive one no earlier; use that invariant to reject
+	// the small unrepresentable tail instead of returning a plausible wrong date.
+	year := t.UTC().Year()
+	if (sec < 0 && year > 1970) || (sec > 0 && year < 1970) {
+		return time.Time{}, fmt.Errorf("epoch is outside the supported calendar range")
+	}
+	if utc {
+		return t.UTC(), nil
+	}
+	return t.Local(), nil
 }
 
 // utcOpt reads the optional trailing {utc: bool} options map (at args[idx], if present) for
@@ -63,12 +105,18 @@ func utcOpt(name string, args []value.Value, idx int) (bool, error) {
 	}
 	m := opts.Obj().(*value.OrderedMap)
 	for _, k := range m.Keys() {
-		if k.Display() != "utc" {
+		if k.Tag() != value.Str || k.AsStr() != "utc" {
 			return false, fmt.Errorf("%s: unknown option %q", name, k.Display())
 		}
 	}
 	v, ok := m.Get(value.MakeStr("utc"))
-	return ok && v.Truthy(), nil
+	if !ok {
+		return false, nil
+	}
+	if v.Tag() != value.Bool {
+		return false, fmt.Errorf("%s: utc must be a bool, got %s", name, v.TypeName())
+	}
+	return v.AsBool(), nil
 }
 
 // builtinFormatTime formats an epoch with %-codes — the spelled-out inverse of
@@ -87,7 +135,15 @@ func builtinFormatTime(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeErr(err.Error(), 1), nil
 	}
-	return value.MakeStr(strftimeFormat(epochZone(args[0].Num(), utc), args[1].AsStr())), nil
+	t, terr := epochZone(args[0].Num(), utc)
+	if terr != nil {
+		return value.MakeErr("format_time: "+terr.Error(), 1), nil
+	}
+	formatted, ferr := strftimeFormat(t, args[1].AsStr())
+	if ferr != nil {
+		return value.MakeErr("format_time: "+ferr.Error(), 1), nil
+	}
+	return value.MakeStr(formatted), nil
 }
 
 func builtinParseTime(args []value.Value) (value.Value, error) {
@@ -113,7 +169,7 @@ func builtinParseTime(args []value.Value) (value.Value, error) {
 	if perr != nil {
 		return value.MakeErr("parse_time: "+perr.Error(), 1), nil
 	}
-	return value.MakeFloat(float64(t.UnixNano()) / 1e9), nil
+	return value.MakeFloat(epochSeconds(t)), nil
 }
 
 func builtinDateParts(args []value.Value) (value.Value, error) {
@@ -127,7 +183,10 @@ func builtinDateParts(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeErr(err.Error(), 1), nil
 	}
-	t := epochZone(args[0].Num(), utc)
+	t, terr := epochZone(args[0].Num(), utc)
+	if terr != nil {
+		return value.MakeErr("date_parts: "+terr.Error(), 1), nil
+	}
 	m := value.MakeMap()
 	om := m.Obj().(*value.OrderedMap)
 	om.Set(value.MakeStr("year"), value.MakeInt(int64(t.Year())))
@@ -143,8 +202,8 @@ func builtinDateParts(args []value.Value) (value.Value, error) {
 
 // strftimeFormat renders t per a strftime-style %-code format. Codes with no Go
 // layout equivalent (%j, %w) are computed directly; an unknown %X is left literal.
-func strftimeFormat(t time.Time, f string) string {
-	var b strings.Builder
+func strftimeFormat(t time.Time, f string) (string, error) {
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i := 0; i < len(f); i++ {
 		if f[i] != '%' || i+1 >= len(f) {
 			b.WriteByte(f[i])
@@ -199,13 +258,16 @@ func strftimeFormat(t time.Time, f string) string {
 			b.WriteByte(f[i])
 		}
 	}
-	return b.String()
+	if err := b.Err(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // strftimeToLayout translates a strftime-style format into a Go reference layout for
 // parsing. Codes without a Go-layout equivalent (e.g. %j) are unsupported.
 func strftimeToLayout(f string) (string, error) {
-	var b strings.Builder
+	b := newLimitedStringBuilder(maxStringBytes)
 	for i := 0; i < len(f); i++ {
 		if f[i] != '%' || i+1 >= len(f) {
 			b.WriteByte(f[i])
@@ -250,6 +312,9 @@ func strftimeToLayout(f string) (string, error) {
 		default:
 			return "", fmt.Errorf("parse_time: unsupported format code %%%c", f[i])
 		}
+	}
+	if err := b.Err(); err != nil {
+		return "", err
 	}
 	return b.String(), nil
 }

@@ -20,10 +20,46 @@ var hofNames = map[string]bool{
 	"sort": true, "sort_by": true, "min_by": true, "max_by": true,
 }
 
+func pmapProcessLimit() int {
+	if n := runtime.NumCPU(); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// pmapWorkerBudget is shared by every Env in this process. A pmap call borrows
+// only immediately available slots; when none are available (most notably from
+// a nested pmap callback), it runs sequentially on its current goroutine. This
+// bounds pmap-created goroutines at NumCPU without a nested semaphore deadlock.
+var pmapWorkerBudget = make(chan struct{}, pmapProcessLimit())
+
+func acquirePmapWorkers(want int) int {
+	acquired := 0
+	for acquired < want {
+		select {
+		case pmapWorkerBudget <- struct{}{}:
+			acquired++
+		default:
+			return acquired
+		}
+	}
+	return acquired
+}
+
+func releasePmapWorkers(n int) {
+	for i := 0; i < n; i++ {
+		<-pmapWorkerBudget
+	}
+}
+
 // evalHOF dispatches a higher-order call. Wrong argument COUNT aborts (Go error,
 // per the builtin convention); a non-array source or non-function callback is a
 // catchable Err value.
 func evalHOF(name string, args []value.Value, depth int) (value.Value, error) {
+	return evalHOFContext(name, args, depth, nil)
+}
+
+func evalHOFContext(name string, args []value.Value, depth int, ctx *executionContext) (value.Value, error) {
 	if name == "reduce" {
 		if len(args) != 3 {
 			return value.MakeNil(), fmt.Errorf("reduce expects 3 arguments (array, init, fn), got %d", len(args))
@@ -81,7 +117,7 @@ func evalHOF(name string, args []value.Value, depth int) (value.Value, error) {
 	case "flat_map":
 		return hofFlatMap(arr, fn, depth)
 	case "pmap":
-		return hofPmap(arr, fn, depth)
+		return hofPmapContext(arr, fn, depth, ctx)
 	}
 	return value.MakeNil(), fmt.Errorf("unknown higher-order function %s", name)
 }
@@ -250,6 +286,10 @@ func hofReduce(arr *value.Array, init value.Value, fn *Function, depth int) (val
 // hofFlatMap maps then flattens one level: an array result is spliced in, a
 // scalar result is appended as-is.
 func hofFlatMap(arr *value.Array, fn *Function, depth int) (value.Value, error) {
+	return hofFlatMapLimit(arr, fn, depth, maxCollectionItems)
+}
+
+func hofFlatMapLimit(arr *value.Array, fn *Function, depth, limit int) (value.Value, error) {
 	src := append([]value.Value(nil), arr.Elems...)
 	var out []value.Value
 	for i, el := range src {
@@ -259,6 +299,13 @@ func hofFlatMap(arr *value.Array, fn *Function, depth int) (value.Value, error) 
 		}
 		if v.IsErr() {
 			return v, nil
+		}
+		add := 1
+		if v.Tag() == value.Arr {
+			add = len(v.Obj().(*value.Array).Elems)
+		}
+		if len(out) > limit || add > limit-len(out) {
+			return value.MakeErr(fmt.Sprintf("flat_map: result exceeds the %d-element collection limit", limit), 1), nil
 		}
 		if v.Tag() == value.Arr {
 			out = append(out, v.Obj().(*value.Array).Elems...)
@@ -509,25 +556,52 @@ func builtinUniq(args []value.Value) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-// hofPmap is the parallel map: it applies fn to each element across a bounded
-// worker pool (runtime.NumCPU), returning a new array in INPUT order. It is
-// race-free because each element is deep-copied for its worker (copy-on-send),
-// each worker writes only its own result index (no shared slice write), and the
-// callback runs over frozen top-level constants + its own per-call scope. Like
-// map, it is fail-loud: the first Err a callback produces becomes the result and
-// stops further work.
+// hofPmap is the parallel map: it applies fn to each element across a
+// process-wide NumCPU worker budget, returning a new array in INPUT order. It is
+// race-free because each element is deep-copied for its callback, each worker
+// writes only its own result index, and every worker has a private snapshot of
+// the callback's mutable capture graph. Like map, it is fail-loud: the first Err
+// a callback produces becomes the result and stops further work.
 func hofPmap(arr *value.Array, fn *Function, _ int) (value.Value, error) {
+	return hofPmapContext(arr, fn, 0, nil)
+}
+
+func hofPmapContext(arr *value.Array, fn *Function, _ int, ctx *executionContext) (value.Value, error) {
 	// The caller's depth is intentionally unused: each worker runs on its own goroutine and
 	// fresh Go stack, so it counts call depth from zero (applyPmap passes 0 below).
+	callerTracked := ctx != nil
+	if ctx == nil && fn.Env != nil {
+		ctx = fn.Env.executionContext()
+	}
+	if ctx == nil {
+		ctx = newExecutionContext()
+	}
 	src := append([]value.Value(nil), arr.Elems...)
 	n := len(src)
 	out := make([]value.Value, n)
 	if n == 0 {
 		return value.MakeArray(out), nil
 	}
-	workers := runtime.NumCPU()
-	if workers > n {
-		workers = n
+	wanted := pmapProcessLimit()
+	if wanted > n {
+		wanted = n
+	}
+	workers := acquirePmapWorkers(wanted)
+	if workers == 0 {
+		// Saturation is expected for nested and concurrent pmap calls. Running one
+		// private callback snapshot on this goroutine preserves map's ordered,
+		// fail-loud result contract without creating another goroutine or waiting
+		// for a slot held by an outer callback.
+		return pmapSequential(src, fn, out)
+	}
+	defer releasePmapWorkers(workers)
+	workerFns := make([]*Function, workers)
+	for w := range workerFns {
+		var snapshotErr error
+		workerFns[w], snapshotErr = newClosureSnapshot().cloneFunction(fn, 0)
+		if snapshotErr != nil {
+			return value.MakeErr(fmt.Sprintf("pmap: %v", snapshotErr), 137), nil
+		}
 	}
 	jobs := make(chan int, n)
 	for i := 0; i < n; i++ {
@@ -566,19 +640,32 @@ func hofPmap(arr *value.Array, fn *Function, _ int) (value.Value, error) {
 		cancelled.Store(true)
 	}
 	wg.Add(workers)
-	// Count the workers as live for the duration of the parallel section, so a drang
-	// channel used inside a pmap callback doesn't mistake a legitimate block for a
-	// terminal deadlock (see spawnedLive in concurrency.go).
-	atomic.AddInt64(&spawnedLive, int64(workers))
-	defer atomic.AddInt64(&spawnedLive, -int64(workers))
+	ctx.addRunnable(workers)
+	// Count the caller as blocked before any worker can finish. The last worker
+	// atomically trades its runnable slot for this lease before waking wg.Wait,
+	// preventing a transient zero-runnable state from rejecting a channel waiter
+	// that the resumed caller is about to service. Direct Go wrappers have no
+	// tracked evaluator caller and therefore take no lease.
+	var suspension *executionSuspension
+	if callerTracked {
+		suspension = ctx.suspend()
+	}
+	var remaining atomic.Int64
+	remaining.Store(int64(workers))
 	for w := 0; w < workers; w++ {
-		go func() {
+		// Give each pool worker a private closure graph. A worker may process
+		// several rows, so mutations remain local to that worker while never
+		// touching the caller or another pool worker.
+		wfn := workerFns[w]
+		go func(wfn *Function) {
 			defer wg.Done()
-			// Each worker runs over its own snapshot of the captured env (like spawn), so a
-			// callback that ASSIGNS a captured outer variable mutates a private copy rather
-			// than racing other workers on the shared fn.Env map. Snapshotting only reads
-			// fn.Env (the main goroutine is parked on wg.Wait), so the reads don't race.
-			wfn := &Function{Name: fn.Name, Params: fn.Params, Defaults: fn.Defaults, Body: fn.Body, Env: fn.Env.snapshot(), Proto: fn.Proto}
+			defer func() {
+				if remaining.Add(-1) == 0 {
+					ctx.exitRunnableAndResume(suspension)
+					return
+				}
+				ctx.exitRunnable()
+			}()
 			for i := range jobs {
 				if cancelled.Load() {
 					continue // a failure was recorded: drain the rest without running callbacks
@@ -594,14 +681,33 @@ func hofPmap(arr *value.Array, fn *Function, _ int) (value.Value, error) {
 				}
 				out[i] = v // distinct index per worker — no shared write
 			}
-		}()
+		}(wfn)
 	}
 	wg.Wait()
+	ctx.resume(suspension) // idempotent fallback; the last worker normally consumed it
 	if firstErr != nil {
 		return value.MakeNil(), firstErr // exit/die/abort unwinds; never masked by an Err value
 	}
 	if haveErrVal {
 		return firstErrVal, nil
+	}
+	return value.MakeArray(out), nil
+}
+
+func pmapSequential(src []value.Value, fn *Function, out []value.Value) (value.Value, error) {
+	worker, snapshotErr := newClosureSnapshotForStrand(fn.Env.executionStrand()).cloneFunction(fn, 0)
+	if snapshotErr != nil {
+		return value.MakeErr(fmt.Sprintf("pmap: %v", snapshotErr), 137), nil
+	}
+	for i := range src {
+		v, err := applyPmap(worker, src[i], i, 0)
+		if err != nil {
+			return value.MakeNil(), err
+		}
+		if v.IsErr() {
+			return v, nil
+		}
+		out[i] = v
 	}
 	return value.MakeArray(out), nil
 }
@@ -616,6 +722,13 @@ func applyPmap(fn *Function, elem value.Value, idx int, depth int) (v value.Valu
 			err = nil
 		}
 	}()
-	el := value.DeepCopyValue(elem, map[value.Obj]value.Obj{})
+	// An element may itself contain a closure. Copy it with the same graph-aware
+	// rules as a captured env so calling that closure cannot reach the producer's
+	// mutable state. A fresh snapshot per row preserves pmap's copy-per-element
+	// contract even when the input repeats the same object.
+	el, snapshotErr := newClosureSnapshotForStrand(fn.Env.executionStrand()).cloneValue(elem, 0)
+	if snapshotErr != nil {
+		return value.MakeErr(fmt.Sprintf("pmap: %v", snapshotErr), 137), nil
+	}
 	return callCb(fn, el, idx, depth)
 }

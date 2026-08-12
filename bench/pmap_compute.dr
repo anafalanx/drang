@@ -14,8 +14,9 @@ fn .worker($i) {
 }
 
 $items := []
+# Fixed-size setup remains below the collection cap; keep propagation overhead out of this benchmark.
 for $i in 0..$N - 1 {
-	push($items, $i)
+	push($items, $i)  # lint:ignore err-discard
 }
 $total := reduce(pmap($items, .worker), 0, |$a, $b| $a + $b)
 say($total)

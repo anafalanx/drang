@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/anafalanx/drang/internal/ast"
 	"github.com/anafalanx/drang/internal/lexer"
@@ -31,6 +32,14 @@ const (
 	product
 	prefix
 	call
+)
+
+const (
+	// Parser recursion follows nested expressions and blocks. These limits are far
+	// above useful source but turn adversarial nesting/parse-work floods into normal
+	// diagnostics instead of native stack or heap exhaustion.
+	maxParseDepth = 512
+	maxParseNodes = 1_000_000
 )
 
 func precedence(k token.Kind) int {
@@ -67,13 +76,25 @@ type Parser struct {
 	lastBlockForm bool // whether the most recent statement was block-form (ended in }), so a same-line follow-on needs no separator
 	stdlibMode    bool // allow bare 'fn name' (the embedded prelude defines bare stdlib functions); user code must use 'fn .name'
 	errs          []string
+	stmtDepth     int
+	exprDepth     int
+	ifDepth       int // recursive else-if chain depth; parseIf recurses outside parseStmt
+	budget        *parseBudget
 	loopDepth     int // enclosing loop nesting (reset at fn/lambda boundaries) — gates break/next
 	blockDepth    int // enclosing { } nesting — `example` is only valid at the top level
 }
 
+// parseBudget is shared by the main parser and every ${...} subparser. Without a
+// shared counter, a large interpolating string could reset the parse-work/depth
+// limits once per interpolation.
+type parseBudget struct {
+	nodes  int
+	failed bool
+}
+
 // New returns a Parser ready to parse src.
 func New(src string) *Parser {
-	p := &Parser{lex: lexer.New(src)}
+	p := &Parser{lex: lexer.New(src), budget: &parseBudget{}}
 	p.next()
 	p.next()
 	return p
@@ -127,6 +148,12 @@ func (p *Parser) parseStmtsUntil(end token.Kind) []ast.Stmt {
 		if s := p.parseStmt(); s != nil {
 			stmts = append(stmts, s)
 		}
+		// A complexity budget failure is terminal for this parse. Continuing error
+		// recovery would scan the rest of an adversarial source and could grow the
+		// lexer's delimiter stack far beyond the very limit that just fired.
+		if p.budget.failed {
+			return stmts
+		}
 		// A block-form statement (if/while/for/fn/BEGIN/END) ends at its closing },
 		// which also terminates the statement (perl-style) — so `if c { ... } stmt`
 		// and `BEGIN{ ... } stmt` work on one line without an explicit ; or newline.
@@ -144,6 +171,17 @@ func (p *Parser) parseStmtsUntil(end token.Kind) []ast.Stmt {
 }
 
 func (p *Parser) parseStmt() ast.Stmt {
+	if p.stmtDepth >= maxParseDepth {
+		p.complexityError("statement/block nesting", maxParseDepth)
+		p.next()
+		return nil
+	}
+	if !p.takeNode() {
+		p.next()
+		return nil
+	}
+	p.stmtDepth++
+	defer func() { p.stmtDepth-- }()
 	pos := p.here() // the statement's first token
 	s := p.parseStmtDispatch()
 	if s != nil {
@@ -545,6 +583,9 @@ func (p *Parser) parseParams(end token.Kind) (params []string, defaults []ast.Ex
 			p.errorf("expected $param, got %s %q", p.tok.Kind, p.tok.Lit)
 			return nil, nil, false
 		}
+		if !p.takeNode() { // parameter/default slots are retained syntax structures too
+			return nil, nil, false
+		}
 		params = append(params, p.tok.Lit)
 		p.next()
 		if p.tok.Kind == token.ASSIGN { // $name = default
@@ -605,6 +646,8 @@ func (p *Parser) parseLambda() ast.Expr {
 }
 
 func (p *Parser) parseIf() ast.Stmt {
+	p.ifDepth++
+	defer func() { p.ifDepth-- }()
 	p.next() // 'if'
 	cond := p.parseExpr(lowest)
 	if cond == nil {
@@ -622,6 +665,14 @@ func (p *Parser) parseIf() ast.Stmt {
 	if p.tok.Kind == token.ELSE {
 		p.next()
 		if p.tok.Kind == token.IF {
+			// An else-if tail calls parseIf directly rather than passing through
+			// parseStmt, so statement/block depth does not protect this recursion.
+			// Stop before making the next Go call; downstream AST passes also recurse
+			// through Else and rely on this chain having a finite depth.
+			if p.ifDepth >= maxParseDepth {
+				p.complexityError("else-if nesting", maxParseDepth)
+				return nil
+			}
 			els = p.parseIf()
 		} else {
 			b := p.parseBlock()
@@ -745,6 +796,15 @@ func stmtPos(s ast.Stmt) ast.Pos {
 }
 
 func (p *Parser) parseExpr(prec int) ast.Expr {
+	if p.exprDepth >= maxParseDepth {
+		p.complexityError("expression nesting", maxParseDepth)
+		return nil
+	}
+	if !p.takeNode() {
+		return nil
+	}
+	p.exprDepth++
+	defer func() { p.exprDepth-- }()
 	left := p.parsePrefix()
 	if left == nil {
 		return nil
@@ -756,6 +816,47 @@ func (p *Parser) parseExpr(prec int) ast.Expr {
 		}
 	}
 	return left
+}
+
+func (p *Parser) takeNode() bool {
+	if p.budget.nodes >= maxParseNodes {
+		p.complexityError("syntax nodes", maxParseNodes)
+		return false
+	}
+	p.budget.nodes++
+	return true
+}
+
+func (p *Parser) complexityError(kind string, limit int) {
+	if p.budget.failed {
+		return
+	}
+	p.budget.failed = true
+	p.errorf("source is too complex: %s exceeds the limit of %d", kind, limit)
+}
+
+// qwWords splits a qw body without allocating the full word slice until the
+// shared parse-work budget has accepted every synthesized StringLit.
+func (p *Parser) qwWords(body string) ([]string, bool) {
+	count := 0
+	inWord := false
+	for _, r := range body {
+		space := unicode.IsSpace(r)
+		if space {
+			inWord = false
+			continue
+		}
+		if !inWord {
+			count++
+			inWord = true
+		}
+	}
+	if count > maxParseNodes-p.budget.nodes {
+		p.complexityError("syntax nodes", maxParseNodes)
+		return nil, false
+	}
+	p.budget.nodes += count
+	return strings.Fields(body), true
 }
 
 func (p *Parser) parsePrefix() ast.Expr {
@@ -784,10 +885,12 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.StringLit{Pos: pos, Value: decodeEscapes(raw), Raw: rawSrc, Form: stringForm(rawSrc, false)}
 	case token.ISTRING:
 		raw, rawSrc := p.tok.Lit, p.tok.Raw
+		bodyPos := ast.Pos{Line: p.tok.BodyLine, Col: p.tok.BodyCol}
+		bodyNext := p.tok.BodyNext
 		p.next()
 		// Escaped + interpolation ($"...", $qq{...}, <<$TAG).
 		form := stringForm(rawSrc, true)
-		switch e := p.interpolate(raw, pos).(type) {
+		switch e := p.interpolate(raw, pos, bodyPos, bodyNext).(type) {
 		case *ast.StringLit: // no interpolation actually occurred
 			e.Raw = rawSrc
 			e.Form = form
@@ -805,7 +908,11 @@ func (p *Parser) parsePrefix() ast.Expr {
 		// Raw, no escapes, no interpolation (q{...}, '...', <<'TAG').
 		return &ast.StringLit{Pos: pos, Value: s, Raw: rawSrc, Form: stringForm(rawSrc, false)}
 	case token.QW:
-		words := strings.Fields(p.tok.Lit)
+		words, ok := p.qwWords(p.tok.Lit)
+		if !ok {
+			p.next()
+			return nil
+		}
 		rawSrc := p.tok.Raw
 		p.next()
 		elems := make([]ast.Expr, len(words))
@@ -1101,20 +1208,38 @@ func decodeEscapes(raw string) string {
 // StringLit when there is no interpolation, otherwise an ast.Interp holding the literal
 // and expression parts (eval stringifies each via Display and concatenates, so the value
 // is always a string). Reached only by the interpolating forms ($"...", $qq{...}, <<$TAG).
-func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
+func (p *Parser) interpolate(raw string, pos, bodyPos ast.Pos, nextLineCol int) ast.Expr {
 	var ops []ast.Expr
 	var seg strings.Builder
-	flush := func() {
+	partPos := bodyPos
+	flush := func() bool {
 		if seg.Len() > 0 {
-			ops = append(ops, &ast.StringLit{Pos: pos, Value: seg.String()})
+			if !p.takeNode() {
+				return false
+			}
+			ops = append(ops, &ast.StringLit{Pos: partPos, Value: seg.String()})
 			seg.Reset()
+		}
+		return true
+	}
+	line, col := bodyPos.Line, bodyPos.Col
+	advancePos := func(b byte) {
+		if b == '\n' {
+			line++
+			col = nextLineCol
+		} else {
+			col++
 		}
 	}
 	i := 0
 	for i < len(raw) {
 		c := raw[i]
 		if c == '\\' && i+1 < len(raw) {
-			i += writeEscape(&seg, raw, i)
+			consumed := writeEscape(&seg, raw, i)
+			for j := 0; j < consumed; j++ {
+				advancePos(raw[i+j])
+			}
+			i += consumed
 			continue
 		}
 		if c == '$' && i+1 < len(raw) {
@@ -1124,9 +1249,22 @@ func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 					p.errorf("unterminated ${...} in string")
 					return &ast.StringLit{Pos: pos, Value: seg.String()}
 				}
-				flush()
-				ops = append(ops, p.subExpr(raw[i+2:j], pos))
+				if !flush() {
+					return &ast.StringLit{Pos: pos, Value: ""}
+				}
+				advancePos('$')
+				advancePos('{')
+				exprPos := ast.Pos{Line: line, Col: col}
+				expr := p.subExpr(raw[i+2:j], exprPos)
+				if p.budget.failed {
+					return &ast.StringLit{Pos: pos, Value: ""}
+				}
+				ops = append(ops, expr)
+				for k := i + 2; k <= j; k++ {
+					advancePos(raw[k])
+				}
 				i = j + 1
+				partPos = ast.Pos{Line: line, Col: col}
 				continue
 			}
 			if isIdentStart(raw[i+1]) { // $name
@@ -1134,16 +1272,25 @@ func (p *Parser) interpolate(raw string, pos ast.Pos) ast.Expr {
 				for j < len(raw) && isIdentChar(raw[j]) {
 					j++
 				}
-				flush()
-				ops = append(ops, &ast.Var{Pos: pos, Name: raw[i+1 : j]})
+				if !flush() || !p.takeNode() {
+					return &ast.StringLit{Pos: pos, Value: ""}
+				}
+				ops = append(ops, &ast.Var{Pos: ast.Pos{Line: line, Col: col}, Name: raw[i+1 : j]})
+				for k := i; k < j; k++ {
+					advancePos(raw[k])
+				}
 				i = j
+				partPos = ast.Pos{Line: line, Col: col}
 				continue
 			}
 		}
 		seg.WriteByte(c) // ordinary char, or a lone '$'
+		advancePos(c)
 		i++
 	}
-	flush()
+	if !flush() {
+		return &ast.StringLit{Pos: pos, Value: ""}
+	}
 	if len(ops) == 0 {
 		return &ast.StringLit{Pos: pos, Value: ""}
 	}
@@ -1187,6 +1334,8 @@ func matchBrace(raw string, start int) (int, bool) {
 // subExpr parses an interpolated ${...} body as a single expression.
 func (p *Parser) subExpr(inner string, pos ast.Pos) ast.Expr {
 	sub := New(inner)
+	sub.budget = p.budget
+	sub.exprDepth = p.exprDepth
 	e := sub.parseExpr(lowest)
 	for _, m := range sub.errs {
 		p.errs = append(p.errs, "in interpolation: "+m)
@@ -1197,7 +1346,173 @@ func (p *Parser) subExpr(inner string, pos ast.Pos) ast.Expr {
 	if sub.tok.Kind != token.EOF && sub.tok.Kind != token.NEWLINE {
 		p.errorf("unexpected %q in ${...}", sub.tok.Lit)
 	}
+	rebaseExpr(e, pos.Line-1, pos.Col-1)
 	return e
+}
+
+// rebaseExpr translates the local positions produced by a ${...} subparser into
+// the outer source. Only the first local line receives the outer column offset.
+func rebaseExpr(e ast.Expr, lineOffset, firstLineColOffset int) {
+	if e == nil {
+		return
+	}
+	set := func(pos *ast.Pos) {
+		localLine := pos.Line
+		pos.Line += lineOffset
+		if localLine == 1 {
+			pos.Col += firstLineColOffset
+		}
+	}
+	switch n := e.(type) {
+	case *ast.IntLit:
+		set(&n.Pos)
+	case *ast.FloatLit:
+		set(&n.Pos)
+	case *ast.StringLit:
+		set(&n.Pos)
+	case *ast.Interp:
+		set(&n.Pos)
+		for _, part := range n.Parts {
+			rebaseExpr(part, lineOffset, firstLineColOffset)
+		}
+	case *ast.RegexLit:
+		set(&n.Pos)
+	case *ast.BoolLit:
+		set(&n.Pos)
+	case *ast.Var:
+		set(&n.Pos)
+	case *ast.Ident:
+		set(&n.Pos)
+	case *ast.Unary:
+		set(&n.Pos)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+	case *ast.Binary:
+		set(&n.Pos)
+		rebaseExpr(n.L, lineOffset, firstLineColOffset)
+		rebaseExpr(n.R, lineOffset, firstLineColOffset)
+	case *ast.Call:
+		set(&n.Pos)
+		rebaseExpr(n.Callee, lineOffset, firstLineColOffset)
+		for _, arg := range n.Args {
+			rebaseExpr(arg, lineOffset, firstLineColOffset)
+		}
+	case *ast.Pipe:
+		set(&n.Pos)
+		rebaseExpr(n.Lhs, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Call, lineOffset, firstLineColOffset)
+	case *ast.Index:
+		set(&n.Pos)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Idx, lineOffset, firstLineColOffset)
+	case *ast.Field:
+		set(&n.Pos)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+	case *ast.Propagate:
+		set(&n.Pos)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+	case *ast.Logical:
+		set(&n.Pos)
+		rebaseExpr(n.L, lineOffset, firstLineColOffset)
+		rebaseExpr(n.R, lineOffset, firstLineColOffset)
+	case *ast.DefOr:
+		set(&n.Pos)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Fallback, lineOffset, firstLineColOffset)
+	case *ast.ArrayLit:
+		set(&n.Pos)
+		for _, elem := range n.Elems {
+			rebaseExpr(elem, lineOffset, firstLineColOffset)
+		}
+	case *ast.MapLit:
+		set(&n.Pos)
+		for i := range n.Keys {
+			rebaseExpr(n.Keys[i], lineOffset, firstLineColOffset)
+			rebaseExpr(n.Vals[i], lineOffset, firstLineColOffset)
+		}
+	case *ast.RangeLit:
+		set(&n.Pos)
+		rebaseExpr(n.Lo, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Hi, lineOffset, firstLineColOffset)
+	case *ast.Lambda:
+		set(&n.Pos)
+		for _, d := range n.Defaults {
+			rebaseExpr(d, lineOffset, firstLineColOffset)
+		}
+		rebaseBlock(n.Body, lineOffset, firstLineColOffset)
+	}
+}
+
+func rebaseBlock(block *ast.Block, lineOffset, firstLineColOffset int) {
+	if block == nil {
+		return
+	}
+	rebasePos(&block.Pos, lineOffset, firstLineColOffset)
+	for _, stmt := range block.Stmts {
+		rebaseStmt(stmt, lineOffset, firstLineColOffset)
+	}
+}
+
+func rebasePos(pos *ast.Pos, lineOffset, firstLineColOffset int) {
+	localLine := pos.Line
+	pos.Line += lineOffset
+	if localLine == 1 {
+		pos.Col += firstLineColOffset
+	}
+}
+
+func rebaseStmt(stmt ast.Stmt, lineOffset, firstLineColOffset int) {
+	switch n := stmt.(type) {
+	case *ast.Block:
+		rebaseBlock(n, lineOffset, firstLineColOffset)
+	case *ast.SpecialBlock:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseBlock(n.Body, lineOffset, firstLineColOffset)
+	case *ast.UseStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Path, lineOffset, firstLineColOffset)
+	case *ast.ExampleStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Subject, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Want, lineOffset, firstLineColOffset)
+	case *ast.ExprStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.X, lineOffset, firstLineColOffset)
+	case *ast.DeclStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Value, lineOffset, firstLineColOffset)
+	case *ast.AssignStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Target, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Value, lineOffset, firstLineColOffset)
+	case *ast.IfStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Cond, lineOffset, firstLineColOffset)
+		rebaseBlock(n.Then, lineOffset, firstLineColOffset)
+		if n.Else != nil {
+			rebaseStmt(n.Else, lineOffset, firstLineColOffset)
+		}
+	case *ast.WhileStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Cond, lineOffset, firstLineColOffset)
+		rebaseBlock(n.Body, lineOffset, firstLineColOffset)
+	case *ast.ForStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Iter, lineOffset, firstLineColOffset)
+		rebaseBlock(n.Body, lineOffset, firstLineColOffset)
+	case *ast.FnDecl:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		for _, d := range n.Defaults {
+			rebaseExpr(d, lineOffset, firstLineColOffset)
+		}
+		rebaseBlock(n.Body, lineOffset, firstLineColOffset)
+	case *ast.ReturnStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+		rebaseExpr(n.Value, lineOffset, firstLineColOffset)
+	case *ast.BreakStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+	case *ast.NextStmt:
+		rebasePos(&n.Pos, lineOffset, firstLineColOffset)
+	}
 }
 
 func isIdentStart(c byte) bool {

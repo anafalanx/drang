@@ -39,4 +39,4 @@ fn .tick($req) {
 	"<strong>pong</strong> - server time is " ~ $t
 }
 
-serve({routes: {"/": .home, "/tick": .tick}})
+serve({routes: {"/": .home, "/tick": .tick}})?

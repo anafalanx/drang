@@ -3,13 +3,109 @@ type: changelog
 title: drang changelog
 description: The release history of drang, newest first (Keep a Changelog style).
 tags: [drang, changelog, releases]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
 # Changelog
 
 All notable changes to drang are recorded here. Dates are the release dates; the format loosely
 follows [Keep a Changelog](https://keepachangelog.com/). Versions are git tags `vX.Y.Z` (`vX.Y` through 0.9).
+
+## [0.12.1] — 2026-08-12
+
+This is compatibility-preserving hardening for the 0.12 line: it adds no
+intentional language break, and Err values keep their existing runtime control
+semantics.
+
+### Fixed
+
+- Put explicit ceilings around untrusted and whole-value work: source/module/file,
+  JSON/CSV, string/collection, regex/cache, golden-output, closure-snapshot, and
+  standalone-bundle paths now fail with a bounded diagnostic or catchable Err
+  instead of growing until the process or native stack fails. Source/parser limits
+  are 64 MiB, 512 recursive/delimiter levels, and a shared one-million parse-work
+  budget. Filesystem enumeration for `glob`, `read_dir`, `walk`, and recursive `copy`
+  is read in bounded batches and capped at one million aggregate entries per operation;
+  streaming APIs remain the route for larger flows. Extremely large legal flat
+  infix/postfix chains remain bounded by source size, but are not covered by exact AST
+  structural-depth accounting.
+- Isolated concurrent callbacks by snapshotting mutable closure captures (with
+  aliases and cycles preserved), while keeping channels, stores, tasks, and process
+  handles explicitly shared. `pmap` now uses one process-wide `NumCPU` worker
+  budget; `spawn`, snapshots, and channels have documented limits; channel
+  send/close is linearizable; and per-session runnable-strand tracking wakes orphaned
+  sends/receives and cyclic task dependencies with a catchable Err without using a
+  timeout. `send` and `await` now use the same bounded, closure-aware copy semantics
+  as worker snapshots.
+- Hardened child-process supervision and resource accounting. Kernel Job Object
+  limits are installed and monitored before launch, memory/CPU/process-count
+  breaches terminate the tree with code 137, captured output has a 64 MiB aggregate
+  cap, and started stdout/stderr pipes share a 16 MiB unread queue. Synchronous forms
+  terminate remaining descendants before joining pipe copiers; a started process
+  gives inherited pipes 750 ms to drain after its root exits, then closes them so an
+  unsupervised descendant cannot hold `await` open forever. Wait/release, monitor
+  shutdown, early launch failure, and concurrent cleanup no longer leak a
+  handle/goroutine or lose a pending limit event. Duration-valued exec options now
+  reject integer overflow instead of wrapping into an unrelated timeout.
+- Scoped the module registry to one evaluation session, made concurrent first
+  imports single-flight, rejected cross-worker import cycles, bounded module reads,
+  and kept failed loads retryable. Stores now use a session registry with a 256-live-
+  handle cap and automatic lock cleanup, bounded primary/backup snapshots, and a
+  process-exclusive sidecar lock; bounded optimistic retries preserve concurrent
+  atomic `store_update`, while exclusive batches, same-store reentry, and
+  close-during-transaction now produce deterministic catchable Errs. GUI serving
+  validates its closed option and response schemas, bounds request bodies, applies
+  server timeouts, and contains static serving to its selected root.
+- Made the command front door reject unknown, duplicate, and contradictory flags,
+  support `--` before dash-prefixed program paths, report REPL input failures, and
+  bound file/stdin/test/build input. Stream/test execution now preserves the script
+  path, module base, scheduler context, and explicit `exit`/`die` status. The lexer
+  and parser reject comment, delimiter/depth, and aggregate parse-work floods;
+  standalone payloads
+  validate framing, counts, lengths, duplicates, and
+  trailing data; formatter report modes are exclusive, large diffs use bounded
+  linear fallback/output limits, and its walk/write path now surfaces errors, syncs
+  atomic replacements, and respects read-only files.
+- Hardened numeric semantics at their boundaries: float-to-int conversion now rejects
+  non-finite/out-of-range values, unary negation detects the int64 minimum, and mixed
+  int/float equality and ordering stay exact above float64's integer-precision range.
+- Made deep equality iterative and exact for cyclic or pathologically deep containers;
+  repaired date parsing outside `UnixNano`'s window and prevented fractional epochs
+  from rounding into an adjacent calendar second; and made malformed datetime,
+  filesystem, HTTP, and GUI-server options fail loudly instead of changing behavior.
+- Made `copy` reject the same source/destination object and a directory destination
+  inside its source, including resolved symlink/junction aliases. Recursive merges
+  reject every pre-existing destination symlink, junction, or reparse-point component
+  before using it, so an existing redirect cannot send writes outside the destination
+  or back into the source. Each destination file is staged before replacement, so a
+  failed file copy preserves the old file; recursive copy remains an explicitly
+  merge-style, non-atomic operation that can leave a partial tree after a later
+  failure. A directory alias explicitly supplied as the source root is followed;
+  directory links found below it are not, while file symlinks are dereferenced.
+  Component checks are best-effort against another process replacing a checked path
+  concurrently; `copy` is not a sandbox boundary against an active local adversary.
+- Propagated stdout/stderr writer failures from `say` and `warn`.
+- Added source-positioned, per-site-suppressible migration warnings for statically
+  recognizable discarded Err results, Err-as-boolean uses, and direct Err values
+  stringified by output/effect sinks, including `-p`'s automatic output of `$_`.
+  Analysis respects lexical scope and declaration order and follows nested display
+  expressions, without changing Err's runtime semantics or guessing user-function
+  returns and variable flow. Windows paths in escape-processing strings also warn
+  where `q{...}` is safer.
+- Corrected the manual/reference version declarations and the documented lazy `//`
+  fallback semantics, map-key domain, and bounded `str` behavior; refreshed current
+  standard-library and roadmap status claims.
+- Made documentation examples an enforceable contract: expected exit status and
+  stdout/stderr/combined stream are explicit, unexplained nonzero exits fail, contextual
+  examples are declared, and checks use a unique temporary directory.
+
+### Changed
+
+- The release preflight bypasses Go's test cache and repeats the timing-sensitive
+  Windows Job Object monitor lifecycle tests twenty times.
+- The signing helper streams a legal large standalone through the z-system checksum
+  tool, writes a standard `.sha256` sidecar after signature/timestamp verification,
+  and the release checklist now calls out final-standalone signing.
 
 ## [0.12.0] — 2026-07-21
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,6 +49,7 @@ type jobCmd struct {
 	timedOut    atomic.Bool
 	monitor     *winjob.Monitor // non-nil when limits are set: watches for breach events
 	monDone     chan struct{}   // closed when drainLimitEvents returns
+	monitorStop sync.Once       // stopMonitor may be reached by competing cleanup paths
 	limitHit    atomic.Pointer[string]
 }
 
@@ -62,12 +64,17 @@ func (c *jobCmd) drainLimitEvents() {
 			which = "memory"
 		case winjob.EventProcessTimeLimit, winjob.EventJobTimeLimit:
 			which = "CPU-time"
+		case winjob.EventActiveProcessLimit:
+			which = "process-count"
 		default:
 			continue
 		}
-		if c.limitHit.Load() == nil {
-			w := which
-			c.limitHit.CompareAndSwap(nil, &w)
+		w := which
+		if c.limitHit.CompareAndSwap(nil, &w) {
+			// Several Job limits reject the operation that crossed the cap but do not
+			// guarantee that the job's root process exits. Turn every observed breach into
+			// one decisive outcome: terminate the whole tree and let wait report code 137.
+			c.killTree()
 		}
 	}
 }
@@ -75,10 +82,12 @@ func (c *jobCmd) drainLimitEvents() {
 // stopMonitor closes the breach monitor (if any) and waits for its drain goroutine, so limitHit is
 // final before the caller reads it. Idempotent enough for the single call sites (wait / start reaper).
 func (c *jobCmd) stopMonitor() {
-	if c.monitor != nil {
-		c.monitor.Close()
-		<-c.monDone
-	}
+	c.monitorStop.Do(func() {
+		if c.monitor != nil {
+			_ = c.monitor.Close()
+			<-c.monDone
+		}
+	})
 }
 
 // breachErr returns a catchable limit-breach Err (code 137) if a resource cap fired, else the zero
@@ -127,8 +136,7 @@ func (c *jobCmd) start() error {
 	// Apply kernel-enforced resource caps and start watching for a breach BEFORE the child is
 	// born, so it starts already limited and no breach event is missed. A memory/CPU breach has no
 	// reliable exit code (the kernel fails allocations or terminates without a sentinel), so the
-	// Monitor is how we detect and name it — best-effort: if the monitor can't be set up, the caps
-	// are still enforced by the kernel, we just can't attribute the breach.
+	// Monitor is required to detect, name, and decisively terminate on every configured breach.
 	if !c.limits.IsZero() {
 		if lerr := job.SetLimits(c.limits); lerr != nil {
 			job.Close()
@@ -136,19 +144,31 @@ func (c *jobCmd) start() error {
 			c.cleanupFiles()
 			return lerr
 		}
-		if mon, merr := winjob.NewMonitor(); merr == nil {
-			if _, werr := mon.Watch(job); werr == nil {
-				c.monitor = mon
-				c.monDone = make(chan struct{})
-				go c.drainLimitEvents()
-			} else {
-				mon.Close()
-			}
+		mon, merr := winjob.NewMonitor()
+		if merr != nil {
+			job.Close()
+			c.job = nil
+			c.cleanupFiles()
+			return fmt.Errorf("resource-limit monitor: %w", merr)
 		}
+		if _, werr := mon.Watch(job); werr != nil {
+			_ = mon.Close()
+			job.Close()
+			c.job = nil
+			c.cleanupFiles()
+			return fmt.Errorf("resource-limit monitor: %w", werr)
+		}
+		c.monitor = mon
+		c.monDone = make(chan struct{})
+		go c.drainLimitEvents()
 	}
 
 	proc, err := winjob.LaunchExe(c.exe, c.argv, c.dir, c.env, []*winjob.Job{job}, winjob.Stdio{Stdin: stdinF, Stdout: stdoutF, Stderr: stderrF})
 	if err != nil {
+		// If limits were requested the monitor and its drain goroutine already exist.
+		// Close and join them explicitly; the drain goroutine retains c, so relying on
+		// GC here would create a permanent handle/goroutine cycle.
+		c.stopMonitor()
 		job.Close()
 		c.job = nil
 		c.cleanupFiles()
@@ -189,6 +209,14 @@ func (c *jobCmd) wait() (code int, timedOut bool, err error) {
 		c.timer.Stop()
 	}
 	c.stopMonitor() // finalize limitHit before any caller reads breachErr
+	// The root process may have launched a descendant that inherited stdout/stderr and then
+	// exited. Synchronous forms own the whole tree, so end the Job before joining pipe copiers;
+	// otherwise that descendant can keep the inherited write handles open forever and hang run /
+	// capture / capture_all / pipe even though the process we waited for is already gone.
+	if c.job != nil {
+		_ = c.job.Terminate(1)
+		_ = c.job.Close()
+	}
 	var copyErr error
 	for i := 0; i < len(c.copiers); i++ {
 		if e := <-c.copyDone; e != nil && copyErr == nil {
@@ -199,9 +227,8 @@ func (c *jobCmd) wait() (code int, timedOut bool, err error) {
 		f.Close()
 	}
 	c.parentPipes = nil
-	if c.job != nil {
-		c.job.Close()
-	}
+	// Close is idempotent. Keep c.job non-nil so a timeout callback that raced timer.Stop sees a
+	// closed Job (whose Terminate is a no-op) rather than racing a nil pointer.
 	if werr != nil {
 		return code, c.timedOut.Load(), werr
 	}

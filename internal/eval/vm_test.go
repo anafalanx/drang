@@ -458,6 +458,7 @@ func runBackend(t *testing.T, src string, vm bool) (string, error) {
 	stdout = &buf
 	defer func() { stdout = old; vmEnabled = oldVM }()
 	env := NewEnv()
+	defer env.storeSession().registry.closeAll()
 	var err error
 	if vm {
 		vmEnabled = true

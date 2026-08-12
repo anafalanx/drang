@@ -6,11 +6,13 @@ $rx := qr/^ERROR code=(\d+)/
 $seed := 123456789
 $matchCount := 0
 $codeSum := 0
+# The subject is always a string and the regex is a parsed literal; keep propagation overhead out of this benchmark.
 for $i in 1..300000 {
 	$seed = ($seed * 1103515245 + 12345) % 2147483648
 	$level := $levels[$seed % 4]
 	$code := $seed % 1000
-	$line := $level ~ " code=" ~ str($code)
+	$line := $level ~ " code=" ~ str($code)  # lint:ignore err-output
+	# lint:ignore err-bool
 	if matches($line, $rx) {
 		$m := match($line, $rx)
 		$codeSum = $codeSum + int($m[1])

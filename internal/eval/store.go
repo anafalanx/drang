@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -44,16 +45,40 @@ import (
 // read_file / capture size caps.
 const maxStoreBytes = 64 << 20 // 64 MiB
 
+var (
+	errStoreClosed          = errors.New("store is closed")
+	errStoreTxnBusy         = errors.New("store is busy in another transaction")
+	errStoreReentry         = errors.New("same-store transaction reentry is not allowed")
+	errStoreCloseTxn        = errors.New("store cannot be closed while a transaction is active")
+	maxLiveStoresPerSession = 256 // variable so focused tests can lower the per-session cap
+	maxStoreUpdateRetries   = 64  // optimistic pure-transform retries before a catchable busy Err
+)
+
+type storeTxnMode uint8
+
+const (
+	storeTxnNone storeTxnMode = iota
+	storeTxnBatch
+)
+
+type storeTransaction struct {
+	mode  storeTxnMode
+	owner *executionStrand
+}
+
 // Store is a persistent JSON key-value handle. Like Chan/Task/Proc it is an
 // intentionally SHARED reference type (DeepCopy returns itself) so send/spawn hand
 // every goroutine the same store rather than a clone; mu guards all state.
 type Store struct {
-	mu         sync.Mutex
-	data       *value.OrderedMap // in-memory view (insertion-ordered, JSON-faithful)
-	path       string            // backing .store file (absolute)
-	lock       *storeLock        // exclusive advisory lock on <path>.lock
-	batchDepth int               // >0 while inside with_store: defer the flush to commit
-	closed     bool
+	mu       sync.Mutex
+	data     *value.OrderedMap             // in-memory view (insertion-ordered, JSON-faithful)
+	path     string                        // backing .store file (absolute)
+	lock     *storeLock                    // exclusive advisory lock on <path>.lock
+	registry *storeRegistry                // lifecycle owner; never points back to the cleanup target
+	txn      storeTransaction              // exclusive with_store owner; protected by mu
+	updates  map[*executionStrand]struct{} // active optimistic store_update callbacks
+	version  uint64                        // increments after every durable mutation/batch commit
+	closed   bool
 }
 
 func (s *Store) TypeName() string { return "store" }
@@ -62,6 +87,9 @@ func (s *Store) Display() string  { return fmt.Sprintf("<store %s>", s.path) }
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return 0
+	}
 	return s.data.Len()
 }
 
@@ -74,25 +102,63 @@ func (s *Store) Equal(o value.Obj) bool {
 // DeepCopy shares the handle: copy-on-send must not clone the store.
 func (s *Store) DeepCopy(map[value.Obj]value.Obj) value.Obj { return s }
 
-// --- open registry: one live *Store per absolute path per process (idempotent open) ---
+// --- session registry: one live *Store per canonical path within one evaluator session ---
 
-var openStores = struct {
+// storeSession is the reachability target for the registry cleanup. Envs, spawned snapshots,
+// and module envs share this small object. The registry deliberately has no pointer back to the
+// target, so runtime cleanup can run once the last owning execution scope disappears.
+type storeSession struct {
+	registry *storeRegistry
+}
+
+type storeRegistry struct {
 	mu sync.Mutex
 	m  map[string]*Store
-}{m: map[string]*Store{}}
+}
 
-// openStore returns the store for abs(path), opening+locking+loading it on first
-// use and returning the cached handle thereafter. The bool is false when it returns
-// a catchable Err value instead.
-func openStore(path string) (*Store, value.Value, bool) {
+func newStoreSession() *storeSession {
+	r := &storeRegistry{m: make(map[string]*Store)}
+	s := &storeSession{registry: r}
+	runtime.AddCleanup(s, (*storeRegistry).closeAll, r)
+	return s
+}
+
+// open returns the store for abs(path), opening+locking+loading it on first use and returning the
+// cached handle thereafter. The bool is false when it returns a catchable Err value instead.
+func (ss *storeSession) open(path string) (*Store, value.Value, bool) {
+	s, errv, ok := ss.registry.open(path)
+	runtime.KeepAlive(ss) // the cleanup target owns the registry throughout the open operation
+	return s, errv, ok
+}
+
+func storeRegistryKey(abs string) string {
+	// Windows paths are case-insensitive by default. Treat spelling-only case differences as the
+	// same session handle rather than making the second open collide with our own advisory lock.
+	return strings.ToLower(filepath.Clean(abs))
+}
+
+func (r *storeRegistry) open(path string) (*Store, value.Value, bool) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, value.MakeErr(fmt.Sprintf("store: %v", err), 1), false
 	}
-	openStores.mu.Lock()
-	defer openStores.mu.Unlock()
-	if s, ok := openStores.m[abs]; ok {
-		return s, value.MakeNil(), true // idempotent: same handle for the same path
+	key := storeRegistryKey(abs)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s, ok := r.m[key]; ok {
+		s.mu.Lock()
+		closed := s.closed
+		s.mu.Unlock()
+		if !closed {
+			return s, value.MakeNil(), true // idempotent: same live handle for the same path
+		}
+		// Defensive repair for an entry left behind by an interrupted/older close path.
+		// The close implementation below removes entries atomically, so normal execution
+		// never reaches this branch.
+		delete(r.m, key)
+	}
+	if maxLiveStoresPerSession <= 0 || len(r.m) >= maxLiveStoresPerSession {
+		return nil, value.MakeErr(fmt.Sprintf("store: too many live store handles in this session (limit %d)", maxLiveStoresPerSession), 137), false
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return nil, value.MakeErr(fmt.Sprintf("store: %v", err), 1), false
@@ -109,15 +175,15 @@ func openStore(path string) (*Store, value.Value, bool) {
 		lk.release()
 		return nil, value.MakeErr(fmt.Sprintf("store: %v", err), 1), false
 	}
-	s := &Store{data: data, path: abs, lock: lk}
-	openStores.m[abs] = s
+	s := &Store{data: data, path: abs, lock: lk, registry: r}
+	r.m[key] = s
 	return s, value.MakeNil(), true
 }
 
 // loadStoreData reads and decodes the store file, recovering from the .bak snapshot
 // if the primary file is unreadable/corrupt. A missing file is a fresh, empty store.
 func loadStoreData(path string) (*value.OrderedMap, error) {
-	b, err := os.ReadFile(path)
+	b, err := readFileBounded(path, maxStoreBytes, "store snapshot")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return value.MakeMap().Obj().(*value.OrderedMap), nil
@@ -126,7 +192,7 @@ func loadStoreData(path string) (*value.OrderedMap, error) {
 	}
 	if m, derr := unmarshalStoreFile(b); derr == nil {
 		return m, nil
-	} else if bb, rerr := os.ReadFile(path + ".bak"); rerr == nil {
+	} else if bb, rerr := readFileBounded(path+".bak", maxStoreBytes, "store backup snapshot"); rerr == nil {
 		if m2, berr := unmarshalStoreFile(bb); berr == nil {
 			return m2, nil // recovered from the backup snapshot
 		}
@@ -136,31 +202,144 @@ func loadStoreData(path string) (*value.OrderedMap, error) {
 	}
 }
 
-func (s *Store) close() {
+func (s *Store) close() error {
+	// Registry -> store is the one lifecycle lock order, shared with storeRegistry.open. Holding
+	// the registry until the advisory lock is released and the entry removed makes
+	// close/reopen one atomic transition: an opener gets the old live handle or a fully
+	// initialized new one, never a closed handle or a spurious busy error in between.
+	r := s.registry
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed {
-		s.mu.Unlock()
-		return
+		return nil
+	}
+	if s.txn.mode != storeTxnNone || len(s.updates) != 0 {
+		// Waiting could deadlock if store_close was called by a transaction callback itself.
+		// Refuse deterministically; the caller may close after the transaction ends.
+		return errStoreCloseTxn
 	}
 	s.closed = true
 	if s.lock != nil {
 		s.lock.release()
 		s.lock = nil
 	}
-	path := s.path
-	s.mu.Unlock()
-	openStores.mu.Lock()
-	if openStores.m[path] == s {
-		delete(openStores.m, path)
+	key := storeRegistryKey(s.path)
+	if r.m[key] == s {
+		delete(r.m, key)
 	}
-	openStores.mu.Unlock()
+	return nil
 }
+
+// closeAll is both the storeSession runtime cleanup and the deterministic test/host cleanup. It
+// releases every advisory lock without calling Store.close (the registry lock is already held).
+func (r *storeRegistry) closeAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, s := range r.m {
+		s.mu.Lock()
+		if !s.closed {
+			s.closed = true
+			if s.lock != nil {
+				s.lock.release()
+				s.lock = nil
+			}
+		}
+		s.mu.Unlock()
+		delete(r.m, key)
+	}
+}
+
+func (s *Store) checkOpenLocked() error {
+	if s.closed {
+		return errStoreClosed
+	}
+	return nil
+}
+
+// checkAccessLocked rejects operations from an unrelated strand while an exclusive with_store is
+// open. Its owner may use ordinary operations. A store_update callback is optimistic rather than
+// exclusive, but its own strand cannot re-enter this store; unrelated strands remain free to make
+// progress and any mutation makes the update retry from a fresh value.
+func (s *Store) checkAccessLocked(owner *executionStrand) error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
+	if s.txn.mode == storeTxnNone {
+		if owner == nil && len(s.updates) != 0 {
+			return errStoreTxnBusy
+		}
+		if _, active := s.updates[owner]; active {
+			return errStoreReentry
+		}
+		return nil
+	}
+	if owner == nil || owner != s.txn.owner {
+		return errStoreTxnBusy
+	}
+	return nil
+}
+
+func (s *Store) beginBatchLocked(owner *executionStrand) error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
+	if owner == nil {
+		return errors.New("store execution strand is unavailable")
+	}
+	if s.txn.mode != storeTxnNone {
+		if s.txn.owner == owner {
+			return errStoreReentry
+		}
+		return errStoreTxnBusy
+	}
+	if len(s.updates) != 0 {
+		if _, reentrant := s.updates[owner]; reentrant {
+			return errStoreReentry
+		}
+		return errStoreTxnBusy
+	}
+	s.txn = storeTransaction{mode: storeTxnBatch, owner: owner}
+	return nil
+}
+
+func (s *Store) endTransactionLocked(owner *executionStrand) {
+	if s.txn.owner == owner {
+		s.txn = storeTransaction{}
+	}
+}
+
+func (s *Store) beginUpdateLocked(owner *executionStrand) error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
+	if owner == nil {
+		return errors.New("store execution strand is unavailable")
+	}
+	if s.txn.mode != storeTxnNone {
+		if s.txn.owner == owner {
+			return errStoreReentry
+		}
+		return errStoreTxnBusy
+	}
+	if s.updates == nil {
+		s.updates = make(map[*executionStrand]struct{})
+	}
+	if _, active := s.updates[owner]; active {
+		return errStoreReentry
+	}
+	s.updates[owner] = struct{}{}
+	return nil
+}
+
+func (s *Store) endUpdateLocked(owner *executionStrand) { delete(s.updates, owner) }
 
 // --- codec (reuses the package-private JSON codec so round-trips are faithful) ---
 
 func marshalStoreValue(v value.Value, indent string) ([]byte, error) {
-	var b strings.Builder
-	if err := encodeJSON(&b, v, indent, 0); err != nil {
+	b := newJSONBuffer(maxStoreBytes)
+	if err := encodeJSON(b, v, indent, 0, &jsonItemBudget{}); err != nil {
 		return nil, err
 	}
 	return []byte(b.String()), nil
@@ -169,7 +348,7 @@ func marshalStoreValue(v value.Value, indent string) ([]byte, error) {
 func unmarshalStoreFile(data []byte) (*value.OrderedMap, error) {
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.UseNumber() // preserve int64 vs float
-	v, err := decodeJSON(dec, 0)
+	v, err := decodeJSON(dec, 0, &jsonItemBudget{})
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +366,9 @@ func unmarshalStoreFile(data []byte) (*value.OrderedMap, error) {
 // flushLocked serializes the whole store and atomically replaces the file, keeping
 // the previous good copy as <path>.bak. In batch mode the caller skips this.
 func (s *Store) flushLocked() error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
 	data, err := marshalStoreValue(value.MakeObj(value.Map, s.data), "  ")
 	if err != nil {
 		return err
@@ -194,7 +376,7 @@ func (s *Store) flushLocked() error {
 	if len(data) > maxStoreBytes {
 		return fmt.Errorf("store exceeds the %d MiB cap", maxStoreBytes>>20)
 	}
-	if prev, rerr := os.ReadFile(s.path); rerr == nil {
+	if prev, rerr := readFileBounded(s.path, maxStoreBytes, "previous store snapshot"); rerr == nil {
 		_ = atomicWriteFile(s.path+".bak", prev) // best-effort recovery snapshot
 	}
 	return atomicWriteFile(s.path, data)
@@ -209,11 +391,14 @@ func (s *Store) getLocked(key string) (value.Value, bool) {
 }
 
 func (s *Store) setLocked(key string, v value.Value) error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
 	cp := value.DeepCopyValue(v, map[value.Obj]value.Obj{}) // copy-on-send in
 	kv := value.MakeStr(key)
 	old, had := s.data.Get(kv)
 	s.data.Set(kv, cp)
-	if s.batchDepth > 0 {
+	if s.txn.mode == storeTxnBatch {
 		return nil // committed at batch end
 	}
 	if err := s.flushLocked(); err != nil {
@@ -224,23 +409,28 @@ func (s *Store) setLocked(key string, v value.Value) error {
 		}
 		return err
 	}
+	s.version++
 	return nil
 }
 
 func (s *Store) deleteLocked(key string) error {
+	if err := s.checkOpenLocked(); err != nil {
+		return err
+	}
 	kv := value.MakeStr(key)
 	old, had := s.data.Get(kv)
 	if !had {
 		return nil // idempotent
 	}
 	s.data.Delete(kv)
-	if s.batchDepth > 0 {
+	if s.txn.mode == storeTxnBatch {
 		return nil
 	}
 	if err := s.flushLocked(); err != nil {
 		s.data.Set(kv, old) // roll back
 		return err
 	}
+	s.version++
 	return nil
 }
 
@@ -351,7 +541,11 @@ func evalStore(args []value.Value, env *Env) (value.Value, error) {
 		name := strings.TrimSuffix(base, filepath.Ext(base))
 		path = filepath.Join(filepath.Dir(sp), ".drang", name+".store")
 	}
-	s, errv, ok := openStore(path)
+	ss := env.storeSession()
+	if ss == nil {
+		return value.MakeErr("store: evaluator session is unavailable", 1), nil
+	}
+	s, errv, ok := ss.open(path)
 	if !ok {
 		return errv, nil
 	}
@@ -360,11 +554,10 @@ func evalStore(args []value.Value, env *Env) (value.Value, error) {
 
 // evalStoreUpdate implements store_update(store, key, default, fn): an atomic
 // read-modify-write. fn receives the current value, or `default` if the key is absent
-// (so a counter never has to handle nil). The store mutex is held across the callback so
-// the read and write are one indivisible step (correct counters/accumulators). The update
-// function must therefore be a pure transform and must NOT call back into this store (that
-// would deadlock). Argument order mirrors reduce(arr, init, fn).
-func evalStoreUpdate(args []value.Value, depth int) (value.Value, error) {
+// (so a counter never has to handle nil). The pure transform runs without the store mutex. If
+// another strand commits meanwhile, it is retried from the new value; same-strand same-store
+// callback access is a catchable reentry Err instead of a deadlock. Argument order mirrors reduce.
+func evalStoreUpdate(args []value.Value, env *Env, depth int) (value.Value, error) {
 	if len(args) != 4 {
 		return value.MakeNil(), fmt.Errorf("store_update expects 4 arguments (store, key, default, fn), got %d", len(args))
 	}
@@ -380,35 +573,88 @@ func evalStoreUpdate(args []value.Value, depth int) (value.Value, error) {
 	if !ok {
 		return value.MakeErr(fmt.Sprintf("store_update expects a function, got %s", args[3].TypeName()), 1), nil
 	}
+	owner := env.executionStrand()
+	defaultTemplate, cloneErr := newClosureSnapshotForStrand(owner).cloneValue(args[2], 0)
+	if cloneErr != nil {
+		return value.MakeErr(fmt.Sprintf("store_update: default: %v", cloneErr), 137), nil
+	}
+	cloneDefault := func() (value.Value, error) {
+		return newClosureSnapshotForStrand(owner).cloneValue(defaultTemplate, 0)
+	}
+	initialDefault, cloneErr := cloneDefault()
+	if cloneErr != nil {
+		return value.MakeErr(fmt.Sprintf("store_update: default: %v", cloneErr), 137), nil
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.beginUpdateLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_update: "+err.Error(), 1), nil
+	}
+	observedVersion := s.version
 	base, found := s.getLocked(key) // copied out if present
 	if !found {
-		base = value.DeepCopyValue(args[2], map[value.Obj]value.Obj{}) // the default, isolated
+		base = initialDefault
 	}
-	next, cerr := callFunction(fn, []value.Value{base}, depth)
-	if cerr != nil {
-		return value.MakeNil(), cerr // exit/die/abort from the callback: propagate
+	s.mu.Unlock()
+
+	// Clear callback ownership even on panic, exit, or runtime.Goexit. Keeping it active across
+	// retries makes every same-strand same-store callback access deterministic reentry.
+	active := true
+	defer func() {
+		if active {
+			s.mu.Lock()
+			s.endUpdateLocked(owner)
+			s.mu.Unlock()
+		}
+	}()
+	conflicts := 0
+	for {
+		next, cerr := callFunction(fn, []value.Value{base}, depth)
+		if cerr != nil {
+			return value.MakeNil(), cerr // exit/die/abort from the callback: propagate
+		}
+		if next.IsErr() {
+			return next, nil // callback returned/propagated an Err: leave the store unchanged
+		}
+		if _, err := marshalStoreValue(next, ""); err != nil {
+			return value.MakeErr(fmt.Sprintf("store_update: %v", err), 1), nil
+		}
+
+		s.mu.Lock()
+		if s.version != observedVersion {
+			conflicts++
+			if maxStoreUpdateRetries <= 0 || conflicts >= maxStoreUpdateRetries {
+				s.mu.Unlock()
+				return value.MakeErr(fmt.Sprintf("store_update: store stayed busy after %d retries", conflicts), 1), nil
+			}
+			observedVersion = s.version
+			base, found = s.getLocked(key)
+			s.mu.Unlock()
+			if !found {
+				base, cloneErr = cloneDefault()
+				if cloneErr != nil {
+					return value.MakeErr(fmt.Sprintf("store_update: default: %v", cloneErr), 137), nil
+				}
+			}
+			continue
+		}
+		err := s.setLocked(key, next)
+		s.endUpdateLocked(owner)
+		active = false
+		s.mu.Unlock()
+		if err != nil {
+			return value.MakeErr(fmt.Sprintf("store_update: %v", err), 1), nil
+		}
+		return next, nil
 	}
-	if next.IsErr() {
-		return next, nil // callback returned/propagated an Err: leave the store unchanged
-	}
-	if _, err := marshalStoreValue(next, ""); err != nil {
-		return value.MakeErr(fmt.Sprintf("store_update: %v", err), 1), nil
-	}
-	if err := s.setLocked(key, next); err != nil {
-		return value.MakeErr(fmt.Sprintf("store_update: %v", err), 1), nil
-	}
-	return next, nil
 }
 
 // evalWithStore implements with_store(store, fn): an all-or-nothing batch. Mutations
 // inside the callback are held in memory and committed with a single atomic write when
 // the callback returns; a callback error (propagated Err or exit/die) rolls the store
-// back to its pre-batch state. The store mutex is NOT held across the callback (the
-// lambda re-enters the store), so a store must not be batched concurrently from
-// multiple goroutines.
-func evalWithStore(args []value.Value, depth int) (value.Value, error) {
+// back to its pre-batch state. The owner strand may re-enter through ordinary store
+// operations; other strands and nested same-store transactions are rejected deterministically.
+func evalWithStore(args []value.Value, env *Env, depth int) (value.Value, error) {
 	if len(args) != 2 {
 		return value.MakeNil(), fmt.Errorf("with_store expects 2 arguments (store, fn), got %d", len(args))
 	}
@@ -420,16 +666,30 @@ func evalWithStore(args []value.Value, depth int) (value.Value, error) {
 	if !ok {
 		return value.MakeErr(fmt.Sprintf("with_store expects a function, got %s", args[1].TypeName()), 1), nil
 	}
+	owner := env.executionStrand()
 	s.mu.Lock()
+	if err := s.beginBatchLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("with_store: "+err.Error(), 1), nil
+	}
 	snap := value.DeepCopyValue(value.MakeObj(value.Map, s.data), map[value.Obj]value.Obj{}).Obj().(*value.OrderedMap)
-	s.batchDepth++
 	s.mu.Unlock()
 
+	cleanupNeeded := true
+	defer func() {
+		if cleanupNeeded {
+			s.mu.Lock()
+			s.data = snap
+			s.endTransactionLocked(owner)
+			s.mu.Unlock()
+		}
+	}()
 	result, cerr := callFunction(fn, []value.Value{args[0]}, depth)
 
 	s.mu.Lock()
+	cleanupNeeded = false
 	defer s.mu.Unlock()
-	s.batchDepth--
+	defer s.endTransactionLocked(owner)
 	if cerr != nil {
 		s.data = snap
 		return value.MakeNil(), cerr
@@ -438,18 +698,57 @@ func evalWithStore(args []value.Value, depth int) (value.Value, error) {
 		s.data = snap
 		return result, nil
 	}
-	if s.batchDepth == 0 {
-		if err := s.flushLocked(); err != nil {
-			s.data = snap
-			return value.MakeErr(fmt.Sprintf("with_store: %v", err), 1), nil
-		}
+	if err := s.flushLocked(); err != nil {
+		s.data = snap
+		return value.MakeErr(fmt.Sprintf("with_store: %v", err), 1), nil
 	}
+	s.version++
 	return result, nil
 }
 
 // --- plain builtins (registered in the `builtins` map) ---
 
-func builtinStoreGet(args []value.Value) (value.Value, error) {
+func isStoreBuiltin(name string) bool {
+	switch name {
+	case "store_get", "store_set", "store_has", "store_delete", "store_keys", "store_all", "store_clear", "store_path", "store_close":
+		return true
+	default:
+		return false
+	}
+}
+
+func callStoreBuiltin(name string, args []value.Value, env *Env) (value.Value, error) {
+	var owner *executionStrand
+	if env != nil {
+		owner = env.executionStrand()
+	}
+	switch name {
+	case "store_get":
+		return storeGet(args, owner)
+	case "store_set":
+		return storeSet(args, owner)
+	case "store_has":
+		return storeHas(args, owner)
+	case "store_delete":
+		return storeDelete(args, owner)
+	case "store_keys":
+		return storeKeys(args, owner)
+	case "store_all":
+		return storeAll(args, owner)
+	case "store_clear":
+		return storeClear(args, owner)
+	case "store_path":
+		return storePath(args, owner)
+	case "store_close":
+		return builtinStoreClose(args)
+	default:
+		return value.MakeNil(), fmt.Errorf("unknown store builtin %s", name)
+	}
+}
+
+func builtinStoreGet(args []value.Value) (value.Value, error) { return storeGet(args, nil) }
+
+func storeGet(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return value.MakeNil(), fmt.Errorf("store_get expects 2 or 3 arguments (store, key, default?), got %d", len(args))
 	}
@@ -462,6 +761,10 @@ func builtinStoreGet(args []value.Value) (value.Value, error) {
 		return kerr, nil
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_get: "+err.Error(), 1), nil
+	}
 	v, found := s.getLocked(key)
 	s.mu.Unlock()
 	if found {
@@ -473,7 +776,9 @@ func builtinStoreGet(args []value.Value) (value.Value, error) {
 	return value.MakeNil(), nil // absent, no default -> nil (like map access)
 }
 
-func builtinStoreSet(args []value.Value) (value.Value, error) {
+func builtinStoreSet(args []value.Value) (value.Value, error) { return storeSet(args, nil) }
+
+func storeSet(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 3 {
 		return value.MakeNil(), fmt.Errorf("store_set expects 3 arguments (store, key, value), got %d", len(args))
 	}
@@ -489,6 +794,10 @@ func builtinStoreSet(args []value.Value) (value.Value, error) {
 		return value.MakeErr(fmt.Sprintf("store_set: %v", err), 1), nil // non-serializable value
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_set: "+err.Error(), 1), nil
+	}
 	err := s.setLocked(key, args[2])
 	s.mu.Unlock()
 	if err != nil {
@@ -497,7 +806,9 @@ func builtinStoreSet(args []value.Value) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
-func builtinStoreHas(args []value.Value) (value.Value, error) {
+func builtinStoreHas(args []value.Value) (value.Value, error) { return storeHas(args, nil) }
+
+func storeHas(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 2 {
 		return value.MakeNil(), fmt.Errorf("store_has expects 2 arguments (store, key), got %d", len(args))
 	}
@@ -510,12 +821,18 @@ func builtinStoreHas(args []value.Value) (value.Value, error) {
 		return kerr, nil
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_has: "+err.Error(), 1), nil
+	}
 	has := s.data.Has(value.MakeStr(key))
 	s.mu.Unlock()
 	return value.MakeBool(has), nil
 }
 
-func builtinStoreDelete(args []value.Value) (value.Value, error) {
+func builtinStoreDelete(args []value.Value) (value.Value, error) { return storeDelete(args, nil) }
+
+func storeDelete(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 2 {
 		return value.MakeNil(), fmt.Errorf("store_delete expects 2 arguments (store, key), got %d", len(args))
 	}
@@ -528,6 +845,10 @@ func builtinStoreDelete(args []value.Value) (value.Value, error) {
 		return kerr, nil
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_delete: "+err.Error(), 1), nil
+	}
 	err := s.deleteLocked(key)
 	s.mu.Unlock()
 	if err != nil {
@@ -536,7 +857,9 @@ func builtinStoreDelete(args []value.Value) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
-func builtinStoreKeys(args []value.Value) (value.Value, error) {
+func builtinStoreKeys(args []value.Value) (value.Value, error) { return storeKeys(args, nil) }
+
+func storeKeys(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("store_keys expects 1 argument (store), got %d", len(args))
 	}
@@ -545,6 +868,10 @@ func builtinStoreKeys(args []value.Value) (value.Value, error) {
 		return errv, nil
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_keys: "+err.Error(), 1), nil
+	}
 	ks := s.data.Keys()
 	out := make([]value.Value, len(ks))
 	copy(out, ks) // keys are immutable string values
@@ -552,7 +879,9 @@ func builtinStoreKeys(args []value.Value) (value.Value, error) {
 	return value.MakeArray(out), nil
 }
 
-func builtinStoreAll(args []value.Value) (value.Value, error) {
+func builtinStoreAll(args []value.Value) (value.Value, error) { return storeAll(args, nil) }
+
+func storeAll(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("store_all expects 1 argument (store), got %d", len(args))
 	}
@@ -561,12 +890,18 @@ func builtinStoreAll(args []value.Value) (value.Value, error) {
 		return errv, nil
 	}
 	s.mu.Lock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_all: "+err.Error(), 1), nil
+	}
 	cp := value.DeepCopyValue(value.MakeObj(value.Map, s.data), map[value.Obj]value.Obj{})
 	s.mu.Unlock()
 	return cp, nil
 }
 
-func builtinStoreClear(args []value.Value) (value.Value, error) {
+func builtinStoreClear(args []value.Value) (value.Value, error) { return storeClear(args, nil) }
+
+func storeClear(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("store_clear expects 1 argument (store), got %d", len(args))
 	}
@@ -575,12 +910,18 @@ func builtinStoreClear(args []value.Value) (value.Value, error) {
 		return errv, nil
 	}
 	s.mu.Lock()
+	if cerr := s.checkAccessLocked(owner); cerr != nil {
+		s.mu.Unlock()
+		return value.MakeErr("store_clear: "+cerr.Error(), 1), nil
+	}
 	old := s.data
 	s.data = value.MakeMap().Obj().(*value.OrderedMap)
 	var err error
-	if s.batchDepth == 0 {
+	if s.txn.mode != storeTxnBatch {
 		if err = s.flushLocked(); err != nil {
 			s.data = old // roll back
+		} else {
+			s.version++
 		}
 	}
 	s.mu.Unlock()
@@ -590,13 +931,20 @@ func builtinStoreClear(args []value.Value) (value.Value, error) {
 	return value.MakeBool(true), nil
 }
 
-func builtinStorePath(args []value.Value) (value.Value, error) {
+func builtinStorePath(args []value.Value) (value.Value, error) { return storePath(args, nil) }
+
+func storePath(args []value.Value, owner *executionStrand) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("store_path expects 1 argument (store), got %d", len(args))
 	}
 	s, errv, ok := storeArg("store_path", args[0])
 	if !ok {
 		return errv, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkAccessLocked(owner); err != nil {
+		return value.MakeErr("store_path: "+err.Error(), 1), nil
 	}
 	return value.MakeStr(s.path), nil
 }
@@ -609,20 +957,8 @@ func builtinStoreClose(args []value.Value) (value.Value, error) {
 	if !ok {
 		return errv, nil
 	}
-	s.close()
+	if err := s.close(); err != nil {
+		return value.MakeErr("store_close: "+err.Error(), 1), nil
+	}
 	return value.MakeNil(), nil
-}
-
-// resetStoresForTest closes and forgets every open store. Test-only, so a test's
-// temp-dir cleanup is not blocked by a still-held lock handle.
-func resetStoresForTest() {
-	openStores.mu.Lock()
-	stores := make([]*Store, 0, len(openStores.m))
-	for _, s := range openStores.m {
-		stores = append(stores, s)
-	}
-	openStores.mu.Unlock()
-	for _, s := range stores {
-		s.close()
-	}
 }

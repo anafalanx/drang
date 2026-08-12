@@ -1,5 +1,7 @@
 package value
 
+import "math"
+
 // mapKey is the normalized, comparable form of a scalar map key.
 type mapKey struct {
 	tag Tag
@@ -7,17 +9,16 @@ type mapKey struct {
 	s   string
 }
 
-// normalizeKey reduces a key Value to a comparable mapKey. Integral floats
-// canonicalize to Int (so $h[1] and $h[1.0] collide, matching == for values within
-// float64's exact-integer range, |x| < 2^53; beyond that == widens both to float64
-// while keys stay exact int64, so the two can disagree — an accepted edge case).
+// normalizeKey reduces a key Value to a comparable mapKey. Integral floats in
+// int64 range canonicalize to Int, so map lookup and exact numeric equality use
+// the same identity rule ($h[1] and $h[1.0] collide at every representable value).
 // Returns ok=false for unhashable keys (non-integral float, nil, error, container, fn).
 func normalizeKey(k Value) (mapKey, bool) {
 	switch k.tag {
 	case Int:
 		return mapKey{tag: Int, n: k.n}, true
 	case Float:
-		if k.f == float64(int64(k.f)) {
+		if !math.IsNaN(k.f) && k.f >= -0x1p63 && k.f < 0x1p63 && k.f == float64(int64(k.f)) {
 			return mapKey{tag: Int, n: int64(k.f)}, true
 		}
 		return mapKey{}, false
@@ -118,7 +119,7 @@ func (m *OrderedMap) Equal(o Obj) bool {
 	if !ok {
 		return false
 	}
-	return equalDepth(Value{tag: Map, ref: m}, Value{tag: Map, ref: n}, 0, nil)
+	return equalIterative(Value{tag: Map, ref: m}, Value{tag: Map, ref: n})
 }
 
 func (m *OrderedMap) DeepCopy(visited map[Obj]Obj) Obj {

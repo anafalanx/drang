@@ -37,15 +37,16 @@ const (
 type EventKind int
 
 const (
-	EventNewProcess    EventKind = iota // a process joined the job (Pid set)
-	EventExit                           // a process exited on its own, any code (Pid set)
-	EventAbnormalExit                   // a process exited with an abnormal exception status (Pid set)
-	EventActiveZero                     // the job's last process exited — the subtree has drained (no Pid)
-	EventProcessMemoryLimit             // a process hit its per-process memory limit (Pid set)
-	EventJobMemoryLimit                 // the job hit its memory limit
-	EventNotificationLimit              // a per-job notification limit was crossed
-	EventJobTimeLimit                   // the job hit its CPU-time limit
-	EventProcessTimeLimit               // a process hit its per-process CPU-time limit (Pid set)
+	EventNewProcess         EventKind = iota // a process joined the job (Pid set)
+	EventExit                                // a process exited on its own, any code (Pid set)
+	EventAbnormalExit                        // a process exited with an abnormal exception status (Pid set)
+	EventActiveZero                          // the job's last process exited — the subtree has drained (no Pid)
+	EventActiveProcessLimit                  // the job refused a process because its active-process cap fired
+	EventProcessMemoryLimit                  // a process hit its per-process memory limit (Pid set)
+	EventJobMemoryLimit                      // the job hit its memory limit
+	EventNotificationLimit                   // a per-job notification limit was crossed
+	EventJobTimeLimit                        // the job hit its CPU-time limit
+	EventProcessTimeLimit                    // a process hit its per-process CPU-time limit (Pid set)
 	EventOther
 )
 
@@ -79,12 +80,29 @@ type ioport struct {
 	closed bool
 }
 
+// stop atomically rejects new Watch calls and queues an orderly shutdown marker behind all
+// notifications already in the completion port. If posting fails, closing the handle is the
+// fallback that still unblocks GetQueuedCompletionStatus.
+func (p *ioport) stop() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	p.closed = true
+	if err := windows.PostQueuedCompletionStatus(p.handle, 0, 0, nil); err != nil {
+		windows.CloseHandle(p.handle)
+		p.handle = 0
+	}
+}
+
 func (p *ioport) close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.closed {
-		p.closed = true
+	p.closed = true
+	if p.handle != 0 {
 		windows.CloseHandle(p.handle)
+		p.handle = 0
 	}
 }
 
@@ -113,6 +131,7 @@ func (p *ioport) raw() windows.Handle {
 type Monitor struct {
 	port    *ioport
 	events  chan Event
+	done    chan struct{} // closed after monitorLoop exits and Events has been closed
 	nextKey atomic.Uint64
 }
 
@@ -123,10 +142,10 @@ func NewMonitor() (*Monitor, error) {
 		return nil, err
 	}
 	p := &ioport{handle: h}
-	m := &Monitor{port: p, events: make(chan Event, 256)}
+	m := &Monitor{port: p, events: make(chan Event, 256), done: make(chan struct{})}
 	// The loop references only the port and channel (NOT m), so m can be GC'd if the caller drops
 	// it, letting the cleanup below fire.
-	go monitorLoop(p, m.events)
+	go monitorLoop(p, m.events, m.done)
 	// Backstop: if the Monitor is dropped without Close(), reclaim the port — which unblocks and
 	// ends the loop goroutine too. Idempotent with Close (both go through ioport.close).
 	runtime.AddCleanup(m, (*ioport).close, p)
@@ -141,10 +160,12 @@ func NewMonitor() (*Monitor, error) {
 func (m *Monitor) Watch(job *Job) (uintptr, error) {
 	key := uintptr(m.nextKey.Add(1)) // a stable token, not the recyclable job handle value
 	err := m.port.with(func(h windows.Handle) error {
-		info := jobAssociateCompletionPort{CompletionKey: key, CompletionPort: h}
-		_, e := windows.SetInformationJobObject(job.handle, windows.JobObjectAssociateCompletionPortInformation,
-			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
-		return e
+		return job.withHandle(func(jobHandle windows.Handle) error {
+			info := jobAssociateCompletionPort{CompletionKey: key, CompletionPort: h}
+			_, e := windows.SetInformationJobObject(jobHandle, windows.JobObjectAssociateCompletionPortInformation,
+				uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
+			return e
+		})
 	})
 	if err != nil {
 		return 0, err
@@ -156,14 +177,20 @@ func (m *Monitor) Watch(job *Job) (uintptr, error) {
 // channel is buffered but overflow events are dropped (best-effort, as the OS itself is).
 func (m *Monitor) Events() <-chan Event { return m.events }
 
-// Close stops delivery and releases the completion port. Idempotent. Closing the port unblocks the
-// delivery goroutine, which then closes Events().
+// Close stops delivery, releases the completion port, and waits until the delivery goroutine has
+// exited and Events has been closed. It is safe for concurrent and repeated callers. Waiting here
+// gives owners a real lifecycle boundary: after Close returns no monitor goroutine or handle is
+// left behind.
 func (m *Monitor) Close() error {
+	defer runtime.KeepAlive(m) // keep the GC cleanup from bypassing the orderly marker mid-Close
+	m.port.stop()
+	<-m.done
 	m.port.close()
 	return nil
 }
 
-func monitorLoop(port *ioport, events chan Event) {
+func monitorLoop(port *ioport, events chan Event, done chan struct{}) {
+	defer close(done)
 	defer close(events)
 	h := port.raw() // Close() closes this handle, which unblocks GetQueuedCompletionStatus below
 	for {
@@ -172,6 +199,9 @@ func monitorLoop(port *ioport, events chan Event) {
 		var ov *windows.Overlapped
 		if err := windows.GetQueuedCompletionStatus(h, &msg, &key, &ov, windows.INFINITE); err != nil {
 			return // the port was closed (Close or the GC backstop) or broke; stop delivering
+		}
+		if msg == 0 && key == 0 && ov == nil {
+			return // orderly Close marker, queued after all notifications already pending
 		}
 		ev := Event{Job: key, Msg: msg, Kind: classifyMsg(msg)}
 		if isProcessMsg(msg) {
@@ -194,6 +224,8 @@ func classifyMsg(msg uint32) EventKind {
 		return EventAbnormalExit
 	case jobMsgActiveProcessZero:
 		return EventActiveZero
+	case jobMsgActiveProcessLimit:
+		return EventActiveProcessLimit
 	case jobMsgProcessMemoryLimit:
 		return EventProcessMemoryLimit
 	case jobMsgJobMemoryLimit:

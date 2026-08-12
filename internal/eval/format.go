@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -152,7 +153,10 @@ func formatArg(spec string, v value.Value) (string, error) {
 		if sp.sign != 0 || sp.alt {
 			return "", fmt.Errorf("sign/# is not valid with string type 's'")
 		}
-		core = truncate(v.Display(), sp.prec)
+		core, err = displayForFormat(v, sp.prec)
+		if err != nil {
+			return "", err
+		}
 	case 0:
 		switch v.Tag() {
 		case value.Int:
@@ -172,7 +176,10 @@ func formatArg(spec string, v value.Value) (string, error) {
 			if sp.sign != 0 || sp.alt {
 				return "", fmt.Errorf("sign/# is only valid for numbers, not %s", v.TypeName())
 			}
-			core = truncate(v.Display(), sp.prec)
+			core, err = displayForFormat(v, sp.prec)
+			if err != nil {
+				return "", err
+			}
 		}
 	default:
 		return "", fmt.Errorf("unknown format type %q", string(sp.typ))
@@ -200,16 +207,65 @@ func formatArg(spec string, v value.Value) (string, error) {
 	return padAlign(core, sp.width, fill, align), nil
 }
 
-func runeLen(s string) int { return len([]rune(s)) }
+func runeLen(s string) int { return utf8.RuneCountInString(s) }
+
+func displayForFormat(v value.Value, prec int) (string, error) {
+	if prec == 0 {
+		return "", nil
+	}
+	limit := maxStringBytes
+	if prec > 0 {
+		// Four bytes per UTF-8 rune plus a small boundary margin is enough to
+		// determine an exact precision prefix without rendering the full graph.
+		prefix := int64(prec)*utf8.UTFMax + utf8.UTFMax
+		if prefix < limit {
+			limit = prefix
+		}
+	}
+	s, complete := displayWithin(v, limit)
+	if prec < 0 {
+		if !complete {
+			return "", fmt.Errorf("result exceeds the %d-byte string limit", maxStringBytes)
+		}
+		return s, nil
+	}
+	if !complete && utf8.RuneCountInString(s) < prec {
+		return "", fmt.Errorf("result exceeds the %d-byte string limit", maxStringBytes)
+	}
+	s = truncate(s, prec)
+	if int64(len(s)) > maxStringBytes {
+		return "", fmt.Errorf("result exceeds the %d-byte string limit", maxStringBytes)
+	}
+	return s, nil
+}
 
 func truncate(s string, prec int) string {
 	if prec < 0 {
 		return s
 	}
-	if r := []rune(s); prec < len(r) {
-		return string(r[:prec])
+	if prec >= utf8.RuneCountInString(s) {
+		return s
 	}
-	return s
+	if utf8.ValidString(s) {
+		count := 0
+		for i := range s {
+			if count == prec {
+				return s[:i]
+			}
+			count++
+		}
+		return s
+	}
+	b := newLimitedStringBuilder(maxStringBytes)
+	count := 0
+	for _, r := range s {
+		if count == prec {
+			break
+		}
+		_, _ = b.WriteRune(r)
+		count++
+	}
+	return b.String()
 }
 
 // zeroPad inserts zeros after any leading sign and base prefix, so "-7" padded to

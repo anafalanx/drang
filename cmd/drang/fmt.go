@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,17 +18,42 @@ import (
 func runFmt(args []string) {
 	var write, check, list, diff, fix bool
 	var paths []string
+	options := true
+	outputMode := ""
+	setOutputMode := func(flag string) {
+		if outputMode != "" {
+			fmt.Fprintf(os.Stderr, "drang fmt: %s and %s are mutually exclusive\n", outputMode, flag)
+			os.Exit(2)
+		}
+		outputMode = flag
+	}
 	for _, a := range args {
+		if options && a == "--" {
+			options = false
+			continue
+		}
+		if !options {
+			paths = append(paths, a)
+			continue
+		}
 		switch a {
 		case "-w", "--write":
+			setOutputMode(a)
 			write = true
 		case "-c", "--check":
+			setOutputMode(a)
 			check = true
 		case "-l", "--list":
+			setOutputMode(a)
 			list = true
 		case "-d", "--diff":
+			setOutputMode(a)
 			diff = true
 		case "--fix":
+			if fix {
+				fmt.Fprintln(os.Stderr, "drang fmt: --fix specified more than once")
+				os.Exit(2)
+			}
 			fix = true
 		case "-h", "--help":
 			fmtHelp()
@@ -42,10 +66,6 @@ func runFmt(args []string) {
 			paths = append(paths, a)
 		}
 	}
-	if write && check {
-		fmt.Fprintln(os.Stderr, "drang fmt: -w and --check are mutually exclusive")
-		os.Exit(2)
-	}
 	if write && len(paths) == 0 {
 		fmt.Fprintln(os.Stderr, "drang fmt: -w needs file or directory paths (cannot rewrite stdin)")
 		os.Exit(2)
@@ -56,9 +76,14 @@ func runFmt(args []string) {
 		return
 	}
 
+	expanded, expandErr := expandFmtPaths(paths)
+	if expandErr != nil {
+		fmt.Fprintln(os.Stderr, "drang fmt:", expandErr)
+		os.Exit(2)
+	}
 	anyChanged, anyErr := false, false
-	for _, f := range expandFmtPaths(paths) {
-		src, err := os.ReadFile(f)
+	for _, f := range expanded {
+		src, err := readFileLimited(f, maxSourceBytes, "source file")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "drang fmt: %v\n", err)
 			anyErr = true
@@ -96,7 +121,13 @@ func runFmt(args []string) {
 		case diff:
 			if changed {
 				anyChanged = true
-				os.Stdout.WriteString(unifiedDiff(f, string(src), out))
+				d, derr := unifiedDiff(f, string(src), out)
+				if derr != nil {
+					fmt.Fprintf(os.Stderr, "drang fmt: %s: %v\n", f, derr)
+					anyErr = true
+					continue
+				}
+				os.Stdout.WriteString(d)
 			}
 		default:
 			os.Stdout.WriteString(out)
@@ -122,7 +153,7 @@ func formatSource(src string, fix bool) (string, error) {
 }
 
 func fmtStdin(report, diff, fix bool) {
-	src, err := io.ReadAll(os.Stdin)
+	src, err := readAllLimited(os.Stdin, maxSourceBytes, "stdin source")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang fmt:", err)
 		os.Exit(2)
@@ -135,7 +166,12 @@ func fmtStdin(report, diff, fix bool) {
 	if report {
 		changed := out != string(src)
 		if diff && changed {
-			os.Stdout.WriteString(unifiedDiff("<stdin>", string(src), out))
+			d, derr := unifiedDiff("<stdin>", string(src), out)
+			if derr != nil {
+				fmt.Fprintln(os.Stderr, "drang fmt: <stdin>:", derr)
+				os.Exit(2)
+			}
+			os.Stdout.WriteString(d)
 		}
 		if changed {
 			os.Exit(1)
@@ -148,7 +184,7 @@ func fmtStdin(report, diff, fix bool) {
 // expandFmtPaths turns the given paths into a flat list of files: a directory is walked
 // for *.dr files (skipping .git and dot-directories); a file is taken as-is. Unreadable
 // paths are passed through so the caller reports the error.
-func expandFmtPaths(paths []string) []string {
+func expandFmtPaths(paths []string) ([]string, error) {
 	var out []string
 	for _, p := range paths {
 		fi, err := os.Stat(p)
@@ -160,9 +196,9 @@ func expandFmtPaths(paths []string) []string {
 			out = append(out, p)
 			continue
 		}
-		filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+		if err := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return nil
+				return err
 			}
 			if d.IsDir() {
 				if path != p && (d.Name() == ".git" || strings.HasPrefix(d.Name(), ".")) {
@@ -174,9 +210,11 @@ func expandFmtPaths(paths []string) []string {
 				out = append(out, path)
 			}
 			return nil
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("walk %s: %w", p, err)
+		}
 	}
-	return out
+	return out, nil
 }
 
 // writeFileAtomic writes content to a temp file in the same directory, preserves the
@@ -188,17 +226,25 @@ func writeFileAtomic(path, content string) error {
 	}
 	name := tmp.Name()
 	_, werr := tmp.WriteString(content)
+	serr := tmp.Sync()
 	cerr := tmp.Close()
 	if werr != nil {
 		os.Remove(name)
 		return werr
+	}
+	if serr != nil {
+		os.Remove(name)
+		return serr
 	}
 	if cerr != nil {
 		os.Remove(name)
 		return cerr
 	}
 	if fi, e := os.Stat(path); e == nil {
-		os.Chmod(name, fi.Mode())
+		if err := os.Chmod(name, fi.Mode()); err != nil {
+			os.Remove(name)
+			return err
+		}
 	}
 	if rerr := os.Rename(name, path); rerr != nil {
 		os.Remove(name)
@@ -215,11 +261,27 @@ func isReadOnly(path string) bool {
 	return err == nil && fi.Mode().Perm()&0o200 == 0
 }
 
+// Ordinary diffs use an LCS to align lines. Its matrix is quadratic, so large
+// inputs fall back to a linear prefix/suffix alignment rather than letting `fmt
+// -d` turn a bounded source file into a multi-gigabyte allocation.
+var (
+	maxDiffLCSCells    int64 = 4_000_000
+	maxDiffLines       int64 = 1_000_000
+	maxDiffOutputBytes int64 = 64 << 20
+)
+
 // unifiedDiff returns a line-based diff of a vs b (every line annotated: "  " context,
-// "-" removed, "+" added), using an LCS to align them. Empty when a == b.
-func unifiedDiff(name, a, b string) string {
+// "-" removed, "+" added). Empty when a == b.
+func unifiedDiff(name, a, b string) (string, error) {
+	na, nb := diffLineCount(a), diffLineCount(b)
+	if na > maxDiffLines || nb > maxDiffLines {
+		return "", fmt.Errorf("diff exceeds the %d-line limit", maxDiffLines)
+	}
 	at, bt := splitLines(a), splitLines(b)
 	n, m := len(at), len(bt)
+	if int64(n+1)*int64(m+1) > maxDiffLCSCells {
+		return linearUnifiedDiff(name, at, bt)
+	}
 	lcs := make([][]int, n+1)
 	for i := range lcs {
 		lcs[i] = make([]int, m+1)
@@ -235,29 +297,134 @@ func unifiedDiff(name, a, b string) string {
 			}
 		}
 	}
-	var d strings.Builder
-	fmt.Fprintf(&d, "--- %s (original)\n+++ %s (formatted)\n", name, name)
+	d := newDiffBuilder()
+	if err := d.header(name); err != nil {
+		return "", err
+	}
 	i, j := 0, 0
 	for i < n && j < m {
 		switch {
 		case at[i] == bt[j]:
-			d.WriteString("  " + at[i] + "\n")
+			if err := d.line("  ", at[i]); err != nil {
+				return "", err
+			}
 			i, j = i+1, j+1
 		case lcs[i+1][j] >= lcs[i][j+1]:
-			d.WriteString("-" + at[i] + "\n")
+			if err := d.line("-", at[i]); err != nil {
+				return "", err
+			}
 			i++
 		default:
-			d.WriteString("+" + bt[j] + "\n")
+			if err := d.line("+", bt[j]); err != nil {
+				return "", err
+			}
 			j++
 		}
 	}
 	for ; i < n; i++ {
-		d.WriteString("-" + at[i] + "\n")
+		if err := d.line("-", at[i]); err != nil {
+			return "", err
+		}
 	}
 	for ; j < m; j++ {
-		d.WriteString("+" + bt[j] + "\n")
+		if err := d.line("+", bt[j]); err != nil {
+			return "", err
+		}
 	}
-	return d.String()
+	return d.String(), nil
+}
+
+func diffLineCount(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	n := int64(strings.Count(s, "\n"))
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
+}
+
+type diffBuilder struct {
+	strings.Builder
+}
+
+func newDiffBuilder() *diffBuilder { return &diffBuilder{} }
+
+func (d *diffBuilder) write(s string) error {
+	if int64(len(s)) > maxDiffOutputBytes-int64(d.Len()) {
+		return fmt.Errorf("diff output exceeds the %d MiB limit", maxDiffOutputBytes>>20)
+	}
+	d.WriteString(s)
+	return nil
+}
+
+func (d *diffBuilder) header(name string) error {
+	if err := d.write("--- "); err != nil {
+		return err
+	}
+	if err := d.write(name); err != nil {
+		return err
+	}
+	if err := d.write(" (original)\n+++ "); err != nil {
+		return err
+	}
+	if err := d.write(name); err != nil {
+		return err
+	}
+	return d.write(" (formatted)\n")
+}
+
+func (d *diffBuilder) line(prefix, line string) error {
+	need := int64(len(prefix)) + int64(len(line)) + 1
+	if need > maxDiffOutputBytes-int64(d.Len()) {
+		return fmt.Errorf("diff output exceeds the %d MiB limit", maxDiffOutputBytes>>20)
+	}
+	d.WriteString(prefix)
+	d.WriteString(line)
+	d.WriteByte('\n')
+	return nil
+}
+
+// linearUnifiedDiff preserves the common prefix and suffix and reports the
+// changed middle as one replacement. It may be less minimal than the LCS form,
+// but it is exact, deterministic, and O(n+m) in both time and memory.
+func linearUnifiedDiff(name string, at, bt []string) (string, error) {
+	prefix := 0
+	for prefix < len(at) && prefix < len(bt) && at[prefix] == bt[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(at)-prefix && suffix < len(bt)-prefix &&
+		at[len(at)-1-suffix] == bt[len(bt)-1-suffix] {
+		suffix++
+	}
+
+	d := newDiffBuilder()
+	if err := d.header(name); err != nil {
+		return "", err
+	}
+	for _, line := range at[:prefix] {
+		if err := d.line("  ", line); err != nil {
+			return "", err
+		}
+	}
+	for _, line := range at[prefix : len(at)-suffix] {
+		if err := d.line("-", line); err != nil {
+			return "", err
+		}
+	}
+	for _, line := range bt[prefix : len(bt)-suffix] {
+		if err := d.line("+", line); err != nil {
+			return "", err
+		}
+	}
+	for _, line := range at[len(at)-suffix:] {
+		if err := d.line("  ", line); err != nil {
+			return "", err
+		}
+	}
+	return d.String(), nil
 }
 
 func splitLines(s string) []string {

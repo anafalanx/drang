@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anafalanx/drang/internal/parser"
 )
@@ -175,6 +176,93 @@ func TestModuleUseInsidePmapNoFalseCycle(t *testing.T) {
 	}
 	if strings.TrimSpace(out) != "8" {
 		t.Errorf("got %q, want 8 records", out)
+	}
+}
+
+func TestModuleConcurrentFirstLoadRunsOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeMod(t, dir, "once.dr", "say(\"loaded once\")\nexport fn .val() { 42 }")
+	out, err := runMod(t, dir, "$res := [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] |> pmap(|$x| use(\"./once\"))\nsay(len($res))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "loaded once"); n != 1 {
+		t.Fatalf("concurrent first import evaluated module %d times; output=%q", n, out)
+	}
+	if !strings.HasSuffix(out, "16\n") {
+		t.Fatalf("unexpected result after concurrent import: %q", out)
+	}
+}
+
+// Per-path single-flight must not turn a concurrent A->B / B->A cycle into two goroutines waiting
+// forever. The wait graph rejects one edge, both leaders unwind, and pmap surfaces an Err.
+func TestModuleConcurrentCycleDoesNotDeadlock(t *testing.T) {
+	dir := t.TempDir()
+	writeMod(t, dir, "a.dr", "sleep(0.1)?\nuse \"./b\"\nexport fn .a() { 1 }")
+	writeMod(t, dir, "b.dr", "sleep(0.1)?\nuse \"./a\"\nexport fn .b() { 1 }")
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := runMod(t, dir, `$r := ["a", "b"] |> pmap(|$name| {
+			if $name == "a" { use("./a") } else { use("./b") }
+		})
+		say(is_err($r))`)
+		done <- result{out: out, err: err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("concurrent cycle aborted the whole run: %v", got.err)
+		}
+		if strings.TrimSpace(got.out) != "true" {
+			t.Fatalf("concurrent cycle should surface an Err, got %q", got.out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent module cycle deadlocked single-flight waiters")
+	}
+}
+
+func TestModuleCacheIsScopedToEnvSession(t *testing.T) {
+	dir := t.TempDir()
+	writeMod(t, dir, "session.dr", `say("loaded-v1")
+export $VERSION ::= "v1"`)
+	out, err := runMod(t, dir, `$a := use("./session")
+$b := use("./session")
+say($a.VERSION ~ "/" ~ $b.VERSION)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "loaded-v1") != 1 || !strings.HasSuffix(out, "v1/v1\n") {
+		t.Fatalf("same-session imports did not share one result: %q", out)
+	}
+
+	// A new top-level Env is a new run/session. It must not inherit a stale module closure or
+	// completed cache entry from the previous run.
+	writeMod(t, dir, "session.dr", `say("loaded-v2")
+export $VERSION ::= "v2"`)
+	out, err = runMod(t, dir, `$m := use("./session"); say($m.VERSION)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "loaded-v2") != 1 || !strings.HasSuffix(out, "v2\n") {
+		t.Fatalf("new session reused stale module cache: %q", out)
+	}
+}
+
+func TestReadFileBoundedRejectsSentinelByte(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized")
+	if err := os.WriteFile(path, []byte("123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFileBounded(path, 8, "test input"); err == nil || !strings.Contains(err.Error(), "8-byte limit") {
+		t.Fatalf("bounded read error = %v, want 8-byte limit", err)
+	}
+	b, err := readFileBounded(path, 9, "test input")
+	if err != nil || string(b) != "123456789" {
+		t.Fatalf("exact-limit read = %q, %v", b, err)
 	}
 }
 

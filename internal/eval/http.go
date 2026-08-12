@@ -118,6 +118,10 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 		return value.MakeErr("http: url must be a string, got "+urlVal.TypeName(), 1), nil
 	}
 	url := urlVal.AsStr()
+	method = strings.ToUpper(method)
+	if !validHeaderName(method) {
+		return value.MakeErr("http: method must be a non-empty HTTP token", 1), nil
+	}
 
 	var opts *value.OrderedMap
 	if optsVal.Tag() != value.Nil {
@@ -127,6 +131,9 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 		}
 		opts = m
 	}
+	if err := validateHTTPOptions(opts); err != nil {
+		return value.MakeErr("http: "+err.Error(), 1), nil
+	}
 
 	timeout := httpDefaultTimeout
 	if ms, ok := optInt(opts, "timeout"); ok {
@@ -134,7 +141,7 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 		case ms < 0:
 			return value.MakeErr("http: timeout must be >= 0 (ms; 0 = unlimited)", 1), nil
 		case ms > int64(time.Duration(math.MaxInt64)/time.Millisecond):
-			timeout = 0 // absurdly large -> unlimited (avoid int64-nanosecond overflow)
+			return value.MakeErr("http: timeout is outside time.Duration range", 1), nil
 		default:
 			timeout = time.Duration(ms) * time.Millisecond // 0 -> unlimited
 		}
@@ -176,7 +183,7 @@ func httpDo(method string, urlVal, optsVal value.Value) (value.Value, error) {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return value.MakeErr("http: "+err.Error(), 1), nil
 	}
@@ -257,6 +264,12 @@ func applyHeaders(req *http.Request, opts *value.OrderedMap) error {
 		if k.Tag() != value.Str || v.Tag() != value.Str {
 			return fmt.Errorf("header names and values must be strings")
 		}
+		if !validHeaderName(k.AsStr()) {
+			return fmt.Errorf("invalid header name %q", k.AsStr())
+		}
+		if strings.ContainsAny(v.AsStr(), "\r\n") {
+			return fmt.Errorf("header %q contains a newline", k.AsStr())
+		}
 		req.Header.Set(k.AsStr(), v.AsStr())
 	}
 	return nil
@@ -275,6 +288,10 @@ func readLimited(r io.Reader, max int64) (string, error) {
 		data, err := io.ReadAll(r)
 		return string(data), err
 	}
+	if max == math.MaxInt64 {
+		data, err := io.ReadAll(r)
+		return string(data), err
+	}
 	data, err := io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
 		return string(data), err
@@ -283,6 +300,60 @@ func readLimited(r io.Reader, max int64) (string, error) {
 		return "", errBodyTooLarge
 	}
 	return string(data), nil
+}
+
+func validateHTTPOptions(opts *value.OrderedMap) error {
+	if opts == nil {
+		return nil
+	}
+	for i, k := range opts.Keys() {
+		if k.Tag() != value.Str {
+			return fmt.Errorf("option keys must be strings, got %s", k.TypeName())
+		}
+		name, v := k.AsStr(), opts.Vals()[i]
+		switch name {
+		case "headers":
+			if v.Tag() != value.Map {
+				return fmt.Errorf("headers must be a map, got %s", v.TypeName())
+			}
+		case "body":
+			if v.Tag() != value.Str {
+				return fmt.Errorf("body must be a string, got %s", v.TypeName())
+			}
+		case "json":
+			// Any drang value is serializable or produces its own catchable JSON Err.
+		case "timeout":
+			if !v.IsNumber() {
+				return fmt.Errorf("timeout must be a number of milliseconds, got %s", v.TypeName())
+			}
+			ms := v.Num()
+			maxMS := float64(time.Duration(math.MaxInt64) / time.Millisecond)
+			if math.IsNaN(ms) || math.IsInf(ms, 0) || ms < 0 || ms > maxMS {
+				return fmt.Errorf("timeout must be finite, non-negative, and within time.Duration range")
+			}
+		case "redirects":
+			if v.Tag() != value.Int {
+				return fmt.Errorf("redirects must be an int, got %s", v.TypeName())
+			}
+			if v.AsInt() < 0 {
+				return fmt.Errorf("redirects must be >= 0")
+			}
+		case "max_body":
+			if v.Tag() != value.Int {
+				return fmt.Errorf("max_body must be an int, got %s", v.TypeName())
+			}
+			if v.AsInt() < 0 {
+				return fmt.Errorf("max_body must be >= 0")
+			}
+		case "insecure":
+			if v.Tag() != value.Bool {
+				return fmt.Errorf("insecure must be a bool, got %s", v.TypeName())
+			}
+		default:
+			return fmt.Errorf("unknown option %q", name)
+		}
+	}
+	return nil
 }
 
 func httpResponse(resp *http.Response, body string) value.Value {

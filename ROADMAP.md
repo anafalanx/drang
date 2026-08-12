@@ -3,12 +3,12 @@ type: roadmap
 title: drang roadmap
 description: What is built, what is deliberately out of scope, and what remains — drang's status ledger.
 tags: [drang, roadmap, status]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
 # drang — Roadmap: what's left to complete
 
-*Inventory refreshed 2026-07-21 — **drang 0.12.0 released** (module privacy via `export`, `validate` boundary shape checking; see CHANGELOG.md).
+*Inventory refreshed 2026-08-12 — **drang 0.12.1 released** (compatibility-preserving runtime and tooling hardening; see CHANGELOG.md).
 Grounded in DESIGN.md, MANUAL.md, a code-level scan, and a vision-gap analysis against drang's niche
 (a small, parallel, Perl-inspired scripting language for text / glue / orchestration — "reads like
 Ruby, thinks like Perl, runs like Go").*
@@ -82,7 +82,7 @@ Ruby, thinks like Perl, runs like Go").*
 - **0.11.0 (2026-07-09) — RELEASED: the GUI release.** Local htmx GUIs: `serve` (127.0.0.1 +
   per-launch token, embedded htmx at `/_/htmx.js`, clamped Edge `--app` window with throwaway
   profile) and `drang build --web <dir>` asset bundling (payload v3). The docs became an OKF v0.1
-  bundle, and `tools/verify.dr` grew into the full 10-stage preflight (build/vet/`-race`,
+  bundle, and `tools/verify.dr` grew into the full preflight (build/vet/`-race`,
   `fmt --check`, MANUAL/REFERENCE example checks, OKF lint, 3 fuzz targets). Additive and
   backward-compatible. Full log in CHANGELOG.md.
 - **0.12.0 (2026-07-21) — RELEASED: module privacy + validation.** Modules are
@@ -94,6 +94,12 @@ Ruby, thinks like Perl, runs like Go").*
   prelude `one_of`/`lit`; structs declined and `valid` autocheck parked (records in DESIGN.md).
   Plus **`e()`** (Euler, beside `pi()`), **`drang build --gui`** (GUI-subsystem standalones), and
   the Job-Object **Edge lifetime** fix for `serve`. Full log in CHANGELOG.md.
+- **0.12.1 (2026-08-12) — RELEASED: bounded, robust execution.** A compatibility-preserving
+  hardening pass put explicit ceilings around untrusted whole-value work, isolated mutable
+  concurrent captures, strengthened process/module/store/copy lifecycles, hardened the CLI,
+  formatter, and standalone format, and added source-positioned migration warnings for directly
+  recognizable Err misuse. The full adversarial inventory and accepted residuals are recorded in
+  CHANGELOG.md and MANUAL.md.
 - **Remaining candidates (triaged 2026-06-29; refreshed 2026-07-05 — build on real daily-driver need,
   not speculatively).** Ordered by likely use: **named-capture `match` → map** is the most likely to
   be hit and a genuine *power*; then `parse_url`, `hmac`/`sha512`, `indent`, `title`, `chmod`. Landed:
@@ -111,14 +117,14 @@ Ruby, thinks like Perl, runs like Go").*
 
 ## State of the language
 
-With 0.7 shipped, drang is **a credible Windows-native daily-driver**, and the *engine* is done:
+With 0.12.1 shipped, drang is **a credible Windows-native daily-driver**, and the *engine* is done:
 register VM + tree-walker fallback, closures/lambdas/pipelines, a full HOF toolkit,
 first-class functions *and builtins*, errors-as-values (`?` / `//`), first-class RE2
 regexes (`qr//`), real concurrency (`spawn` / channels / `pmap`), external-command
 orchestration with Job-Object tree kill and resource caps, process polling and live stdin,
 files/paths, JSON, CSV, an HTTP client, one-liner `-n`/`-p` mode with `BEGIN`/`END`,
 `dispatch` task-running, modules (`use`), value-level immutability (frozen constants + module
-exports), an expanded standard library (~120 builtins + a drang prelude), `drang fmt --fix`,
+exports), 161 direct builtins + 15 higher-order forms + a 25-function prelude, `drang fmt --fix`,
 local preflight/fuzz verification, and standalone `build`. What remains is narrower than it was:
 **(1)** a few `[LOCKED]`-in-DESIGN-but-unbuilt language features (char ranges, `match`/
 `switch`), and **(2)** stdlib edges a glue language occasionally reaches for. The earlier
@@ -131,9 +137,9 @@ recorded deferral — not a bug).
 
 ## (a) Language core / semantics
 
-These four are marked `[LOCKED]` in DESIGN (design ratified) but are **not built** —
-the dangerous class, because the manual implied them. The manual is now honest about
-them (they're listed under "Not Yet"); building them is tracked here.
+This table preserves the decision history as well as the remaining work. Completed or
+rejected rows stay recorded; the two still-unbuilt language items are explicitly marked
+`NOT-STARTED` and are listed honestly under the manual's “Not Yet” section.
 
 | Item | Why it matters | Size | Status |
 |------|----------------|------|--------|
@@ -184,7 +190,7 @@ new value types the maps/arrays already stand in for. 🧱 = wall (blocks real w
 | ~~Rebuild + release/version discipline~~ | **DONE in 0.7**: version-stamped binary, signed Windows release asset, and the local preflight is the release gate | S | ✅ DONE |
 | ~~`drang test`~~ | **DONE**: `example` assertions (`== `/ truthy / `fails`, a no-op in normal runs) + the runner (per-file pass/fail, non-zero exit) + **golden-output snapshots** (sibling `.golden`, captured-stdout diff, `--update` to re-bless) | M | ✅ DONE |
 | ~~`drang fmt` (+ `--fix` = the edition/migration mechanism)~~ | **DONE**: faithful canonical formatter (comments preserved + drop-guard, surface-faithful via AST provenance, width-100 wrapping); CLI `-w`/`--check`/`-l`/`-d`; `--fix` now ships real 0.7 migration rules for the vocabulary freeze | L | ✅ DONE |
-| `-i` in-place edit for one-liner mode | `perl -i -pe` is the canonical text-munge | S–M | DEFERRED |
+| ~~`-i` in-place edit for one-liner mode~~ | **DONE in 0.9** — `perl -i -pe`-style editing with an optional backup suffix | S–M | ✅ DONE |
 | REPL polish / editor support / LSP | real adoption infra, but one-user project — low priority | L | NOT-STARTED |
 
 ## (d) Runtime & quality

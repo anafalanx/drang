@@ -31,14 +31,14 @@
 <main id="main" class="wrap">
 
   <section class="hero">
-    <span class="pill">v0.12.0 · released</span>
+    <span class="pill">v0.12.1 · released</span>
     <h1 class="mark">drang</h1>
     <p class="tag">Let your agents conduct the orchestra.</p>
     <p class="lede">Real parallelism and process orchestration in a scripting language
       that ships as a single binary.</p>
     <p class="etym">drang: Dutch/German for drive, urge, momentum.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.12.0</a>
+      <a class="btn primary" href="https://github.com/anafalanx/drang/releases/latest">Download v0.12.1</a>
       <a class="btn ghost" href="https://github.com/anafalanx/drang">View on GitHub</a>
     </div>
   </section>
@@ -53,7 +53,7 @@
     </div>
     <div class="demo-view">
 <pre class="code slide" data-label="Real parallelism, no GIL"><span class="c"># map -> pmap and the same work fans out across</span>
-<span class="c"># every core, lock-free — no GIL, no pool to wire up</span>
+<span class="c"># a bounded worker pool — no GIL, no pool to wire up</span>
 [1, 2, 3, 4]
     <span class="op">|&gt;</span> pmap(|$n| $n * $n)   <span class="c"># [1, 4, 9, 16]</span></pre>
 <pre class="code slide" data-label="Pipelines" hidden><span class="c"># square the evens, then sum them</span>
@@ -72,7 +72,7 @@ say($"hi $user, you have $msgs new")   <span class="c"># hi ada, you have 3 new<
 <pre class="code slide" data-label="Glue built in" hidden><span class="c"># shell out, capture stdout, fail loud on error;</span>
 <span class="c"># a timeout tree-kills the whole job</span>
 $v := capture(exe(), "--version")
-say($"running $v")   <span class="c"># running drang 0.12.0</span></pre>
+say($"running $v")   <span class="c"># running drang 0.12.1</span></pre>
 <pre class="code slide" data-label="No orphaned processes" hidden><span class="c"># workers under {supervise: true} die with the parent:</span>
 <span class="c"># the whole tree, on Windows (clean exit, crash, or kill)</span>
 ["api", "worker", "cron"]
@@ -100,9 +100,9 @@ say($cfg.host)   <span class="c"># every mismatch reported with its path, or the
   <div class="grid">
     <div class="feat">
       <h3>Real parallelism, no GIL</h3>
-      <p>Change <code>map</code> to <code>pmap</code> and the same code fans out lock-free across
-        every core &mdash; goroutine-backed, no GIL, no thread pool to wire up. It scales with the
-        work, not against a lock.</p>
+      <p>Change <code>map</code> to <code>pmap</code> and the same code fans out across a bounded,
+        process-wide worker pool &mdash; goroutine-backed and without a GIL. Mutable captures are
+        snapshotted for each callback; explicit handles remain shared coordination points.</p>
     </div>
     <div class="feat">
       <h3>Glue built in</h3>
@@ -111,13 +111,14 @@ say($cfg.host)   <span class="c"># every mismatch reported with its path, or the
     </div>
     <div class="feat">
       <h3>One static binary</h3>
-      <p>No runtime, nothing to install, fast startup. Format with <code>drang fmt</code>, test
-        with <code>drang test</code>, ship with <code>drang build</code>.</p>
+      <p>No runtime, nothing to install, fast startup. Source and payloads are bounded and
+        validated; format with <code>drang fmt</code>, test with <code>drang test</code>, and ship
+        atomically with <code>drang build</code>.</p>
     </div>
     <div class="feat">
       <h3>Errors are values</h3>
-      <p>Failures are ordinary values: <code>?</code> propagates, <code>//</code> recovers. A
-        dropped error is a deliberate choice, not an accident.</p>
+      <p>Failures are ordinary values: <code>?</code> propagates, <code>//</code> recovers.
+        Migration lint flags directly recognizable discarded, boolean, and output Err uses.</p>
     </div>
     <div class="feat">
       <h3>Perl's soul, not its warts</h3>
@@ -126,7 +127,7 @@ say($cfg.host)   <span class="c"># every mismatch reported with its path, or the
     </div>
     <div class="feat">
       <h3>Batteries, curated</h3>
-      <p>Modules, frozen immutability, ~120 builtins and a prelude, JSON &amp; CSV, dates,
+      <p>Modules, frozen immutability, 161 direct builtins, 15 higher-order forms and a 25-function prelude, JSON &amp; CSV, dates,
         hashing, a persistent store. Broad, not a kitchen sink.</p>
     </div>
     <div class="feat">
@@ -159,7 +160,7 @@ say($cfg.host)   <span class="c"># every mismatch reported with its path, or the
     <a href="manual.html">Manual</a>
     <a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a>
   </nav>
-  <div>MIT licensed · drang 0.12.0</div>
+  <div>MIT licensed · drang 0.12.1</div>
 </footer>
 
 <script src="site.js"></script>

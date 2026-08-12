@@ -9,9 +9,9 @@ import (
 	"github.com/anafalanx/drang/internal/value"
 )
 
-// Scalar conversions. str/bool/type never fail — every value has a display, a
-// truthiness, and a type name; float fails (a catchable Err) only on an unparseable
-// string or a non-number. int() lives in eval.go beside the original conversions.
+// Scalar conversions. bool/type never fail; str can return a resource Err when a
+// rendered container would exceed the whole-string ceiling. float fails (a
+// catchable Err) on an unparseable string or a non-number. int() lives in eval.go.
 // Following the builtin convention: wrong arity aborts, bad values are catchable.
 
 // builtinStr renders any value as its display string (the say form): numbers, bools,
@@ -20,7 +20,11 @@ func builtinStr(args []value.Value) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("str expects 1 argument, got %d", len(args))
 	}
-	return value.MakeStr(args[0].Display()), nil
+	s, ok := displayWithin(args[0], maxStringBytes)
+	if !ok {
+		return value.MakeErr(fmt.Sprintf("str: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	return value.MakeStr(s), nil
 }
 
 // builtinFloat converts to a float: an int widens, a float passes through, a string is

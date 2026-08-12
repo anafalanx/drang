@@ -228,6 +228,29 @@ func TestHTTPRequestHeaders(t *testing.T) {
 	}
 }
 
+func TestHTTPRejectsInvalidMethodAndHeadersBeforeNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		opts   value.Value
+	}{
+		{"empty method", "", value.MakeMap()},
+		{"method whitespace", "GET NOW", value.MakeMap()},
+		{"header name", "GET", mkMap(value.MakeStr("headers"), mkMap(value.MakeStr("Bad Header"), value.MakeStr("x")))},
+		{"header newline", "GET", mkMap(value.MakeStr("headers"), mkMap(value.MakeStr("X-Test"), value.MakeStr("ok\r\nInjected: yes")))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := builtinHTTP([]value.Value{value.MakeStr(tc.method), value.MakeStr("http://127.0.0.1:1/"), tc.opts})
+			if err != nil {
+				t.Fatalf("builtinHTTP hard error: %v", err)
+			}
+			if !r.IsErr() {
+				t.Fatalf("invalid request = %s, want catchable Err", r.Display())
+			}
+		})
+	}
+}
+
 func TestHTTPTransportErrorIsErr(t *testing.T) {
 	// connection refused on a closed port -> catchable Err, not a crash or a value
 	r := mustGet(t, "http://127.0.0.1:1/", mkMap(value.MakeStr("timeout"), value.MakeInt(2000)))

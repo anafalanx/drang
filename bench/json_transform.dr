@@ -4,12 +4,13 @@ $names := ["alice", "bob", "carol", "dave"]
 $n := 120000
 $seed := 12345
 $recs := []
+# Fixed-size setup remains below the collection cap; keep propagation overhead out of this benchmark.
 for $i in 1..$n {
 	$seed = ($seed * 1103515245 + 12345) % 2147483648
 	$name := $names[$seed % 4]
 	$seed = ($seed * 1103515245 + 12345) % 2147483648
 	$score := $seed % 1000
-	push($recs, {id: $i, name: $name, score: $score})
+	push($recs, {id: $i, name: $name, score: $score})  # lint:ignore err-discard
 }
 $s := to_json($recs)
 $back := from_json($s)

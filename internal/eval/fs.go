@@ -7,8 +7,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -37,6 +40,123 @@ func twoStrings(name string, args []value.Value) (string, string, error) {
 	return args[0].AsStr(), args[1].AsStr(), nil
 }
 
+// filesystemEntryBudget bounds directory enumeration before the Go filepath
+// helpers can materialize an arbitrarily wide directory. filepath.Glob and
+// filepath.WalkDir both read and sort a whole directory internally; using
+// File.ReadDir in bounded batches lets drang reject the next entry at the
+// collection ceiling while retaining at most limit+1 DirEntry values.
+type filesystemEntryBudget struct {
+	limit    int
+	used     int
+	limitErr error
+}
+
+func newFilesystemEntryBudget(limit int, limitErr error) *filesystemEntryBudget {
+	if limit < 0 {
+		limit = 0
+	}
+	return &filesystemEntryBudget{limit: limit, limitErr: limitErr}
+}
+
+// readDirBounded reads one directory in bounded batches and returns its entries
+// in the same lexical name order as os.ReadDir. The budget is shared across a
+// complete glob/walk/copy operation, so neither a single wide directory nor a
+// broad tree can move an unbounded amount of directory metadata into memory.
+func readDirBounded(name string, budget *filesystemEntryBudget) ([]fs.DirEntry, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	remaining := budget.limit - budget.used
+	capacity := remaining
+	if capacity > 256 {
+		capacity = 256
+	}
+	if capacity < 0 {
+		capacity = 0
+	}
+	entries := make([]fs.DirEntry, 0, capacity)
+	for {
+		remaining = budget.limit - budget.used
+		want := 256
+		if remaining < want {
+			want = remaining + 1 // one extra entry is the bounded overflow signal
+		}
+		if want < 1 {
+			want = 1
+		}
+		batch, readErr := f.ReadDir(want)
+		if len(batch) > remaining {
+			return nil, budget.limitErr
+		}
+		budget.used += len(batch)
+		entries = append(entries, batch...)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+			return entries, readErr
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
+}
+
+// walkDirBounded is filepath.WalkDir with bounded directory reads. It keeps the
+// public WalkDir callback/SkipDir behavior and lexical depth-first order, but
+// treats a budget breach as an operation error rather than offering it to the
+// callback (whose normal read-error policy might otherwise skip it).
+func walkDirBounded(root string, budget *filesystemEntryBudget, fn fs.WalkDirFunc) error {
+	d, err := os.Lstat(root)
+	if err != nil {
+		err = fn(root, nil, err)
+	} else {
+		err = walkDirNodeBounded(root, fs.FileInfoToDirEntry(d), budget, fn)
+	}
+	if err == filepath.SkipDir || err == filepath.SkipAll {
+		return nil
+	}
+	return err
+}
+
+func walkDirNodeBounded(name string, d fs.DirEntry, budget *filesystemEntryBudget, fn fs.WalkDirFunc) error {
+	if err := fn(name, d, nil); err != nil || !d.IsDir() {
+		if err == filepath.SkipDir && d.IsDir() {
+			return nil
+		}
+		return err
+	}
+
+	entries, err := readDirBounded(name, budget)
+	if err != nil {
+		if err == budget.limitErr {
+			return err
+		}
+		// Match WalkDir: report an unreadable directory to the callback a
+		// second time and let it choose whether to stop or skip the subtree.
+		if callbackErr := fn(name, d, err); callbackErr != nil {
+			if callbackErr == filepath.SkipDir {
+				return nil
+			}
+			return callbackErr
+		}
+	}
+
+	for _, child := range entries {
+		childName := filepath.Join(name, child.Name())
+		if err := walkDirNodeBounded(childName, child, budget, fn); err != nil {
+			if err == filepath.SkipDir {
+				break
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 // --- path helpers: pure string transforms (never touch the disk); a non-string arg is a catchable Err ---
 
 // builtinJoin renders an array's elements and joins them with a separator:
@@ -61,13 +181,33 @@ func builtinJoin(args []value.Value) (value.Value, error) {
 // sibling — the two were one polymorphic builtin before the pre-1.0 split.)
 func builtinPathJoin(args []value.Value) (value.Value, error) {
 	parts := make([]string, len(args))
+	total := int64(0)
+	havePart := false
 	for i, a := range args {
 		if a.Tag() != value.Str {
 			return value.MakeNil(), typeErrf("path_join: argument %d must be a string, got %s", i+1, a.TypeName())
 		}
 		parts[i] = a.AsStr()
+		if parts[i] == "" {
+			continue // filepath.Join ignores empty elements
+		}
+		if havePart {
+			if total >= maxStringBytes {
+				return value.MakeErr(fmt.Sprintf("path_join: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+			}
+			total++ // worst-case native separator inserted between adjacent parts
+		}
+		if !sizeFits(total, len(parts[i])) {
+			return value.MakeErr(fmt.Sprintf("path_join: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+		}
+		total += int64(len(parts[i]))
+		havePart = true
 	}
-	return value.MakeStr(filepath.Join(parts...)), nil
+	out := filepath.Join(parts...)
+	if int64(len(out)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("path_join: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
+	return value.MakeStr(out), nil
 }
 
 func builtinDirname(args []value.Value) (value.Value, error) {
@@ -116,6 +256,9 @@ func builtinAbsPath(args []value.Value) (value.Value, error) {
 	if e != nil {
 		return value.MakeErr("abs_path "+p+": "+e.Error(), 1), nil
 	}
+	if int64(len(a)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("abs_path: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
+	}
 	return value.MakeStr(a), nil
 }
 
@@ -155,6 +298,9 @@ func builtinRel(args []value.Value) (value.Value, error) {
 	r, e := filepath.Rel(base, target)
 	if e != nil {
 		return value.MakeErr("rel "+base+" -> "+target+": "+e.Error(), 1), nil
+	}
+	if int64(len(r)) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("rel: result exceeds the %d-byte string limit", maxStringBytes), 1), nil
 	}
 	return value.MakeStr(r), nil
 }
@@ -248,7 +394,7 @@ func builtinMtime(args []value.Value) (value.Value, error) {
 	if e != nil {
 		return value.MakeErr("mtime "+p+": "+e.Error(), 1), nil
 	}
-	return value.MakeFloat(float64(fi.ModTime().UnixNano()) / 1e9), nil
+	return value.MakeFloat(epochSeconds(fi.ModTime())), nil
 }
 
 func builtinNewer(args []value.Value) (value.Value, error) {
@@ -338,18 +484,150 @@ func builtinGlob(args []value.Value) (value.Value, error) {
 // globMatch returns sorted matches for a pattern. No match is an empty list (not
 // an error). A `**` segment matches across directories via a WalkDir fallback.
 func globMatch(pattern string) ([]string, error) {
-	if !strings.Contains(pattern, "**") {
-		m, err := filepath.Glob(filepath.FromSlash(pattern))
+	hasDoublestar := strings.Contains(pattern, "**")
+	if hasDoublestar && globSegmentCount(pattern) > 256 {
+		return nil, fmt.Errorf("glob pattern exceeds the 256-segment complexity limit")
+	}
+	limitErr := fmt.Errorf("glob scan exceeds the %d-entry collection limit", maxCollectionItems)
+	budget := newFilesystemEntryBudget(maxCollectionItems, limitErr)
+	var (
+		matches []string
+		err     error
+	)
+	if hasDoublestar {
+		matches, err = doublestarGlobBounded(pattern, budget)
+	} else {
+		matches, err = filepathGlobBounded(filepath.FromSlash(pattern), budget, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > maxCollectionItems {
+		return nil, fmt.Errorf("glob result exceeds the %d-element collection limit", maxCollectionItems)
+	}
+	sort.Strings(matches)
+	return matches, nil
+}
+
+// globSegmentCount counts without splitting, so a hostile separator-only
+// pattern is rejected before allocating a slice proportional to its length.
+func globSegmentCount(pattern string) int {
+	segments := 1
+	for i := 0; i < len(pattern); i++ {
+		if os.IsPathSeparator(pattern[i]) {
+			segments++
+			if segments > 256 {
+				return segments
+			}
+		}
+	}
+	return segments
+}
+
+func globHasMeta(name string) bool {
+	magic := `*?[`
+	if runtime.GOOS != "windows" {
+		magic = `*?[\`
+	}
+	return strings.ContainsAny(name, magic)
+}
+
+// filepathGlobBounded follows filepath.Glob's recursive component semantics,
+// including Windows drive-relative and UNC cleaning, but enumerates each
+// directory through readDirBounded instead of Readdirnames(-1).
+func filepathGlobBounded(pattern string, budget *filesystemEntryBudget, depth int) ([]string, error) {
+	// Match filepath.Glob's recursion guard (CVE-2022-30632) without imposing
+	// the stricter doublestar segment ceiling on a long but literal path.
+	const pathSeparatorsLimit = 10_000
+	if depth == pathSeparatorsLimit {
+		return nil, filepath.ErrBadPattern
+	}
+	if _, err := filepath.Match(pattern, ""); err != nil {
+		return nil, err
+	}
+	if !globHasMeta(pattern) {
+		if _, err := os.Lstat(pattern); err != nil {
+			return nil, nil
+		}
+		return []string{pattern}, nil
+	}
+
+	dir, file := filepath.Split(pattern)
+	volumeLen, dir := cleanGlobDir(dir)
+	if !globHasMeta(dir[volumeLen:]) {
+		return globDirectoryBounded(dir, file, nil, budget)
+	}
+	if dir == pattern {
+		return nil, filepath.ErrBadPattern
+	}
+	dirs, err := filepathGlobBounded(dir, budget, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	var matches []string
+	for _, candidateDir := range dirs {
+		matches, err = globDirectoryBounded(candidateDir, file, matches, budget)
 		if err != nil {
 			return nil, err
 		}
-		sort.Strings(m)
-		return m, nil
 	}
-	return doublestarGlob(pattern)
+	return matches, nil
 }
 
-func doublestarGlob(pattern string) ([]string, error) {
+func cleanGlobDir(dir string) (volumeLen int, cleaned string) {
+	if runtime.GOOS != "windows" {
+		switch dir {
+		case "":
+			return 0, "."
+		case string(filepath.Separator):
+			return 0, dir
+		default:
+			return 0, dir[:len(dir)-1]
+		}
+	}
+
+	volumeLen = len(filepath.VolumeName(dir))
+	switch {
+	case dir == "":
+		return 0, "."
+	case volumeLen+1 == len(dir) && os.IsPathSeparator(dir[len(dir)-1]):
+		return volumeLen + 1, dir
+	case volumeLen == len(dir) && len(dir) == 2:
+		return volumeLen, dir + "."
+	default:
+		if volumeLen >= len(dir) {
+			volumeLen = len(dir) - 1
+		}
+		return volumeLen, dir[:len(dir)-1]
+	}
+}
+
+func globDirectoryBounded(dir, pattern string, matches []string, budget *filesystemEntryBudget) ([]string, error) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return matches, nil // filepath.Glob ignores inaccessible/non-directory candidates
+	}
+	entries, err := readDirBounded(dir, budget)
+	if err != nil {
+		if err == budget.limitErr {
+			return nil, err
+		}
+		// filepath.Glob ignores a Readdirnames error but still considers any
+		// partial names returned before it.
+	}
+	for _, entry := range entries {
+		matched, matchErr := filepath.Match(pattern, entry.Name())
+		if matchErr != nil {
+			return matches, matchErr
+		}
+		if matched {
+			matches = append(matches, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return matches, nil
+}
+
+func doublestarGlobBounded(pattern string, budget *filesystemEntryBudget) ([]string, error) {
 	pat := filepath.ToSlash(pattern)
 	segs := strings.Split(pat, "/")
 	// Validate wildcard segments so a malformed pattern is an Err here too,
@@ -368,9 +646,9 @@ func doublestarGlob(pattern string) ([]string, error) {
 	}
 	rootPath := filepath.FromSlash(root)
 	var matches []string
-	_ = filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, err error) error {
+	walkErr := walkDirBounded(rootPath, budget, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries
+			return nil // missing/unreadable roots and entries are no matches
 		}
 		if p == rootPath {
 			return nil // never yield the walk root itself ("." or the bare base dir)
@@ -380,6 +658,9 @@ func doublestarGlob(pattern string) ([]string, error) {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
 	sort.Strings(matches)
 	return matches, nil
 }
@@ -405,6 +686,9 @@ func globBase(pat string) string {
 func matchSegs(ps, ns []string) bool {
 	ps = collapseDoublestars(ps)
 	np, nn := len(ps), len(ns)
+	if np > 256 || nn > 4096 || np+1 > maxCollectionItems/(nn+1) {
+		return false
+	}
 	memo := make([]uint8, (np+1)*(nn+1)) // per (pi, ni): 0 unknown, 1 no, 2 yes
 	var rec func(pi, ni int) bool
 	rec = func(pi, ni int) bool {
@@ -465,8 +749,12 @@ func builtinReadDir(args []value.Value) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	entries, e := os.ReadDir(p)
+	limitErr := fmt.Errorf("read_dir: result exceeds the %d-element collection limit", maxCollectionItems)
+	entries, e := readDirBounded(p, newFilesystemEntryBudget(maxCollectionItems, limitErr))
 	if e != nil {
+		if e == limitErr {
+			return value.MakeErr(e.Error(), 1), nil
+		}
 		return value.MakeErr("read_dir "+p+": "+e.Error(), 1), nil
 	}
 	out := make([]value.Value, len(entries))
@@ -511,8 +799,13 @@ func builtinWalk(args []value.Value) (value.Value, error) {
 		return value.MakeErr("walk "+p+": not a readable directory", 1), nil
 	}
 	out := []value.Value{}
-	filepath.WalkDir(p, func(path string, d os.DirEntry, werr error) error {
+	errWalkLimit := fmt.Errorf("walk result exceeds the %d-element collection limit", maxCollectionItems)
+	budget := newFilesystemEntryBudget(maxCollectionItems, errWalkLimit)
+	walkErr := walkDirBounded(p, budget, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil {
+			if path == p {
+				return werr
+			}
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir // unreadable subdir: skip its subtree, keep going
 			}
@@ -525,7 +818,7 @@ func builtinWalk(args []value.Value) (value.Value, error) {
 		var mt float64
 		if info, ierr := d.Info(); ierr == nil {
 			sz = info.Size()
-			mt = float64(info.ModTime().UnixNano()) / 1e9
+			mt = epochSeconds(info.ModTime())
 		}
 		m := value.MakeMap()
 		om := m.Obj().(*value.OrderedMap)
@@ -538,6 +831,9 @@ func builtinWalk(args []value.Value) (value.Value, error) {
 		out = append(out, m)
 		return nil
 	})
+	if walkErr != nil {
+		return value.MakeErr("walk "+p+": "+walkErr.Error(), 1), nil
+	}
 	return value.MakeArray(out), nil
 }
 
@@ -546,9 +842,9 @@ func builtinWalk(args []value.Value) (value.Value, error) {
 // maxReadFileBytes backstops read_file, which loads the whole file into one string. Without
 // a bound an unbounded source — a multi-gigabyte file, or a named pipe / device that never
 // reaches EOF — could exhaust memory; past this the read is a catchable Err, not an OOM. The
-// limit is generous (1 GiB) so it never trips on ordinary data files. A var, not a const, only
-// so a test can lower it; production never reassigns it.
-var maxReadFileBytes int64 = 1 << 30
+// 64 MiB matches the interpreter's other whole-value limits; larger data should use the
+// streaming one-liner/process paths. A var, not a const, only so a test can lower it.
+var maxReadFileBytes int64 = 64 << 20
 
 func builtinReadFile(args []value.Value) (value.Value, error) {
 	p, err := oneString("read_file", args)
@@ -581,7 +877,6 @@ func builtinWriteFile(args []value.Value) (value.Value, error) {
 		return value.MakeNil(), typeErrf("write_file: path must be a string")
 	}
 	p := args[0].AsStr()
-	content := args[1].Display() // any value renders via its display; a string carries raw bytes
 	appendMode := false
 	if len(args) == 3 {
 		if args[2].Tag() != value.Map {
@@ -589,13 +884,20 @@ func builtinWriteFile(args []value.Value) (value.Value, error) {
 		}
 		m := args[2].Obj().(*value.OrderedMap)
 		for _, k := range m.Keys() {
-			if k.Display() != "append" {
+			if k.Tag() != value.Str || k.AsStr() != "append" {
 				return value.MakeErr("write_file: unknown option "+k.Display(), 1), nil
 			}
 		}
 		if v, ok := m.Get(value.MakeStr("append")); ok {
-			appendMode = v.Truthy()
+			if v.Tag() != value.Bool {
+				return value.MakeErr("write_file: append must be a bool, got "+v.TypeName(), 1), nil
+			}
+			appendMode = v.AsBool()
 		}
+	}
+	content, ok := displayWithin(args[1], maxStringBytes) // strings stay raw; other values use Display form
+	if !ok {
+		return value.MakeErr(fmt.Sprintf("write_file: content exceeds the %d-byte string limit", maxStringBytes), 1), nil
 	}
 	if appendMode {
 		f, e := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -704,10 +1006,176 @@ func copyPath(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateCopyTarget(src, dst, fi); err != nil {
+		return err
+	}
 	if fi.IsDir() {
 		return copyTree(src, dst)
 	}
 	return copyFile(src, dst, fi.Mode())
+}
+
+// validateCopyTarget rejects aliases of the source and directory descendants
+// before copyFile can truncate anything or copyTree can manufacture its own
+// destination while walking. Handle-based canonicalization resolves Windows
+// symlinks and junctions; canonicalProspectivePath additionally resolves the
+// nearest existing target ancestor so `alias-to-src/new-dir` is recognized
+// even though new-dir does not exist yet. os.SameFile covers hard links and any
+// other filesystem identity alias not visible from path spelling alone.
+func validateCopyTarget(src, dst string, srcInfo os.FileInfo) error {
+	if dstLinkInfo, err := os.Lstat(dst); err == nil {
+		// A staged rename over a symlink would replace the link object, while
+		// the historical direct open followed it. Refuse that ambiguous target
+		// rather than unexpectedly writing outside dst's lexical location or
+		// silently changing which filesystem object is replaced.
+		if err := rejectCopyDestinationRedirect(dst, dstLinkInfo); err != nil {
+			return err
+		}
+		dstInfo, err := os.Stat(dst)
+		if err != nil {
+			return err
+		}
+		if os.SameFile(srcInfo, dstInfo) {
+			return fmt.Errorf("source and destination are the same filesystem object")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	srcCanonical, err := canonicalExistingPath(src)
+	if err != nil {
+		return err
+	}
+	dstCanonical, err := canonicalProspectivePath(dst)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(srcCanonical, dstCanonical)
+	if err == nil && rel == "." {
+		return fmt.Errorf("source and destination resolve to the same path")
+	}
+	if srcInfo.IsDir() && err == nil && pathIsSameOrWithin(rel) {
+		return fmt.Errorf("destination is inside the source directory")
+	}
+	return nil
+}
+
+func canonicalExistingPath(name string) (string, error) {
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := finalWindowsPath(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+var getFinalPathNameByHandleW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetFinalPathNameByHandleW")
+
+// finalWindowsPath resolves every reparse-point component through an opened
+// handle. filepath.EvalSymlinks only recognizes entries whose FileMode has
+// ModeSymlink; current Go deliberately exposes Windows junctions as generic
+// reparse points instead, so EvalSymlinks alone can leave a junction alias
+// unresolved.
+func finalWindowsPath(abs string) (string, error) {
+	name := abs
+	if !strings.HasPrefix(name, `\\?\`) && !strings.HasPrefix(name, `\??\`) {
+		if strings.HasPrefix(name, `\\`) {
+			name = `\\?\UNC\` + name[2:]
+		} else {
+			name = `\\?\` + name
+		}
+	}
+	namep, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return "", err
+	}
+	h, err := syscall.CreateFile(
+		namep,
+		0,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer syscall.CloseHandle(h)
+
+	buf := make([]uint16, 512)
+	for {
+		n, _, callErr := getFinalPathNameByHandleW.Call(
+			uintptr(h),
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(len(buf)),
+			0, // FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+		)
+		if n == 0 {
+			if callErr != syscall.Errno(0) {
+				return "", callErr
+			}
+			return "", fmt.Errorf("GetFinalPathNameByHandleW failed for %s", abs)
+		}
+		if n >= uintptr(len(buf)) {
+			// Windows paths are limited to 32,767 UTF-16 code units. Bound the
+			// retry even if an unexpected provider reports a corrupt size.
+			if n > 32_767 {
+				return "", fmt.Errorf("resolved path is too long: %s", abs)
+			}
+			buf = make([]uint16, int(n)+1)
+			continue
+		}
+		resolved := syscall.UTF16ToString(buf[:n])
+		switch {
+		case strings.HasPrefix(resolved, `\\?\UNC\`):
+			resolved = `\\` + resolved[len(`\\?\UNC\`):]
+		case strings.HasPrefix(resolved, `\\?\`):
+			resolved = resolved[len(`\\?\`):]
+		}
+		return resolved, nil
+	}
+}
+
+// canonicalProspectivePath resolves as much of a possibly nonexistent path as
+// the filesystem currently knows, then reattaches its missing tail. Walking to
+// the nearest existing ancestor is what makes a destination beneath a junction
+// or symlink comparable to the canonical source directory.
+func canonicalProspectivePath(name string) (string, error) {
+	current, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	current = filepath.Clean(current)
+	var missing []string
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := canonicalExistingPath(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("cannot resolve destination path %s", name)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func pathIsSameOrWithin(rel string) bool {
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -719,36 +1187,186 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	// Stage in the destination directory. Opening dst with O_TRUNC first would
+	// destroy an existing good file if the source read or destination write then
+	// failed; a same-directory rename makes the successful replacement atomic.
+	out, err := os.CreateTemp(filepath.Dir(dst), ".drang-copy-*")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	tmpName := out.Name()
+	committed := false
+	defer func() {
+		_ = out.Close()
+		if !committed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := copyFileData(out, in); err != nil {
 		return err
 	}
-	return out.Close()
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
+// A variable only so a focused test can inject a mid-copy I/O error and prove
+// that staged copying preserves the previous destination. Production never
+// reassigns it.
+var copyFileData = io.Copy
+
 func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+	// copyPath classifies the source with Stat, so an explicitly supplied
+	// directory symlink or junction is a directory source. Resolve that root
+	// once, then retain the walker's normal non-following behavior for links
+	// encountered inside the tree.
+	srcRoot, err := canonicalExistingPath(src)
+	if err != nil {
+		return err
+	}
+
+	// Work below the resolved destination root. This preserves an explicitly
+	// supplied path through an ancestor alias, while ensuring that child checks
+	// and writes use one stable lexical tree rather than repeatedly traversing
+	// that alias.
+	dstRoot, err := canonicalProspectivePath(dst)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dstRoot, 0o755); err != nil {
+		return err
+	}
+	if err := ensureCopyTreeDirectory(dstRoot, "."); err != nil {
+		return err
+	}
+
+	limitErr := fmt.Errorf("copy traversal exceeds the %d-entry collection limit", maxCollectionItems)
+	budget := newFilesystemEntryBudget(maxCollectionItems, limitErr)
+	return walkDirBounded(srcRoot, budget, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, p)
+		rel, err := filepath.Rel(srcRoot, p)
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		if filepath.IsAbs(rel) || !pathIsSameOrWithin(rel) {
+			return fmt.Errorf("source traversal escaped its root: %s", p)
+		}
+		if rel == "." {
+			if !d.IsDir() {
+				return fmt.Errorf("source directory changed during copy: %s", src)
+			}
+			return nil
+		}
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return ensureCopyTreeDirectory(dstRoot, rel)
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
+		if isWindowsRedirect(info) {
+			followed, err := os.Stat(p)
+			if err != nil {
+				return err
+			}
+			if followed.IsDir() {
+				return fmt.Errorf("source tree contains a directory symlink or junction: %s", p)
+			}
+		}
+		if err := ensureCopyTreeDirectory(dstRoot, filepath.Dir(rel)); err != nil {
+			return err
+		}
+		target := filepath.Join(dstRoot, rel)
+		if targetInfo, err := os.Lstat(target); err == nil {
+			if err := rejectCopyDestinationRedirect(target, targetInfo); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 		return copyFile(p, target, info.Mode())
 	})
+}
+
+// ensureCopyTreeDirectory validates every already-existing component from the
+// destination root to rel before creating or using the directory. In
+// particular, MkdirAll must not be used for merge children: it follows a
+// pre-existing symlink or Windows junction and could redirect a later file
+// copy outside dst (or back into src).
+func ensureCopyTreeDirectory(dstRoot, rel string) error {
+	cleanRel := filepath.Clean(rel)
+	if filepath.IsAbs(cleanRel) || !pathIsSameOrWithin(cleanRel) {
+		return fmt.Errorf("invalid destination-relative path %s", rel)
+	}
+
+	current := dstRoot
+	components := []string(nil)
+	if cleanRel != "." {
+		components = strings.Split(cleanRel, string(filepath.Separator))
+	}
+	for i := -1; i < len(components); i++ {
+		if i >= 0 {
+			component := components[i]
+			if component == "" || component == "." || component == ".." {
+				return fmt.Errorf("invalid destination path component %q", component)
+			}
+			current = filepath.Join(current, component)
+		}
+
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
+				return err
+			}
+			info, err = os.Lstat(current)
+		}
+		if err != nil {
+			return err
+		}
+		if err := rejectCopyDestinationRedirect(current, info); err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("destination path component is not a directory: %s", current)
+		}
+	}
+	return nil
+}
+
+// rejectCopyDestinationRedirect rejects all Windows reparse points, not only
+// entries that Go exposes as ModeSymlink. Name-surrogate reparse points include
+// directory junctions and mount points; following any of them during a merge
+// would move the mutation outside the destination tree. Rejecting the broader
+// attribute is intentionally conservative for other reparse-backed entries.
+func rejectCopyDestinationRedirect(name string, info os.FileInfo) error {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("destination is a symlink or junction: %s", name)
+	}
+	if isWindowsRedirect(info) {
+		return fmt.Errorf("destination is a reparse point: %s", name)
+	}
+	return nil
+}
+
+func isWindowsRedirect(info os.FileInfo) bool {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	data, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	return ok && data.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 func builtinSize(args []value.Value) (value.Value, error) {

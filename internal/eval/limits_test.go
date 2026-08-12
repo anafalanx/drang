@@ -1,16 +1,39 @@
 package eval
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/anafalanx/drang/internal/value"
 )
+
+const activeProcessLimitHelperEnv = "DRANG_ACTIVE_PROCESS_LIMIT_HELPER"
+
+// activeProcessLimitHelper runs as the root of a capped job. It attempts one direct CreateProcess
+// via os/exec, then stays alive long enough that only the monitor's reaction to the kernel's
+// ACTIVE_PROCESS_LIMIT notification can finish the test promptly.
+func activeProcessLimitHelper() {
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = replaceEnv(os.Environ(), activeProcessLimitHelperEnv, "")
+	if err := cmd.Start(); err == nil {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}
+	time.Sleep(20 * time.Second)
+}
 
 // TestLimitOptionsRejectBadValues: a negative or unknown resource-limit option is a wrong-usage
 // abort (a Go error), like the other exec options.
 func TestLimitOptionsRejectBadValues(t *testing.T) {
 	for _, src := range []string{
+		`run("cmd","/c","echo x",{timeout: 9223372036854775807})`,
 		`run("cmd","/c","echo x",{max_cpu: -5})`,
 		`run("cmd","/c","echo x",{max_memory: -1})`,
+		`run("cmd","/c","echo x",{max_cpu: 9223372036854775807})`,
+		`run("cmd","/c","echo x",{max_job_procs: 4294967296})`,
 		`run("cmd","/c","echo x",{max_bogus: 1})`,
 	} {
 		for _, vm := range []bool{false, true} {
@@ -61,5 +84,33 @@ func TestStartAcceptsLimits(t *testing.T) {
 say(is_err(await($p)))`)
 	if strings.TrimSpace(out) != "true" {
 		t.Errorf("expected the started process's CPU cap to breach and await to surface it, got %q", out)
+	}
+}
+
+// An active-process cap rejects the attempted grandchild but does not itself guarantee that the
+// root exits. The monitor must classify that event, terminate the tree, and report the configured
+// cap rather than leaving the root in its trailing ping loop.
+func TestActiveProcessLimitEventTerminatesJob(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(activeProcessLimitHelperEnv, "1")
+	opts := value.MakeMap()
+	om := opts.Obj().(*value.OrderedMap)
+	om.Set(value.MakeStr("max_job_procs"), value.MakeInt(1))
+	om.Set(value.MakeStr("timeout"), value.MakeInt(5000)) // test backstop; the event should win
+	result, err := builtinCapture([]value.Value{
+		value.MakeStr(exe),
+		opts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsErr() || result.ErrCode() != 137 {
+		t.Fatalf("active-process breach = %s, want Err code 137", result.Display())
+	}
+	if !strings.Contains(result.ErrMsg(), "process-count") {
+		t.Fatalf("active-process breach did not name its limit: %q", result.ErrMsg())
 	}
 }

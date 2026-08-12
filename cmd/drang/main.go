@@ -27,7 +27,112 @@ import (
 
 // version is the release string. Declared as a var so a build can stamp it via
 // -ldflags "-X main.version=...".
-var version = "0.12.0"
+var version = "0.12.1"
+
+type cliOptions struct {
+	mode                        string
+	streamN, streamP, autoSplit bool
+	inPlace                     bool
+	programForced               bool
+	backupSuffix, action        string
+	rest                        []string
+}
+
+// parseCLIOptions consumes only leading interpreter options. Once the program
+// token is reached, every remaining token belongs to the script. `--` permits a
+// program filename beginning with a dash.
+func parseCLIOptions(argv []string) (cliOptions, error) {
+	opts := cliOptions{mode: "run"}
+	args := expandOneLinerCluster(argv)
+	seen := map[string]bool{}
+	explicitMode := ""
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			opts.programForced = true
+			i++
+			break
+		}
+		if a == "-e" || !strings.HasPrefix(a, "-") {
+			break
+		}
+		setOnce := func(key string) error {
+			if seen[key] {
+				return fmt.Errorf("option %s specified more than once", key)
+			}
+			seen[key] = true
+			return nil
+		}
+		switch a {
+		case "--tokens", "--ast", "--run":
+			if explicitMode != "" {
+				return cliOptions{}, fmt.Errorf("options %s and %s are mutually exclusive", explicitMode, a)
+			}
+			explicitMode = a
+			opts.mode = strings.TrimPrefix(a, "--")
+		case "-n":
+			if err := setOnce("-n"); err != nil {
+				return cliOptions{}, err
+			}
+			opts.streamN = true
+		case "-p":
+			if err := setOnce("-p"); err != nil {
+				return cliOptions{}, err
+			}
+			opts.streamP = true
+		case "-a":
+			if err := setOnce("-a"); err != nil {
+				return cliOptions{}, err
+			}
+			opts.autoSplit = true
+		case "--repl":
+			if i != 0 || i+1 != len(args) {
+				return cliOptions{}, fmt.Errorf("--repl must be used by itself")
+			}
+			opts.action = "repl"
+		case "--version", "-V":
+			if i != 0 || i+1 != len(args) {
+				return cliOptions{}, fmt.Errorf("%s must be used by itself", a)
+			}
+			opts.action = "version"
+		case "--help", "-h":
+			if i != 0 || i+1 != len(args) {
+				return cliOptions{}, fmt.Errorf("%s must be used by itself", a)
+			}
+			opts.action = "help"
+		default:
+			// -i / -i<suffix> (e.g. -i.bak): edit input files in place.
+			if strings.HasPrefix(a, "-i") {
+				if err := setOnce("-i"); err != nil {
+					return cliOptions{}, err
+				}
+				opts.inPlace = true
+				opts.backupSuffix = strings.TrimPrefix(a, "-i")
+			} else {
+				return cliOptions{}, fmt.Errorf("unknown option %q (use -- before a program filename beginning with '-')", a)
+			}
+		}
+		i++
+		if opts.action != "" {
+			break
+		}
+	}
+	opts.rest = args[i:]
+	if opts.action != "" {
+		return opts, nil
+	}
+	if opts.mode != "run" && (opts.streamN || opts.streamP) {
+		return cliOptions{}, fmt.Errorf("--%s cannot be combined with -n or -p", opts.mode)
+	}
+	if opts.autoSplit && !opts.streamN && !opts.streamP {
+		return cliOptions{}, fmt.Errorf("-a requires -n or -p")
+	}
+	if opts.inPlace && !opts.streamP {
+		return cliOptions{}, fmt.Errorf("-i requires -p (in-place edit writes each file with the -p output)")
+	}
+	return opts, nil
+}
 
 func main() {
 	// Make the console render drang's UTF-8 output correctly (no-op when output is
@@ -65,62 +170,38 @@ func main() {
 		return
 	}
 
-	mode := "run"
-	args := expandOneLinerCluster(os.Args[1:])
-	var streamN, streamP, autoSplit, inPlace bool
-	var backupSuffix string
-
-	// Consume leading mode flags up to the first non-flag (the program token).
-	i := 0
-loop:
-	for i < len(args) {
-		switch args[i] {
-		case "--tokens":
-			mode = "tokens"
-		case "--ast":
-			mode = "ast"
-		case "--run":
-			mode = "run"
-		case "-n":
-			streamN = true
-		case "-p":
-			streamP = true
-		case "-a":
-			autoSplit = true
-		case "--repl":
-			repl()
-			os.Exit(0)
-		case "--version", "-V":
-			fmt.Println("drang", version)
-			os.Exit(0)
-		case "--help", "-h":
-			help()
-			os.Exit(0)
-		default:
-			// -i / -i<suffix> (e.g. -i.bak): edit input files in place (see runStream).
-			if strings.HasPrefix(args[i], "-i") {
-				inPlace = true
-				backupSuffix = args[i][len("-i"):]
-			} else {
-				break loop
-			}
-		}
-		i++
+	opts, err := parseCLIOptions(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "drang:", err)
+		os.Exit(2)
 	}
-
-	rest := args[i:]
+	switch opts.action {
+	case "repl":
+		repl()
+		return
+	case "version":
+		fmt.Println("drang", version)
+		return
+	case "help":
+		help()
+		return
+	}
+	mode := opts.mode
+	streamN, streamP, autoSplit, inPlace := opts.streamN, opts.streamP, opts.autoSplit, opts.inPlace
+	backupSuffix := opts.backupSuffix
+	rest := opts.rest
 	var src, origin string
 	var argv []string
 	var baseDir string // base directory for relative `use` paths: a file's dir, else cwd
 	switch {
-	case len(rest) >= 1 && rest[0] == "-e":
+	case inlineSourceSelected(opts):
 		if len(rest) < 2 {
 			usage()
 		}
 		src, origin = rest[1], "<-e>"
 		argv = rest[2:]
 	case len(rest) >= 1:
-		b, err := os.ReadFile(rest[0])
+		b, err := readFileLimited(rest[0], maxSourceBytes, "source file")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "drang:", err)
 			os.Exit(1)
@@ -145,7 +226,7 @@ loop:
 			repl()
 			return
 		}
-		b, err := io.ReadAll(os.Stdin)
+		b, err := readAllLimited(os.Stdin, maxSourceBytes, "stdin source")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "drang:", err)
 			os.Exit(1)
@@ -153,16 +234,12 @@ loop:
 		src, origin = string(b), "<stdin>"
 	}
 
-	if inPlace && !streamP {
-		fmt.Fprintln(os.Stderr, "drang: -i requires -p (in-place edit writes each file with the -p output)")
-		os.Exit(2)
-	}
 	if inPlace && len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "drang: -i requires one or more input files (cannot edit stdin in place)")
 		os.Exit(2)
 	}
 	if streamN || streamP {
-		runStream(src, origin, argv, streamP, autoSplit, inPlace, backupSuffix)
+		runStream(src, origin, argv, baseDir, streamP, autoSplit, inPlace, backupSuffix)
 		return
 	}
 
@@ -174,6 +251,10 @@ loop:
 	default:
 		runProgram(src, origin, argv, baseDir)
 	}
+}
+
+func inlineSourceSelected(opts cliOptions) bool {
+	return len(opts.rest) >= 1 && !opts.programForced && opts.rest[0] == "-e"
 }
 
 // expandOneLinerCluster splits a leading combined one-liner flag (e.g. -ne, -ane)
@@ -256,6 +337,7 @@ Options:
   --tokens       print the token stream instead of running
   --version, -V  print the version and exit
   --help, -h     print this help and exit
+  --             end interpreter options (for a program path beginning with '-')
 
 With no program on an interactive terminal, drang starts the REPL; with piped
 input it runs stdin as the program. Arguments after the program are exposed to
@@ -297,7 +379,7 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 	if reportParseErrors(p, origin) {
 		os.Exit(1)
 	}
-	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
+	eval.WarnProgramLints(prog, src, origin, p.Comments(), os.Stderr)
 	env := eval.NewEnv()
 	env.SetModuleDir(baseDir)
 	env.SetScriptPath(origin) // for store()'s default .drang/<script>.store location
@@ -312,15 +394,23 @@ func runProgram(src, origin string, argv []string, baseDir string) {
 
 // runStream parses src and runs it in one-liner stream mode (-n/-p): once per input
 // line, with the post-program args (argv) used as input files (stdin if none).
-func runStream(src, origin string, argv []string, autoPrint, autoSplit, inPlace bool, backupSuffix string) {
+func runStream(src, origin string, argv []string, baseDir string, autoPrint, autoSplit, inPlace bool, backupSuffix string) {
 	eval.ApplyStartupGCPolicy() // one-shot run: relaxed GC + a soft memory backstop (see mempolicy.go)
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if reportParseErrors(p, origin) {
 		os.Exit(1)
 	}
-	eval.WarnDuplicateTopFns(prog, origin, os.Stderr)
-	opts := eval.StreamOpts{AutoPrint: autoPrint, AutoSplit: autoSplit, InPlace: inPlace, BackupSuffix: backupSuffix, Files: argv}
+	eval.WarnProgramLints(prog, src, origin, p.Comments(), os.Stderr, eval.LintOptions{AutoPrint: autoPrint})
+	opts := eval.StreamOpts{
+		AutoPrint:    autoPrint,
+		AutoSplit:    autoSplit,
+		InPlace:      inPlace,
+		BackupSuffix: backupSuffix,
+		Files:        argv,
+		ModuleDir:    baseDir,
+		ScriptPath:   origin,
+	}
 	if err := eval.RunStream(prog, argv, opts); err != nil {
 		if code, ok := eval.ExitRequested(err); ok {
 			os.Exit(code) // explicit exit()/die(): no error report
@@ -351,11 +441,19 @@ func sourceLine(src string, line int) string {
 	if line < 1 {
 		return ""
 	}
-	lines := strings.Split(src, "\n")
-	if line > len(lines) {
-		return ""
+	start := 0
+	for current := 1; current < line; current++ {
+		relEnd := strings.IndexByte(src[start:], '\n')
+		if relEnd < 0 {
+			return ""
+		}
+		start += relEnd + 1
 	}
-	return strings.TrimRight(lines[line-1], "\r")
+	end := len(src)
+	if relEnd := strings.IndexByte(src[start:], '\n'); relEnd >= 0 {
+		end = start + relEnd
+	}
+	return strings.TrimRight(src[start:end], "\r")
 }
 
 // interactive reports whether stdin is a terminal (vs a pipe or file), which is how we tell an
@@ -388,7 +486,11 @@ func replLoop(in io.Reader, out io.Writer) {
 			fmt.Fprint(out, "drang> ")
 		}
 		if !sc.Scan() {
-			fmt.Fprintln(out)
+			if err := sc.Err(); err != nil {
+				fmt.Fprintf(out, "\nerror reading input: %v\n", err)
+			} else {
+				fmt.Fprintln(out)
+			}
 			return
 		}
 		line := sc.Text()
@@ -430,7 +532,12 @@ func replLoop(in io.Reader, out io.Writer) {
 			continue
 		}
 		if v.Tag() != value.Nil {
-			fmt.Fprintln(out, v.Display())
+			s, err := eval.DisplayValue(v)
+			if err != nil {
+				replError(out, src, err)
+				continue
+			}
+			fmt.Fprintln(out, s)
 		}
 	}
 }
@@ -491,8 +598,9 @@ func runTests(args []string) {
 	}
 	totalPass, totalFail := 0, 0
 	fileErr := false // a file that couldn't be read/parsed/run (vs a test failure)
+	exitRequested, requestedExitCode := false, 0
 	for _, path := range paths {
-		src, err := os.ReadFile(path)
+		src, err := readFileLimited(path, maxSourceBytes, "test source file")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "drang test: %v\n", err)
 			fileErr = true
@@ -504,6 +612,7 @@ func runTests(args []string) {
 			fileErr = true
 			continue
 		}
+		eval.WarnProgramLints(prog, string(src), path, p.Comments(), os.Stderr)
 		// A golden check runs when a sibling .golden exists, or when --update is set
 		// (which then (re)writes it).
 		golden := strings.TrimSuffix(path, ".dr") + ".golden"
@@ -512,9 +621,16 @@ func runTests(args []string) {
 		}
 		pass, fail, lerr := eval.RunExamples(prog, filepath.Dir(path), path, golden, update, os.Stdout)
 		if lerr != nil {
-			reportRuntimeError(string(src), path, lerr)
-			fileErr = true
-			continue
+			if code, ok := eval.ExitRequested(lerr); ok {
+				exitRequested = true
+				// Test every requested file, but keep the first non-zero explicit
+				// status so the aggregate result is deterministic.
+				requestedExitCode = firstNonzeroTestExit(requestedExitCode, code)
+			} else {
+				reportRuntimeError(string(src), path, lerr)
+				fileErr = true
+				continue
+			}
 		}
 		fmt.Printf("%s: %d passed, %d failed\n", path, pass, fail)
 		totalPass += pass
@@ -523,10 +639,27 @@ func runTests(args []string) {
 	if len(paths) > 1 {
 		fmt.Printf("total: %d passed, %d failed\n", totalPass, totalFail)
 	}
+	if code := testRunExitCode(fileErr, totalFail, exitRequested, requestedExitCode); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func firstNonzeroTestExit(current, next int) int {
+	if current == 0 && next != 0 {
+		return next
+	}
+	return current
+}
+
+func testRunExitCode(fileErr bool, totalFail int, exitRequested bool, requestedExitCode int) int {
 	switch {
 	case fileErr:
-		os.Exit(2)
+		return 2
+	case exitRequested && requestedExitCode != 0:
+		return requestedExitCode
 	case totalFail > 0:
-		os.Exit(1)
+		return 1
+	default:
+		return 0
 	}
 }

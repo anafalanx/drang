@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,16 +19,59 @@ import (
 // the module's export record, reached via $u.foo() / $u.CONST. A module is any .dr
 // file; its top-level user functions (.foo) and constants ($CONST) are its exports —
 // mutable top-level state is rejected, so exports are functions and constants only.
-// Modules load once per process (cached by canonical path), are diamond-safe, and
+// Modules load once per Env session (cached by canonical path), are diamond-safe, and
 // import cycles error. Flat-merge is NOT transitive (a name a module itself merged is
 // not re-exported). Exports are deeply immutable: collectExports freezes the record
 // and everything reachable from it (value.Freeze), so the one shared cached copy is
 // safe to read across importers and a mutation fails loudly instead of poisoning it.
 
-var (
-	moduleMu    sync.Mutex
-	moduleCache = map[string]value.Value{} // canonical path -> export record (successful loads only)
-)
+const maxModuleBytes int64 = 64 << 20 // 64 MiB
+
+// moduleRegistry scopes both completed cache entries and in-flight promises to one top-level Env
+// session. Snapshots (pmap/spawn) share it so concurrent imports single-flight, while independent
+// runs cannot observe each other's module state or retain their closures indefinitely.
+type moduleRegistry struct {
+	mu      sync.Mutex
+	entries map[string]*moduleEntry
+}
+
+func newModuleRegistry() *moduleRegistry {
+	return &moduleRegistry{entries: make(map[string]*moduleEntry)}
+}
+
+// readFileBounded reads at most limit+1 bytes. The sentinel byte detects oversized inputs without
+// first allocating for the entire file; callers use it for untrusted module/store snapshots.
+func readFileBounded(path string, limit int64, what string) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("%s has an invalid read limit", what)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%s exceeds the %d-byte limit", what, limit)
+	}
+	return b, nil
+}
+
+// moduleEntry is both the successful-load cache entry and the promise shared by concurrent first
+// importers. waitsFor contains only temporary edges between in-flight entries; it lets us reject a
+// cross-goroutine A->B / B->A import cycle instead of deadlocking two single-flight waiters.
+// All fields except the closed done channel are guarded by the owning moduleRegistry.mu.
+type moduleEntry struct {
+	canon    string
+	done     chan struct{}
+	exports  value.Value
+	err      error
+	loading  bool
+	waitsFor map[*moduleEntry]bool
+}
 
 // evalUse implements the captured form `$u := use("path")`: it returns the module's
 // export record, or a catchable Err if the module fails to load. An exit()/die()
@@ -104,29 +148,107 @@ func loadModule(pathArg string, env *Env) (value.Value, error) {
 	if env.loading(canon) {
 		return value.MakeNil(), fmt.Errorf("import cycle through %s", canon)
 	}
-	moduleMu.Lock()
-	cached, ok := moduleCache[canon]
-	moduleMu.Unlock()
-	if ok {
-		return cached, nil
+	registry := env.moduleRegistry()
+	registry.mu.Lock()
+	if entry, ok := registry.entries[canon]; ok {
+		if !entry.loading {
+			exports, lerr := entry.exports, entry.err
+			registry.mu.Unlock()
+			return exports, lerr
+		}
+
+		// If this import is itself running as a module leader, record the wait edge and
+		// reject a cross-goroutine cycle before parking on entry.done.
+		current := currentModuleEntry(env)
+		edgeAdded := false
+		if current != nil && current.loading {
+			if moduleWaitPath(entry, current, map[*moduleEntry]bool{}) {
+				registry.mu.Unlock()
+				return value.MakeNil(), fmt.Errorf("concurrent import cycle through %s", canon)
+			}
+			if current.waitsFor == nil {
+				current.waitsFor = map[*moduleEntry]bool{}
+			}
+			current.waitsFor[entry] = true
+			edgeAdded = true
+		}
+		done := entry.done
+		registry.mu.Unlock()
+		<-done
+		if edgeAdded {
+			registry.mu.Lock()
+			delete(current.waitsFor, entry)
+			registry.mu.Unlock()
+		}
+		return entry.exports, entry.err
 	}
-	exports, lerr := runModule(canon, env)
-	if lerr == nil { // cache only successful loads, so a failure never poisons later imports
-		moduleMu.Lock()
-		moduleCache[canon] = exports
-		moduleMu.Unlock()
+
+	entry := &moduleEntry{canon: canon, done: make(chan struct{}), loading: true}
+	registry.entries[canon] = entry
+	registry.mu.Unlock()
+
+	exports, lerr := runModule(canon, env, entry)
+	registry.mu.Lock()
+	entry.exports, entry.err, entry.loading = exports, lerr, false
+	entry.waitsFor = nil
+	close(entry.done)
+	if lerr != nil && registry.entries[canon] == entry {
+		delete(registry.entries, canon) // a failed load never poisons a later retry
 	}
+	registry.mu.Unlock()
 	return exports, lerr
+}
+
+// moduleRegistry returns the registry attached to the nearest top-level environment. NewEnv always
+// installs one; walking the chain keeps child scopes lightweight while snapshots retain the same
+// session registry.
+func (e *Env) moduleRegistry() *moduleRegistry {
+	for s := e; s != nil; s = s.parent {
+		if s.modules != nil {
+			return s.modules
+		}
+	}
+	// Env values are package-private and production roots come from NewEnv. Keep synthetic test
+	// environments safe rather than panicking if one is ever introduced.
+	return newModuleRegistry()
+}
+
+// currentModuleEntry finds the lexical module load containing env, if any.
+func currentModuleEntry(env *Env) *moduleEntry {
+	for s := env; s != nil; s = s.parent {
+		if s.moduleLoad != nil {
+			return s.moduleLoad
+		}
+	}
+	return nil
+}
+
+// moduleWaitPath reports whether following in-flight wait edges from from reaches target.
+// The owning moduleRegistry.mu must be held.
+func moduleWaitPath(from, target *moduleEntry, seen map[*moduleEntry]bool) bool {
+	if from == target {
+		return true
+	}
+	if from == nil || !from.loading || seen[from] {
+		return false
+	}
+	seen[from] = true
+	for dep := range from.waitsFor {
+		if moduleWaitPath(dep, target, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 // runModule reads, parses, and runs a module file into a fresh prelude-backed env,
 // then collects its exports. The module's own top-level bindings land in modEnv (a
 // child of the prelude env), cleanly separable from prelude/seed names.
-func runModule(canon string, importerEnv *Env) (value.Value, error) {
+func runModule(canon string, importerEnv *Env, entry *moduleEntry) (value.Value, error) {
 	if fi, e := os.Stat(canon); e == nil && fi.IsDir() {
 		return value.MakeNil(), fmt.Errorf("%s is a directory, not a module file", canon)
 	}
-	src, e := os.ReadFile(canon)
+	src, e := readFileBounded(canon, maxModuleBytes, "module source")
 	if e != nil {
 		return value.MakeNil(), fmt.Errorf("cannot read %s: %v", canon, e)
 	}
@@ -135,12 +257,15 @@ func runModule(canon string, importerEnv *Env) (value.Value, error) {
 	if errs := p.Errors(); len(errs) > 0 {
 		return value.MakeNil(), fmt.Errorf("parse error in %s: %s", canon, strings.Join(errs, "; "))
 	}
-	WarnDuplicateTopFns(prog, canon, stderr) // a module is a file too; surface last-wins shadowing in it
+	WarnProgramLints(prog, string(src), canon, p.Comments(), stderr) // modules receive the same file diagnostics
 	base := NewEnv()
-	// The module's functions charge overflow-guard fires to the IMPORTING run's
-	// counter, which the entry points reset — a module universe of its own would
-	// accumulate caught overflows forever (the module cache outlives runs). A cached
-	// module keeps its first importer's counter; reset-on-fire bounds that staleness.
+	base.modules = importerEnv.moduleRegistry()
+	base.stores = importerEnv.storeSession()
+	base.exec = importerEnv.executionContext()
+	base.strand = importerEnv.executionStrand()
+	// The module's functions charge overflow-guard fires to the importing session's
+	// counter, which program entry points reset. A private counter on this fresh module
+	// env would otherwise bypass the caller's runaway-recursion budget.
 	if c := importerEnv.stormCounter(); c != nil {
 		base.overflowFires = c
 	}
@@ -151,6 +276,7 @@ func runModule(canon string, importerEnv *Env) (value.Value, error) {
 	modEnv := base.child()
 	modEnv.moduleDir = filepath.Dir(canon)
 	modEnv.loadingChain = importerEnv.chainWith(canon)
+	modEnv.moduleLoad = entry
 	if err := RunProgramVM(prog, modEnv); err != nil {
 		if _, ok := ExitRequested(err); ok {
 			return value.MakeNil(), err // exit()/die() during import — propagate, do not catch

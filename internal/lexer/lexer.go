@@ -14,6 +14,7 @@
 package lexer
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/anafalanx/drang/internal/token"
@@ -31,16 +32,29 @@ type Comment struct {
 
 // Lexer scans source text one token at a time.
 type Lexer struct {
-	src      string
-	pos      int  // offset of l.ch within src
-	rd       int  // offset of the next byte to read
-	ch       byte // current byte; 0 means end of input
-	line     int
-	col      int
-	lastKind token.Kind   // kind of the previous emitted token (for terminator insertion)
-	brackets []token.Kind // open-bracket stack: a newline terminates only when the innermost is '{' (or none)
-	comments []Comment    // line comments, captured as trivia for the formatter (side-table)
+	src                       string
+	pos                       int  // offset of l.ch within src
+	rd                        int  // offset of the next byte to read
+	ch                        byte // current byte; 0 means end of input
+	line                      int
+	col                       int
+	lastKind                  token.Kind   // kind of the previous emitted token (for terminator insertion)
+	brackets                  []token.Kind // open-bracket stack: a newline terminates only when the innermost is '{' (or none)
+	comments                  []Comment    // line comments, captured as trivia for the formatter (side-table)
+	commentOverflow           bool         // the side-table hit its source-sized entry ceiling
+	overflowReported          bool
+	overflowLine, overflowCol int
+	delimiterOverflow         bool
 }
+
+// Every captured comment costs a small struct in addition to its source bytes.
+// A legal source is capped at 64 MiB, but a "#\n" flood could otherwise expand
+// into tens of millions of Comment records before the parser's parse-work budget
+// has anything to count. One million matches the parser's parse-work ceiling and
+// remains far beyond a useful source file.
+var maxLexerComments = 1_000_000
+
+const maxLexerBrackets = 512
 
 // Comments returns the line comments captured so far. It is complete once the input
 // has been fully tokenized (e.g. after the parser has consumed the program).
@@ -87,7 +101,15 @@ func (l *Lexer) peek2() byte {
 
 // Next returns the next token, inserting NEWLINE terminators where appropriate.
 func (l *Lexer) Next() token.Token {
+	if l.delimiterOverflow {
+		return token.Token{Kind: token.EOF, Line: l.line, Col: l.col}
+	}
 	sawNL := l.skipTrivia()
+	if l.commentOverflow && !l.overflowReported {
+		l.overflowReported = true
+		l.lastKind = token.ILLEGAL
+		return token.Token{Kind: token.ILLEGAL, Lit: "source exceeds the " + strconv.Itoa(maxLexerComments) + "-comment limit", Line: l.overflowLine, Col: l.overflowCol}
+	}
 	if sawNL && l.newlinesSignificant() && terminates(l.lastKind) {
 		l.lastKind = token.NEWLINE
 		return token.Token{Kind: token.NEWLINE, Line: l.line, Col: l.col}
@@ -95,6 +117,11 @@ func (l *Lexer) Next() token.Token {
 	tok := l.scan()
 	switch tok.Kind {
 	case token.LPAREN, token.LBRACKET, token.LBRACE:
+		if len(l.brackets) >= maxLexerBrackets {
+			l.delimiterOverflow = true
+			l.lastKind = token.ILLEGAL
+			return token.Token{Kind: token.ILLEGAL, Lit: "delimiter nesting exceeds the 512-level limit", Line: tok.Line, Col: tok.Col}
+		}
 		l.brackets = append(l.brackets, tok.Kind)
 	case token.RPAREN, token.RBRACKET, token.RBRACE:
 		if len(l.brackets) > 0 {
@@ -365,7 +392,14 @@ func (l *Lexer) skipTrivia() bool {
 			for l.ch != '\n' && l.ch != 0 {
 				l.advance()
 			}
-			l.comments = append(l.comments, Comment{Text: l.src[startOff:l.pos], Line: startLine, Col: startCol})
+			if len(l.comments) < maxLexerComments {
+				l.comments = append(l.comments, Comment{Text: l.src[startOff:l.pos], Line: startLine, Col: startCol})
+			} else if !l.commentOverflow {
+				// Keep scanning without retaining more side-table entries. Next
+				// emits one ILLEGAL token so parsing/formatting fail normally.
+				l.commentOverflow = true
+				l.overflowLine, l.overflowCol = startLine, startCol
+			}
 		default:
 			return sawNL
 		}
@@ -436,7 +470,9 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 	if l.ch == '\n' {
 		l.advance() // first body line
 	}
-	var lines []string
+	bodyLine, bodyCol := l.line, l.col
+	var body strings.Builder
+	commonIndent := -1
 	terminated := false
 	for l.ch != 0 {
 		text := l.readLineRaw() // leaves l.ch at the '\n' (or 0)
@@ -448,7 +484,17 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 			terminated = true // leave l.ch at the terminator's '\n' -> next scan emits NEWLINE
 			break
 		}
-		lines = append(lines, text)
+		if dedent {
+			trimmed := strings.TrimLeft(text, " \t")
+			if trimmed != "" {
+				lead := len(text) - len(trimmed)
+				if commonIndent < 0 || lead < commonIndent {
+					commonIndent = lead
+				}
+			}
+		}
+		body.WriteString(text)
+		body.WriteByte('\n')
 		if l.ch == '\n' {
 			l.advance()
 		}
@@ -456,14 +502,22 @@ func (l *Lexer) readHeredoc(line, col int) token.Token {
 	if !terminated {
 		return bad("unterminated heredoc <<" + tag)
 	}
-	body := assembleHeredoc(lines, dedent)
+	bodyText := body.String()
+	if dedent && commonIndent > 0 {
+		bodyText = dedentHeredocBody(bodyText, commonIndent)
+	}
+	nextCol := 1
+	if dedent && commonIndent > 0 {
+		bodyCol += commonIndent
+		nextCol += commonIndent
+	}
 	switch {
 	case raw:
-		return token.Token{Kind: token.RAWSTR, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.RAWSTR, Lit: bodyText, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: nextCol}
 	case interp:
-		return token.Token{Kind: token.ISTRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.ISTRING, Lit: bodyText, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: nextCol}
 	default:
-		return token.Token{Kind: token.STRING, Lit: body, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.STRING, Lit: bodyText, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: nextCol}
 	}
 }
 
@@ -488,35 +542,28 @@ func (l *Lexer) readLineRaw() string {
 	return strings.TrimRight(b.String(), "\r")
 }
 
-// assembleHeredoc joins body lines, each terminated by a newline (so a non-empty
-// body ends in "\n"; no body lines yields ""). For <<~ it strips the smallest
-// leading indentation shared by the non-blank lines.
-func assembleHeredoc(lines []string, dedent bool) string {
-	if dedent {
-		indent := -1
-		for _, ln := range lines {
-			t := strings.TrimLeft(ln, " \t")
-			if t == "" {
-				continue // blank lines don't constrain the indent
-			}
-			if lead := len(ln) - len(t); indent < 0 || lead < indent {
-				indent = lead
-			}
+// dedentHeredocBody strips up to indent leading spaces or tabs from every body
+// line while preserving all line endings and other bytes.
+func dedentHeredocBody(body string, indent int) string {
+	var out strings.Builder
+	out.Grow(len(body))
+	lineStart := true
+	removed := 0
+	for i := 0; i < len(body); i++ {
+		b := body[i]
+		if lineStart && removed < indent && (b == ' ' || b == '\t') {
+			removed++
+			continue
 		}
-		if indent > 0 {
-			for i, ln := range lines {
-				if len(ln) >= indent {
-					lines[i] = ln[indent:]
-				} else {
-					lines[i] = strings.TrimLeft(ln, " \t")
-				}
-			}
+		out.WriteByte(b)
+		if b == '\n' {
+			lineStart = true
+			removed = 0
+		} else {
+			lineStart = false
 		}
 	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n") + "\n"
+	return out.String()
 }
 
 // terminates reports whether a token of kind k can end a statement, and thus
@@ -588,6 +635,7 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 	closeCh, _ := quoteOpener(open) // caller verified it opens
 	paired := open != closeCh
 	l.advance() // past the opener
+	bodyLine, bodyCol := l.line, l.col
 	var b strings.Builder
 	depth := 1
 	for l.ch != 0 {
@@ -608,9 +656,9 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 	content := b.String()
 	switch id {
 	case "qw":
-		return token.Token{Kind: token.QW, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.QW, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: 1}
 	case "q":
-		return token.Token{Kind: token.RAWSTR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.RAWSTR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: 1}
 	case "qr":
 		flags, ok := l.readRegexFlags()
 		if !ok {
@@ -619,9 +667,9 @@ func (l *Lexer) readQuoteLike(id string, line, col int) token.Token {
 		if flags != "" {
 			content = "(?" + flags + ")" + content // bake flags as Go inline flags
 		}
-		return token.Token{Kind: token.QR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.QR, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: 1}
 	default: // qq
-		return token.Token{Kind: token.STRING, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col}
+		return token.Token{Kind: token.STRING, Lit: content, Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: 1}
 	}
 }
 
@@ -656,6 +704,7 @@ func (l *Lexer) readNumber(line, col int) token.Token {
 func (l *Lexer) readString(line, col int) token.Token {
 	start := l.pos // the opening quote, for the verbatim Raw span
 	l.advance()    // consume opening quote
+	bodyLine, bodyCol := l.line, l.col
 	var b strings.Builder
 	for l.ch != '"' && l.ch != 0 {
 		if l.ch == '\\' {
@@ -675,7 +724,7 @@ func (l *Lexer) readString(line, col int) token.Token {
 		return token.Token{Kind: token.ILLEGAL, Lit: "unterminated string", Line: line, Col: col}
 	}
 	l.advance() // consume closing quote
-	return token.Token{Kind: token.STRING, Lit: b.String(), Raw: l.src[start:l.pos], Line: line, Col: col}
+	return token.Token{Kind: token.STRING, Lit: b.String(), Raw: l.src[start:l.pos], Line: line, Col: col, BodyLine: bodyLine, BodyCol: bodyCol, BodyNext: 1}
 }
 
 // readRawSingle reads a '...' raw string: a true alias of q{...}. The body runs to the

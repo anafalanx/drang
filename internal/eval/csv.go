@@ -3,8 +3,10 @@ package eval
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -45,6 +47,9 @@ func builtinFromCSV(args []value.Value) (value.Value, error) {
 	}
 	if args[0].Tag() != value.Str {
 		return value.MakeNil(), fmt.Errorf("from_csv expects a string, got %s", args[0].TypeName())
+	}
+	if int64(len(args[0].AsStr())) > maxStringBytes {
+		return value.MakeErr(fmt.Sprintf("from_csv: input exceeds the %d-byte string limit", maxStringBytes), 1), nil
 	}
 	opts, err := csvOpts("from_csv", args, fromCSVOptKeys)
 	if err != nil {
@@ -87,33 +92,165 @@ func builtinFromCSV(args []value.Value) (value.Value, error) {
 	if lenient {
 		r.FieldsPerRecord = -1 // no per-record count check
 	}
-
-	records, e := r.ReadAll()
-	if e != nil {
-		return value.MakeErr("from_csv: "+e.Error(), 1), nil
+	// Reject a single-record delimiter flood before encoding/csv allocates millions
+	// of field descriptors. The scan understands quoted fields, so separators in
+	// one legitimate quoted cell do not create a false resource-limit error.
+	if csvRecordFieldFlood(stripBOM(args[0].AsStr()), sep, comment, trim, lazy) {
+		return value.MakeErr(fmt.Sprintf("from_csv: result exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
 	}
 
-	if !header {
-		rows := make([]value.Value, len(records))
-		for i, rec := range records {
-			rows[i] = recordToArray(rec)
+	// Read incrementally rather than ReadAll: this avoids retaining both the
+	// [][]string parse tree and the converted drang graph, and lets the aggregate
+	// cell budget stop hostile input before the full result is materialized.
+	read := func() ([]string, value.Value, bool) {
+		rec, e := r.Read()
+		switch {
+		case e == io.EOF:
+			return nil, value.MakeNil(), false
+		case e != nil:
+			return nil, value.MakeErr("from_csv: "+e.Error(), 1), false
+		default:
+			return rec, value.MakeNil(), true
 		}
-		return value.MakeArray(rows), nil
 	}
-	if len(records) == 0 {
+
+	totalCells := 0
+	if !header {
+		rows := make([]value.Value, 0)
+		for {
+			rec, errv, ok := read()
+			if !ok {
+				if errv.Tag() == value.Err {
+					return errv, nil
+				}
+				return value.MakeArray(rows), nil
+			}
+			if len(rec) > maxCollectionItems-totalCells {
+				return value.MakeErr(fmt.Sprintf("from_csv: result exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
+			}
+			totalCells += len(rec)
+			rows = append(rows, recordToArray(rec))
+		}
+	}
+
+	keys, errv, ok := read()
+	if !ok {
+		if errv.Tag() == value.Err {
+			return errv, nil
+		}
 		return value.MakeArray(nil), nil // no header row -> no rows
 	}
-	keys := records[0]
+	totalCells = len(keys)
+	if totalCells > maxCollectionItems {
+		return value.MakeErr(fmt.Sprintf("from_csv: result exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
+	}
 	if !lenient {
 		if dup, ok := firstDuplicate(keys); ok {
 			return value.MakeErr(fmt.Sprintf("from_csv: duplicate header name %q (set lenient to keep the last column)", dup), 1), nil
 		}
 	}
-	rows := make([]value.Value, 0, len(records)-1)
-	for _, rec := range records[1:] {
+	rows := make([]value.Value, 0)
+	for {
+		rec, errv, ok := read()
+		if !ok {
+			if errv.Tag() == value.Err {
+				return errv, nil
+			}
+			return value.MakeArray(rows), nil
+		}
+		if len(rec) > maxCollectionItems-totalCells {
+			return value.MakeErr(fmt.Sprintf("from_csv: input exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
+		}
+		totalCells += len(rec)
+		// Lenient rows are padded to the header width. Bound the materialized
+		// maps, not just the number of fields physically present in the input.
+		if len(keys) > 0 && len(rows) >= maxCollectionItems/len(keys) {
+			return value.MakeErr(fmt.Sprintf("from_csv: result exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
+		}
 		rows = append(rows, recordToMap(keys, rec))
 	}
-	return value.MakeArray(rows), nil
+}
+
+// csvRecordFieldFlood is a non-allocating guard in front of encoding/csv.Reader.
+// It mirrors the quote boundaries that determine whether a separator creates a
+// field. Malformed strict quoting returns false because Reader will stop at that
+// quote before it can materialize a later separator flood.
+func csvRecordFieldFlood(s string, sep, comment rune, trim, lazy bool) bool {
+	fields := 1
+	fieldStart, recordStart := true, true
+	inQuote, commentLine := false, false
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRuneInString(s[i:])
+		if commentLine {
+			i += width
+			if r == '\n' {
+				fields, fieldStart, recordStart, commentLine = 1, true, true, false
+			}
+			continue
+		}
+		if inQuote {
+			if r != '"' {
+				i += width
+				continue
+			}
+			next, nextWidth := rune(0), 0
+			if i+width < len(s) {
+				next, nextWidth = utf8.DecodeRuneInString(s[i+width:])
+			}
+			if next == '"' { // doubled quote inside a quoted field
+				i += width + nextWidth
+				continue
+			}
+			closing := nextWidth == 0 || next == sep || next == '\n' || (next == '\r' && i+width+nextWidth < len(s) && s[i+width+nextWidth] == '\n')
+			if closing {
+				inQuote = false
+				i += width
+				continue
+			}
+			if !lazy {
+				return false
+			}
+			i += width // LazyQuotes treats this quote as cell data.
+			continue
+		}
+
+		if recordStart && comment != 0 && r == comment {
+			commentLine = true
+			i += width
+			continue
+		}
+		if r == '\n' {
+			fields, fieldStart, recordStart = 1, true, true
+			i += width
+			continue
+		}
+		if r == sep {
+			fields++
+			if fields > maxCollectionItems {
+				return true
+			}
+			fieldStart, recordStart = true, false
+			i += width
+			continue
+		}
+		if fieldStart {
+			if trim && unicode.IsSpace(r) {
+				recordStart = false // leading space prevents comment-line recognition
+				i += width
+				continue
+			}
+			if r == '"' {
+				inQuote, fieldStart, recordStart = true, false, false
+				i += width
+				continue
+			}
+		} else if r == '"' && !lazy {
+			return false
+		}
+		fieldStart, recordStart = false, false
+		i += width
+	}
+	return false
 }
 
 // stripBOM removes a leading UTF-8 byte-order mark (EF BB BF), which Excel and some
@@ -194,6 +331,9 @@ func builtinToCSV(args []value.Value) (value.Value, error) {
 	}
 
 	rows := args[0].Obj().(*value.Array).Elems
+	if csvShapeItems(rows, writeHeader) > maxCollectionItems {
+		return value.MakeErr(fmt.Sprintf("to_csv: input exceeds the %d-cell collection limit", maxCollectionItems), 1), nil
+	}
 	records, derr := rowsToRecords(rows, writeHeader, lenient)
 	if derr != nil {
 		return value.MakeErr("to_csv: "+derr.Error(), 1), nil
@@ -205,14 +345,60 @@ func builtinToCSV(args []value.Value) (value.Value, error) {
 			}
 		}
 	}
-	var b strings.Builder
-	w := csv.NewWriter(&b)
+	b := newLimitedStringBuilder(maxStringBytes)
+	w := csv.NewWriter(b)
 	w.Comma = sep
 	w.UseCRLF = crlf
 	if err := w.WriteAll(records); err != nil { // WriteAll flushes
 		return value.MakeErr("to_csv: "+err.Error(), 1), nil
 	}
 	return value.MakeStr(b.String()), nil
+}
+
+func csvShapeItems(rows []value.Value, writeHeader bool) int {
+	if len(rows) > maxCollectionItems {
+		return maxCollectionItems + 1
+	}
+	total := 0
+	add := func(n int) bool {
+		if n < 0 || n > maxCollectionItems-total {
+			return false
+		}
+		total += n
+		return true
+	}
+	// Record rows always materialize to the first record's full key width. In
+	// lenient mode a later sparse record is padded with empty cells, so counting
+	// only its physically present keys would let a large rectangular result pass
+	// this pre-allocation guard.
+	if len(rows) > 0 && rows[0].Tag() == value.Map {
+		width := rows[0].Obj().(*value.OrderedMap).Len()
+		if writeHeader && !add(width) {
+			return maxCollectionItems + 1
+		}
+		for range rows {
+			if !add(width) {
+				return maxCollectionItems + 1
+			}
+		}
+		return total
+	}
+	for i, row := range rows {
+		switch row.Tag() {
+		case value.Arr:
+			if !add(row.Obj().(*value.Array).Len()) {
+				return maxCollectionItems + 1
+			}
+		case value.Map:
+			n := row.Obj().(*value.OrderedMap).Len()
+			if !add(n) || (i == 0 && writeHeader && !add(n)) {
+				return maxCollectionItems + 1
+			}
+		default:
+			continue
+		}
+	}
+	return total
 }
 
 // sanitizeCSVField neutralizes a field a spreadsheet might execute as a formula. A cell that

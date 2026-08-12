@@ -11,15 +11,15 @@ const (
 	EOF
 	NEWLINE // statement terminator: inserted at significant newlines; ';' also terminates
 
-	IDENT  // bare identifier: say, foo, build (builtins & function names)
-	VAR    // $name — the single sigil; Lit holds the name without '$'
-	INT    // 123
-	FLOAT  // 1.5
+	IDENT   // bare identifier: say, foo, build (builtins & function names)
+	VAR     // $name — the single sigil; Lit holds the name without '$'
+	INT     // 123
+	FLOAT   // 1.5
 	STRING  // "...", qq{...}, <<TAG / <<"TAG" heredocs: escaped, NO interpolation
 	RAWSTR  // q{...}, '...', <<'TAG' heredocs: raw — literal, no escapes, no interpolation
 	ISTRING // $"...", $qq{...}, <<$TAG heredocs: escaped + interpolation (parser interpolates)
-	QW     // qw{...}: whitespace-split word list (parser builds an array)
-	QR     // qr{...}: compiled-regex literal (Lit = pattern, inline flags baked in)
+	QW      // qw{...}: whitespace-split word list (parser builds an array)
+	QR      // qr{...}: compiled-regex literal (Lit = pattern, inline flags baked in)
 
 	// keywords
 	FN
@@ -163,11 +163,14 @@ func (k Kind) String() string {
 
 // Token is a single lexical token with its source position.
 type Token struct {
-	Kind Kind
-	Lit  string // literal text: the string value for STRING, the name for VAR/IDENT
-	Line int
-	Col  int
-	Raw  string // verbatim source span for literals (incl. delimiters/prefix): "..", qq{..}, qr/../i, <<TAG..; "" otherwise. For the formatter only.
+	Kind     Kind
+	Lit      string // literal text: the string value for STRING, the name for VAR/IDENT
+	Line     int
+	Col      int
+	Raw      string // verbatim source span for literals (incl. delimiters/prefix): "..", qq{..}, qr/../i, <<TAG..; "" otherwise. For the formatter only.
+	BodyLine int    // source position of Lit[0] for strings; zero for non-string tokens
+	BodyCol  int    // BodyCol applies to Lit's first line
+	BodyNext int    // source column of Lit after each newline (1, or dedented heredoc indent+1)
 }
 
 var keywords = map[string]Kind{

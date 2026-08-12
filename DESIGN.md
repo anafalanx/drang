@@ -3,7 +3,7 @@ type: design
 title: drang design notes
 description: The architecture and locked design decisions behind drang — the pillars, the scope, and the rationale for what is in and out.
 tags: [drang, design, architecture, decisions]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
 # drang — Language Design
@@ -903,6 +903,16 @@ verified clean.
 
 Deferred: `<-` channel operators (sugar over the builtins); `select` over
 channels; per-task timeouts (`within(5s)`); `pfor`; a `freeze()` hatch.
+
+**0.12.1 concurrency amendment (2026-08-12).** The two implementation descriptions
+above are historical, not the current contract. `pmap` and `spawn` now deep-snapshot
+mutable closure captures, preserving aliases and cycles; mutating a captured container
+is isolated and race-free, though it is still unsuitable for deterministic accumulation
+because one pool worker may process several inputs. The `done`-channel graceful-close
+scheme was replaced by a mutex-protected FIFO waiter state machine: send/receive/close
+linearize under one channel state, while per-session runnable-strand accounting wakes
+orphaned channel and cyclic task waits with catchable Err values without a timeout.
+Channels, stores, tasks, and process handles remain deliberately shared handles.
 
 ## 25. Build progress (2026-06-26) — a steerable GC knob
 
@@ -2917,6 +2927,67 @@ miss = nil, *a question*) but the reasoning lived scattered. Assembled:
 Residual costs, accepted: no explicit-skip argument (defaults and options maps
 cover); nil can still flow indirectly (`{a: $m.missing}`) — the design never invites
 it, and `has()` exists.
+
+## Direction: drang is a lightweight scripting language with gradual assurance (2026-07-21)
+
+The identity question is settled. drang is not "one more scripting language"; it is **a
+lightweight scripting language built around gradual assurance** — establishing, as cheaply
+as the stakes allow, that a program does what it claims. Where gradual typing lets you add
+*types* incrementally, drang lets you add *trust* incrementally, along one ladder:
+
+- **Rung 0 — fail-loud runtime** (free): no coercion, overflow aborts, errors-as-values. Verification by execution.
+- **Rung 1 — `example`** (cheap): named cases.
+- **Rung 2 — `validate`** (moderate): a spec checked at the boundary where data crosses in — the soundness mechanism, not merely a shape checker.
+- **Rung 3 — property tests** (higher): invariants over generated inputs (drang's own `FuzzBackendParity` is exactly this).
+- **Rung 4 — static shape/type checking** (reserved): the same spec, checked before running.
+- **Rung 5 — proof** (horizon): the same spec, discharged for all inputs.
+
+drang already occupies rungs 0–3. The design program is to make each rung cheap, let a
+single spec **climb** the rungs (the shape you `validate` today is the shape a static checker
+uses tomorrow — one artifact, not two systems), and — the property that makes this *gradual
+verification* rather than a pile of optional checks — keep trust **sound at the boundary
+between rungs**: a checked region may rely on its assumptions because the crossing from
+unchecked code is enforced.
+
+Why this, and why now: as code authoring and then code *verification* move to machines, and
+as demand for software outruns any human's capacity to review it, the scarce resource stops
+being *writing* code and becomes *trusting* it. Agent-verifying-agent is an infinite regress
+of judgment; it terminates only in mechanically-checkable artifacts. So a language's durable
+worth becomes **how cheaply the correctness of its programs can be established mechanically**
+— which is cheapest when the language is small and analyzable (minimalism *is*
+machine-verifiability). "Cheapest path to trust, when needed" is the whole design goal.
+
+**Central discipline — lightweight must survive the ambition.** Verification machinery makes
+most languages heavy (Dafny, SPARK, Idris are not lightweight scripting languages). drang
+stays lightweight by keeping the ladder *gradual*: the bottom rung is as light as any
+scripting language, and **the assurance apparatus is invisible until invoked.** A throwaway
+script must never meet the verification machinery. An assurance feature that leaks weight into
+the simple case is mis-designed.
+
+**Speed policy — no longer chased.** Runtime speed is not a goal; it must stay *reasonable*
+(roughly: fast enough that speed is never the reason to reach for another tool for a scripting
+task). The July benchmark was ~3× CPython; the 0.12.1 mixed suite is ~1.6×, and that
+headroom is **spent on assurance** (boundary
+checks cost cycles) rather than hoarded. No further speed-motivated work — in particular, the
+register VM is no longer justified by speed. It survives on a *different* justification: the
+VM↔walker pair is differential testing (parity is an assurance mechanism, verified by
+`FuzzBackendParity`). Keep the pair for that; do not extend it for speed.
+
+**Naming.** Internally, *gradual verification* (the precise, literature-connected term — it
+extends Siek & Taha's gradual typing to specifications). For identity/public use, *gradual
+assurance* — a fail-loud check is assurance, not "verification" in the formal sense, so
+"assurance" honestly spans the whole ladder without promising proofs the upper rungs do not
+yet deliver.
+
+**Consequences for the roadmap.** Features are weighted by whether they lower the cost of
+*trust* (up) or only the cost of *writing* (down). Checkable-claim and analyzability features
+lead — the record-shape/typing decision (design it as rung 4 sharing the rung-2 `validate`
+artifact), contracts, property testing, an ignored-error lint, determinism. Authoring-comfort
+and expressiveness features follow — lazy sequences, generators, ergonomics. `match`/`switch`
+earns its place *as exhaustiveness-checked dispatch* (an assurance claim the compiler
+verifies), not merely as sugar. This supersedes the framing of drang as an orchestration tool
+(§3.0) and as an undifferentiated "general-purpose" language; general-purpose it is, but the
+*distinguishing* commitment is gradual assurance.
 
 ## Development pause (2026-07-05)
 

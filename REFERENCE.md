@@ -3,10 +3,10 @@ type: reference
 title: drang formal reference
 description: The precise specification of drang — grammar, semantics, the value and error models, and every builtin.
 tags: [drang, reference, specification]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
-# drang — Formal Reference (v0.11.0)
+# drang — Formal Reference (v0.12.1)
 
 A terse, complete specification of drang for tools and agents: grammar, semantics,
 and every builtin. No tutorial prose — for a worked, example-driven guide see
@@ -28,7 +28,7 @@ The rules a first reader is most likely to get wrong (each is verified against t
 
 - **Operators abort; builtins return an Err.** A type mismatch on an operator (`"5" + 1`), integer overflow, or divide-by-zero **aborts the program uncatchably** — `//` and `?` cannot recover it, because the failure is below the level where error values exist. A builtin handed a bad-type argument instead returns a catchable Err (`int("x")` is recoverable). A wrong argument *count* — to a builtin *or* a user function — also aborts. Rule of thumb: an operator failing is a *bug* (fix the types); a builtin failing is a *condition* (handle it with `//` / `?`).
 - **There is no `nil` literal.** You cannot write `nil` in source. Nil arises only as a value — an absent map key, a `store_get` miss, `recv` on a drained channel. Test presence with `has`, not `== nil`.
-- **String interpolation is opt-in.** `"..."` and `'...'` are literal; only `$"..."` interpolates, and it interpolates a bare `$name` only (no `${expr}`). Join strings with `~`, never `+` (`"a" + "b"` aborts — see the first rule).
+- **String interpolation is opt-in.** `"..."` and `'...'` are literal; `$"..."`, `$qq{...}`, and `<<$TAG` interpolate. Inside them, `$name` splices a variable and `${expr}` splices any expression. Join strings with `~`, never `+` (`"a" + "b"` aborts — see the first rule).
 - **`/` is always float division**, even on two ints (`10 / 4` is `2.5`); use `div()` for truncating integer division. A whole-valued float prints with no trailing `.0`, so `6 / 2` prints `3` although its type is `float`.
 - **A user function is always `.name`.** Define with `fn .f(...)`, call as `.f(...)`; a bare `f` is a builtin/keyword, `$f` is a variable holding a value. The three never collide.
 
@@ -230,7 +230,7 @@ Assignability: only `VAR`, index (`x[i]`), and field (`x.name`) are valid assign
 
 ## Semantics
 
-Formal rules for drang 0.10.0. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
+Formal rules for drang 0.12.1. Every rule below was verified against the interpreter. Terminology: *aborts* = terminates the program with a source location, uncatchable by `//` or `?`; *catchable Err* = returns a first-class `error` value recoverable with `//` and propagable with `?`.
 
 ### Value model
 
@@ -241,9 +241,11 @@ There is **no `nil` literal** (nor a `null`): a nil value only *arises* — from
 - **Immutable / value-copied**: `nil`, `bool`, `int`, `float`, `string`, `range`, `regex`, `error`. Strings are immutable (indexing reads only; `s[i] = …` is not assignment). Numbers are unboxed.
 - **Mutable / reference-semantic**: `array`, `map`. A binding holds a reference; aliasing is visible (`$b := $a; push($b, 1)` mutates the object `$a` also names). `function` values are reference/identity values (closures capturing by reference; see Functions). `chan` is intentionally shared (its deep-copy returns itself); `task`/`process` are handles.
 - **Freezing** (see Declarations): an `array`/`map` carries a `frozen` flag. Freezing is deep, idempotent, and cycle-safe, and *follows the object* — freezing a reference freezes the object every alias sees.
-- **Equality** (`==` / `!=`): structural and deep for `array`, `map`, `range` (element-by-element, insertion-order for maps). Scalars compare by value. `function`, `chan`, `task`, `process` compare by **identity**. `int` and `float` are equal when numerically equal (`1 == 1.0` is true), and collide as map keys — `1` and `1.0` are one key (the first-stored key value is kept on overwrite). Cross-container-kind comparison is `false`, not an error.
+- **Equality** (`==` / `!=`): structural and deep for `array`, `map`, `range` (element-by-element, insertion-order for maps), including cyclic and pathologically deep containers. Scalars compare by value. `function`, `chan`, `task`, `process` compare by **identity**. Mixed `int`/`float` values compare exactly without rounding the integer through `float64`: `1 == 1.0` is true, while `9007199254740993 == 9007199254740992.0` is false. Numerically equal integral keys collide (`1` and `1.0` are one key; the first-stored key value is kept on overwrite). Cross-container-kind comparison is `false`, not an error.
 - **Ordering** (`< <= > >= <=>`): numbers numerically, strings lexicographically (byte/UTF-8 order). `<=>` (spaceship) yields `-1`/`0`/`1` over numbers *and* strings. Comparing **incompatible types aborts** (e.g. `1 < "a"` → `cannot compare int and string`); it is not a catchable Err. There is no `cmp`.
-- **Display** (`str(x)`, `say`): an `int` and a whole-valued `float` render identically — `3.0` prints as `3` — so a `float` result can look like an `int`; distinguish with `type(x)`. `nil` → `nil`, `true`/`false`, an `error` → `error: <msg>`, an `array` → `[a, b, c]`, a `map` → `{k: v}`.
+- **Display** (`str(x)`, `say`): an `int` and a whole-valued `float` render identically — `3.0` prints as `3` — so a `float` result can look like an `int`; distinguish with `type(x)`. `nil` → `nil`, `true`/`false`, an `error` → `error: <msg>`, an `array` → `[a, b, c]`, a `map` → `{k: v}`. `str` accepts every value type, but rendering beyond the 64 MiB whole-string ceiling returns a catchable Err.
+
+**Safety ceilings.** Core operations that materialize a whole string are capped at 64 MiB; materialized array/map-producing operations are capped at one million items. Filesystem enumeration by `glob`, `read_dir`, `walk`, and recursive `copy` uses bounded batches and a one-million aggregate entry-scan ceiling per operation. JSON and concurrency closure snapshots additionally cap graph depth at 512. File/stdin/test/fmt/build/module source reads are capped at 64 MiB. Lexing/parsing caps retained comments at one million, delimiter and recursive-parser nesting at 512, and aggregate parse work with a shared one-million construct budget. Extremely large legal flat infix/postfix chains are still bounded by the 64 MiB source ceiling, but the parse-work budget is not exact structural-depth accounting for those iterative forms. Runtime limit breaches are catchable Err values (resource/process ceilings use code 137 where stated); oversized source/module/bundle input is rejected by the front door before execution. Streaming APIs remain the path for larger data. HTTP response bodies use their separately configurable `max_body` limit.
 
 ### Truthiness
 
@@ -298,9 +300,10 @@ An `error` (Err) is an ordinary value: a message plus an integer code. Nothing u
 
 - **`fail(msg)`** builds an Err with the given message and code **1** (default message `"failed"`; `fail` takes no code argument — non-1 codes come only from operations that carry one, chiefly subprocess exit status).
 - **`is_err(x)` / `err_code(x)` / `err_msg(x)`** inspect. On a non-error, `err_code` → `0` and `err_msg` → `""`.
-- **`expr //  fallback`** (defined-or) recovers on Err **or `nil` only**. Other falsy values (`0`, `""`, `false`, `[]`) are real results and pass through. RHS is evaluated eagerly.
+- **`expr // fallback`** (defined-or) recovers on Err **or `nil` only**. Other falsy values (`0`, `""`, `false`, `[]`) are real results and pass through. The RHS is lazy and runs only when recovery is needed.
 - **`expr?`** (propagate) short-circuits an Err out to the **nearest enclosing function boundary**, where it becomes an ordinary Err value in the caller (it does not keep unwinding). A `?` that fires at **top level** aborts the program, exiting with the Err's code (clamped to 1..255) and printing `drang: <msg>` to stderr.
 - **The builtin convention.** A wrong **argument count** to a builtin is a programmer error: a hard **abort** with a source location, uncatchable by `//`/`?` (e.g. `int(1, 2)` → `int expects 1 argument, got 2`). A wrong **argument type** or **runtime failure** in a builtin returns a **catchable Err** (e.g. `int([1,2])` → is_err true). A builtin panic is internally recovered into a catchable Err, so ordinary script input cannot crash the interpreter. *This "bad-type-is-catchable" rule is a property of builtins only — operator type mismatches abort (see Evaluation).*
+- **Migration warnings.** File run, stream, test, build, and module-load paths emit source-positioned warnings for directly recognizable hazards. `err-discard` follows a fallible result through identity-preserving operations when its value is discarded; `err-bool` marks a direct Err-capable truth/control operand; and `err-output` follows direct fallible values through nested display expressions into stringifying output/effect sinks (`interpolation`, `~`, `str`, `format`, `join`, `say`/`warn`/`die`, `write_file`, and `send_stdin`). In `-p` mode it also checks a directly fallible assignment to `$_`, whose value the stream loop automatically prints. Analysis is lexical-scope- and declaration-order-aware, but deliberately does not infer user-function return types or track variable taint across assignments. Explicit `?`, `//`, `is_err`/`err_msg`/`err_code`, equality, and values retained in collections are treated as intentional handling/data. Escape-processing `"..."`/`qq{...}` strings that look like drive/UNC paths warn as `windows-path`; prefer `q{...}`. Warnings do not change runtime behavior. Suppress a deliberate site with `# lint:ignore <code>` on that line or on a standalone line immediately above it; bare `# lint:ignore` suppresses every migration warning at the site.
 - **`exit(n)`** unwinds **everything** uncatchably (not intercepted by `//`/`?`), setting the process exit code (`n<0` clamps to 1, `n>255` to 255; `exit(0)` is deliberate success). `die(msg)` similarly aborts.
 - **Locked exit codes** (additive-only, mirrored by `err_code`): `0` success · `1` generic caught Err / `die` · `2` unknown-command dispatch · `124` timeout · `127` command could not start · `137` resource-cap breach / `kill()`.
 
@@ -315,12 +318,12 @@ An `error` (Err) is an ordinary value: a message plus an integer code. Nothing u
 
 ### Concurrency
 
-Safe *by subtraction*: frozen top-level constants + lexical-only scope + immutable strings + no shared mutable globals ⇒ lock-free parallelism.
+Concurrency crosses an isolation boundary: mutable callback captures and values are snapshotted, while channels, stores, tasks, and process handles remain explicit shared coordination points.
 
-- **`pmap(arr, fn)`** — parallel map over a bounded `NumCPU` worker pool. Same contract as `map`: array-first, arity-flex callback, results in **input order**, **fail-loud** (the first Err a callback produces becomes the whole result and stops further work). Each element is **deep-copied** to its worker, so mutating the element affects only that worker's private copy.
-- **`spawn(fn, args…)` → `task`**; **`await(task)`** blocks for the result (deep-copied out; idempotent). `spawn` deep-copies args in (copy-on-send) over a *snapshot* of the captured env. A task's error (returned, `?`-propagated, or panicked) is captured and surfaced by `await`, so `await(t)?` propagates and `await(t) // x` recovers. `await` also accepts a `process` handle from `start`.
-- **Channels**: `chan()` (unbuffered) / `chan(n)` (buffered); `send(ch, v)` blocks until received (copy-on-send; on a closed channel a **catchable Err**, never a crash); `recv(ch)` blocks, yielding `nil` once closed and drained; `recv_ok(ch)` → `[value, ok]`; `close(ch)` idempotent; `drain(ch)` collects all remaining values into an array, blocking until closed. A `send`/`recv` that could only deadlock (no counterparty, no other task) is a **catchable Err**, not an abort.
-- **Freeze-for-safety rule**: a parallel callback must be **pure** — it may read frozen top-level constants and its own (copied) params, but must not mutate shared captured state. Passing a `::=` constant container into `pmap`/`spawn` is safe (deep-frozen). Mutating a *captured mutable `:=` container* from a parallel callback is documented-undefined; collect each callback's return value instead. The language offers no shared accumulator, so the canonical racy form is largely unwriteable.
+- **`pmap(arr, fn)`** — parallel map sharing one process-wide worker budget capped at `NumCPU`. Concurrent calls divide immediately available slots; a nested/saturated call with no slot runs sequentially on its current goroutine, avoiding nested deadlock and goroutine multiplication. Same contract as `map`: array-first, arity-flex callback, results in **input order**, **fail-loud**. Elements and mutable callback captures are private snapshots.
+- **`spawn(fn, args…)` → `task`**; **`await(task)`** blocks for the result (deep-copied out; idempotent). `spawn` deep-copies args in (copy-on-send) over a *snapshot* of the captured env. At most **1,024** spawn tasks are simultaneously live process-wide; snapshot graphs are capped at depth 512/one million nodes. Resource ceilings return a catchable Err (code 137). A task's error (returned, `?`-propagated, or panicked) is captured and surfaced by `await`, so `await(t)?` propagates and `await(t) // x` recovers. A same-session task dependency cycle is detected without a timeout and returns a catchable Err rather than a native deadlock. `await` also accepts a `process` handle from `start`.
+- **Channels**: `chan()` (unbuffered) / `chan(n)` (buffered, `0 <= n <= 65,536`; invalid sizes return a catchable Err); `send(ch, v)` blocks until received (copy-on-send; on a closed channel a **catchable Err**, never a crash); `recv(ch)` blocks, yielding `nil` once closed and drained; `recv_ok(ch)` → `[value, ok]`; `close(ch)` idempotent; `drain(ch)` collects all remaining values into an array, blocking until closed. Orphan detection is state-based, with no timeout: one evaluator session counts its runnable main, accepted `spawn`, and parallel `pmap` strands, temporarily excluding channel and same-session task/pmap waiters but retaining sleep/external-I/O strands. Only when none can make language-level progress, and no operation is already entering the shared channel, are unmatched send/receive waiters and impossible task awaits woken with a **catchable Err**. Delayed same-session counterparties and an already-entering cross-context channel operation may still match normally; independent sessions are not counted as each other's runnable work.
+- **Snapshot isolation**: mutable arrays/maps reachable through a `spawn`/`pmap` closure are deep-cloned with alias/cycle preservation and cannot mutate the caller or sibling workers. A `pmap` pool worker can process multiple rows, so captured mutation is race-free but unsuitable for deterministic accumulation; return per-row values instead. Frozen `::=` values stay read-only. Channels, stores, tasks, and processes are intentionally shared synchronization/resource handles.
 
 ### Modules
 
@@ -332,8 +335,8 @@ Any `.dr` file is a module; its **exports are the top-level definitions marked `
 Resolution & rules:
 
 - Paths are **strings**; the `.dr` extension is optional. Relative paths resolve against **the importing file's directory**; for source-less entry points (`-e`, stdin, REPL, a `drang build` standalone) they resolve against the **current working directory**.
-- **Load once** per process, cached by canonical path (Windows-case-folded), so a diamond loads a shared dependency exactly once. Only successful loads are cached; a failed load re-runs.
-- **Cycles error** (`import cycle through …`), not loop.
+- **Load once per evaluation session**, cached by canonical path (Windows-case-folded), so a diamond loads a shared dependency exactly once while independent runs cannot observe or retain each other's module state. Concurrent first imports share one in-flight load. Only successful loads are cached; a failed load re-runs.
+- **Cycles error** (`import cycle through …`), including cross-worker wait cycles; they never loop or deadlock.
 - **Flat-merge is non-transitive**: a name a module itself merged is not re-exported.
 - **Collisions error**: merging a name already bound in the current scope (or defining one a `use` already merged) aborts, never silently overwrites.
 - **`exit`/`die` propagate** through loading, even through the captured `$u := use(...)` form (not downgraded to a catchable Err).
@@ -355,8 +358,8 @@ Shared conventions: `say`/`warn`/`die` join their arguments with a single space 
 
 | Builtin | Signature | Behavior | err |
 |---|---|---|---|
-| `say` | `say(x...) -> nil` | Print all args to **stdout**, space-separated, then one newline; `say()` prints an empty line. | never |
-| `warn` | `warn(x...) -> nil` | Like `say` but writes to **stderr**; for diagnostics that must not pollute stdout. | never |
+| `say` | `say(x...) -> nil` | Print all args to **stdout**, space-separated, then one newline; `say()` prints an empty line. | an output beyond the 64 MiB string cap or a stdout write failure aborts; never reports success after a short/broken write |
+| `warn` | `warn(x...) -> nil` | Like `say` but writes to **stderr**; for diagnostics that must not pollute stdout. | an output beyond the 64 MiB string cap or a stderr write failure aborts; never reports success after a short/broken write |
 | `fail` | `fail(msg?: any) -> error` | Build an Err value with message `msg` (coerced to string; default `"failed"`) and code `1`. Extra args are ignored (does not abort; does not set code). | never |
 | `is_err` | `is_err(x: any) -> bool` | `true` iff `x` is an Err value; `false` for every other type (incl. `nil`). | aborts on wrong arity (needs exactly 1) |
 | `err_code` | `err_code(x: any) -> int` | The Err's integer code; `0` for a non-Err (reads as a success/exit code). | aborts on wrong arity (needs exactly 1) |
@@ -375,8 +378,8 @@ All five conversion builtins are **strictly unary**: any other argument count is
 
 | Builtin | Signature | Behavior | err |
 |---|---|---|---|
-| `int` | `int(x: int\|float\|string) -> int` | Identity on `int`; truncates a `float` toward zero (`int(2.7)==2`, `int(-2.7)==-2`); parses a `string` as a base-10 integer with surrounding whitespace trimmed and an optional leading `+`/`-`. | Unparseable/empty/hex/float-syntax/overflowing string -> `Err` (`cannot parse "X" as int`); `bool`, `nil`, `array`, `map`, etc. -> `Err` (`cannot convert <type> to int`). Aborts on wrong arity. |
-| `str` | `str(x: any) -> string` | Renders **any** value as its display string: numbers (integral floats drop the fraction — `str(3.0)=="3"`), `bool`, `nil` (`"nil"`), collections (bracketed, `", "`-separated, e.g. `[1, 2, 3]`, `{a: 1}`, `1..3`), an `error` as `"error: <msg>"`, a `function` as `"<fn>"`. | **never** (total — accepts every type incl. function/channel; aborts only on wrong arity). |
+| `int` | `int(x: int\|float\|string) -> int` | Identity on `int`; truncates a finite, in-range `float` toward zero (`int(2.7)==2`, `int(-2.7)==-2`); parses a `string` as a base-10 integer with surrounding whitespace trimmed and an optional leading `+`/`-`. | NaN/Inf/out-of-int64-range float or unparseable/empty/hex/float-syntax/overflowing string -> `Err`; `bool`, `nil`, `array`, `map`, etc. -> `Err` (`cannot convert <type> to int`). Aborts on wrong arity. |
+| `str` | `str(x: any) -> string` | Renders **any** value as its display string: numbers (integral floats drop the fraction — `str(3.0)=="3"`), `bool`, `nil` (`"nil"`), collections (bracketed, `", "`-separated, e.g. `[1, 2, 3]`, `{a: 1}`, `1..3`), an `error` as `"error: <msg>"`, a `function` as `"<fn>"`. | rendered result beyond 64 MiB → `Err`; accepts every value type; aborts on wrong arity. |
 | `float` | `float(x: int\|float\|string) -> float` | Identity on `float`; widens an `int`; parses a `string` as a decimal or scientific (`float("1e3")==1000`) literal, whitespace trimmed. | Unparseable string (incl. `"inf"`/`"nan"`) -> `Err` (`cannot parse "X" as float`); `bool`, `nil`, `array`, etc. -> `Err` (`cannot convert <type> to float`). Aborts on wrong arity. |
 | `bool` | `bool(x: any) -> bool` | Coerces by truthiness: `nil`, `false`, `0`, `0.0`, `""`, and empty containers (`[]`, `{}`, empty range) -> `false`; everything else (incl. non-empty containers, any `function`, and any `error` value) -> `true`. | **never** (total; aborts only on wrong arity). |
 | `type` | `type(x: any) -> string` | Returns the argument's type name as a `string`: one of `int`, `float`, `string`, `bool`, `nil`, `array`, `map`, `range`, `function`, `error` (also `regex` for a compiled pattern, plus the concurrency handle names). | **never** (total; aborts only on wrong arity). |
@@ -384,7 +387,7 @@ All five conversion builtins are **strictly unary**: any other argument count is
 Notes:
 - `int` does **not** coerce `bool` or accept float-formatted strings (`int("3.9")` is an Err, not `3`); go through `float` first if needed (`int(float("3.9"))`). It is the idiomatic truncating cast for the always-float `/` operator: `int(7 / 2) == 3`.
 - Because bad *values* are catchable, `int(s) // 0` / `float(s) // 0.0` are the standard "parse with default" idioms; a wrong *arity* like `int(1, 2) // 0` still aborts.
-- `str`, `bool`, and `type` are total functions — they only ever fail on wrong arity, never on the value.
+- `bool` and `type` are total over values. `str` accepts every value type but returns a catchable Err if the rendered result would exceed 64 MiB; all three still abort on wrong arity.
 
 ### Numeric
 
@@ -414,7 +417,7 @@ Daily-driver math plus a trig/exp line; no bignum, complex, or matrix support. *
 
 ### Strings
 
-Error convention: a wrong ARGUMENT COUNT aborts the program (uncatchable; nonzero exit). A wrong argument TYPE or runtime failure returns a first-class `error` value, catchable with `//` or `?`. All indices below are **rune** (Unicode code point) offsets, not byte offsets. `len` and `contains` are polymorphic (also operate on collections); listed here for their string behavior.
+Error convention: a wrong ARGUMENT COUNT aborts the program (uncatchable; nonzero exit). A wrong argument TYPE or runtime failure returns a first-class `error` value, catchable with `//` or `?`. String-producing operations reject output beyond 64 MiB; materializing split/line/character/match collections rejects more than one million elements. All indices below are **rune** (Unicode code point) offsets, not byte offsets. `len` and `contains` are polymorphic (also operate on collections); listed here for their string behavior.
 
 `split(s: string, sep?: string) -> array` — splits `s`: no `sep` → split on runs of whitespace with leading/trailing whitespace stripped (`"  a  b  "` → `[a, b]`); `sep == ""` → split into single-rune strings; else split on literal `sep`. Empty input → `[]`. **err:** non-string `s` or `sep` → Err; aborts on arity ≠ 1..2.
 
@@ -450,7 +453,7 @@ Error convention: a wrong ARGUMENT COUNT aborts the program (uncatchable; nonzer
 
 ### Collections & higher-order
 
-All builtins here are **array-first** (the collection is the first argument) so they compose under `|>` (`$xs |> f(args)` calls `f($xs, args)`). Callbacks are arity-flexible: a **1-param** lambda `|$x|` receives the element; a **2-param** lambda `|$x, $i|` also receives the 0-based index. The sole exception is `reduce`, whose folding function is `|$acc, $el|` or `|$acc, $el, $i|` (accumulator, element, optional index). Comparators (`sort`'s optional 2nd arg) are `|$a, $b| -> int` (negative / `0` / positive; the `<=>` operator computes this). Key functions (`sort_by`/`min_by`/`max_by`) are `|$el| -> key`. Wrong **argument count** aborts the program uncatchably; a wrong argument **type**, a bad value, or an Err returned by a callback yields a catchable Err value (recover with `//`, propagate with `?`). Callback combinators (`map`, `filter`, `reject`, `find`, `any`, `all`, `count`, `flat_map`, `pmap`) are **fail-loud**: the first Err a callback produces becomes the whole result.
+All builtins here are **array-first** (the collection is the first argument) so they compose under `|>` (`$xs |> f(args)` calls `f($xs, args)`). Callbacks are arity-flexible: a **1-param** lambda `|$x|` receives the element; a **2-param** lambda `|$x, $i|` also receives the 0-based index. The sole exception is `reduce`, whose folding function is `|$acc, $el|` or `|$acc, $el, $i|` (accumulator, element, optional index). Comparators (`sort`'s optional 2nd arg) are `|$a, $b| -> int` (negative / `0` / positive; the `<=>` operator computes this). Key functions (`sort_by`/`min_by`/`max_by`) are `|$el| -> key`. Materialized collections are capped at one million items. Wrong **argument count** aborts the program uncatchably; a wrong argument **type**, a bad value, a resource ceiling, or an Err returned by a callback yields a catchable Err value (recover with `//`, propagate with `?`). Callback combinators (`map`, `filter`, `reject`, `find`, `any`, `all`, `count`, `flat_map`, `pmap`) are **fail-loud**: the first Err a callback produces becomes the whole result.
 
 | Signature | Behavior | err |
 |---|---|---|
@@ -470,8 +473,8 @@ All builtins here are **array-first** (the collection is the first argument) so 
 | `all(arr: array, fn: function) -> bool` | True if `fn` is truthy for every element; `true` over an empty array. | non-array, non-function, or callback Err -> Err; aborts on arity (≠2) |
 | `count(arr: array, fn: function) -> int` | Number of elements for which `fn` is truthy. | non-array, non-function, or callback Err -> Err; aborts on arity (≠2) |
 | `reduce(arr: array, init: any, fn: function) -> any` | Left fold: `fn(acc, el)` (or `fn(acc, el, i)`) starting from `init`. `init` is **required** — there is no 2-arg form. | non-array, non-function, or callback Err -> Err; aborts on arity (≠3) |
-| `flat_map(arr: array, fn: function) -> array` | Maps then flattens **one** level: array results are spliced in, scalars appended. | non-array, non-function, or callback Err -> Err; aborts on arity (≠2) |
-| `pmap(arr: array, fn: function) -> array` | Parallel `map` over a `NumCPU`-bounded worker pool; results in **input order**. Each element is deep-copied to its worker; callback must be pure (read frozen constants/params only, no shared mutation). Same callback contract as `map`. | non-array, non-function, or first callback Err (fail-loud, stops further work) -> Err; aborts on arity (≠2) |
+| `flat_map(arr: array, fn: function) -> array` | Maps then flattens **one** level: array results are spliced in, scalars appended. | non-array, non-function, callback Err, or output beyond one million items -> Err; aborts on arity (≠2) |
+| `pmap(arr: array, fn: function) -> array` | Parallel `map` sharing a process-wide `NumCPU` worker budget; nested/saturated calls fall back sequentially. Results remain in **input order**. Elements and mutable callback captures are isolated copies. Same callback contract as `map`. | non-array, non-function, or first callback Err (fail-loud, stops further work) -> Err; aborts on arity (≠2) |
 | `sort(arr: array, cmp?: function) -> array` | New array in natural ascending order (numbers numerically, strings lexicographically), **stable**. Optional comparator `\|$a,$b\| -> int` for custom order. | non-array, non-function `cmp`, non-orderable/mixed-type elements, or comparator Err -> Err; aborts on arity (not 1 or 2) |
 | `sort_by(arr: array, keyFn: function) -> array` | New array sorted ascending by `keyFn(el)` (each key computed **once**). | non-array, non-function, non-orderable keys, or keyFn Err -> Err; aborts on arity (≠2) |
 | `min_by(arr: array, keyFn: function) -> any` | Element with the smallest `keyFn(el)`, or `nil` for an empty array. | non-array, non-function, or keyFn Err -> Err; aborts on arity (≠2) |
@@ -479,7 +482,7 @@ All builtins here are **array-first** (the collection is the first argument) so 
 
 ### Maps
 
-Maps preserve **insertion order**; all iteration-producing builtins reflect it. Keys must be hashable scalars (`int`, `string`, `bool`, `float`, `nil`); using a container as a key is a catchable Err at map-index time (`has` treats an unhashable key as simply absent). Convention: a **wrong argument count aborts** the program (uncatchable, exit 1); a **wrong argument type** returns a first-class Err value (catchable with `//` or `?`).
+Maps preserve **insertion order**; all iteration-producing builtins reflect it. Keys are `int`, `string`, `bool`, or finite integral `float` values within int64 range. An integral float canonicalizes to its numerically equal int key (`1` and `1.0` are one key). Nil, errors, non-integral/out-of-range floats, and heap-backed values (containers, functions, regexes, and handles) are unhashable. A map literal or index read with an unhashable key yields a catchable Err; index assignment with one aborts because assignment is a statement. `has` reports an unhashable key as absent, while `delete` leaves the map unchanged. Convention: a **wrong argument count aborts** the program (uncatchable, exit 1); a wrong argument **type** to a builtin returns a first-class Err value (catchable with `//` or `?`).
 
 `keys(m: map) -> array` — fresh array of the map's keys in insertion order. **err:** first arg not a map -> Err | aborts on wrong arity.
 
@@ -487,15 +490,15 @@ Maps preserve **insertion order**; all iteration-producing builtins reflect it. 
 
 `pairs(m: map) -> array` — fresh array of `[key, value]` two-element arrays in insertion order. **err:** first arg not a map -> Err | aborts on wrong arity.
 
-`has(m: map, key: any) -> bool` — `true` if `m` contains `key`, else `false`; an unhashable (container) `key` is reported as `false`, not an error. **err:** first arg not a map -> Err | aborts on wrong arity.
+`has(m: map, key: any) -> bool` — `true` if `m` contains `key`, else `false`; an unhashable key is reported as `false`, not an error. **err:** first arg not a map -> Err | aborts on wrong arity.
 
-`delete(m: map, key: any) -> map` — removes `key` from `m` in place and returns the same map; deleting an absent key is a no-op. **err:** first arg not a map -> Err | aborts on wrong arity.
+`delete(m: map, key: any) -> map` — removes `key` from `m` in place and returns the same map; deleting an absent or unhashable key is a no-op. **err:** first arg not a map -> Err | aborts on wrong arity.
 
 `len(x: string|array|map|range) -> int` — entry count of a map (also rune count of a string, element count of an array, length of a range). **err:** arg is none of string/array/map/range -> Err | aborts on wrong arity.
 
 ### Regex
 
-Engine: Go **RE2** (`https://github.com/google/re2/wiki/Syntax`). Matching is linear-time; the pattern syntax has **no backreferences** (`\1` inside a pattern) and **no lookaround**. A `qr//` value has type `regex`; it is immutable, compiled once, cached, and safe to share across `pmap` workers.
+Engine: Go **RE2** (`https://github.com/google/re2/wiki/Syntax`). Matching is linear-time; the pattern syntax has **no backreferences** (`\1` inside a pattern) and **no lookaround**. A `qr//` value has type `regex`; it is immutable and safe to share across `pmap` workers. Dynamic patterns are capped at 1 MiB and compiled into a process-wide LRU cache bounded at 4,096 entries/16 MiB.
 
 **Shared conventions.** For `matches`/`match`/`match_all` the pattern arg is a `string` OR a compiled `regex` — interchangeable (a `string` is compiled as a *pattern*). The `string` form needs the RE2 backslash that the `qr//` literal form does not (e.g. `"\d"` vs `qr/\d/`). `replace_first`/`replace_all` are the **exception**: a plain-`string` needle is a **literal**, and only a `qr//` (or `re(...)`) value matches as a pattern (Ruby-`gsub` convention). Wrong **arity** aborts the program (uncatchable). A wrong argument **type**, or a malformed **string** pattern, returns a first-class `Err` value (catchable with `//` or `?`). A malformed pattern in a `qr//` **literal** is a lex/parse error (aborts). `match`/`match_all` ignore capture groups in their result list (only full matches); capture groups are returned only by `match` (as the tail of its array). Named captures `(?P<name>…)` are returned **positionally** in `match`'s array (there is no `.field`/map accessor and no `match_map` builtin in this build); named-group access is available only replacement-side via `${name}`.
 
@@ -507,7 +510,7 @@ Engine: Go **RE2** (`https://github.com/google/re2/wiki/Syntax`). Matching is li
 
 `match(s: string, pattern: string|regex) -> array | nil` — first match as `[full, group1, group2, …]`, or `nil` if no match. **err:** non-string `s`, bad pattern, or wrong type → Err; wrong arity aborts.
 
-`match_all(s: string, pattern: string|regex) -> array` — every **full** match in order (capture groups omitted); no match → `[]`. **err:** non-string `s`, bad pattern, or wrong type → Err; wrong arity aborts.
+`match_all(s: string, pattern: string|regex) -> array` — every **full** match in order (capture groups omitted); no match → `[]`. **err:** non-string/over-64-MiB `s`, more than one million matches, bad pattern, or wrong type → Err; wrong arity aborts.
 
 `replace_first(s: string, needle: string|regex, repl: string) -> string` — replace the **first** occurrence; string `needle` is a literal, `qr//`/`re(...)` matches as a pattern. Regex-needle `repl` uses Go substitution: `$1`/`${name}` (name via RE2 `(?P<name>…)`); use a non-interpolating replacement literal (`"…"` or `q{…}`) so `${…}` reaches the builtin. No-match/needle-absent → `s` unchanged. **err:** non-string `s`/`repl`, or bad regex needle → Err; wrong arity aborts.
 
@@ -517,7 +520,7 @@ Bad patterns are catchable: `re("(")` and `matches("x","(")` yield an `Err` (`is
 
 ### JSON & CSV
 
-Every JSON/CSV builtin's arity is fixed; calling with the wrong number of arguments **aborts** the program (uncatchable). Type/runtime failures are per-builtin, noted below. Recover any `Err` value with `//` or `?`, or inspect it with `is_err`. Round-trip notes: JSON objects ↔ insertion-ordered `map` (key order preserved); JSON numbers decode to `int` when integral, else `float`; CSV fields are **always** strings on read (no type inference — convert with `int(...)` yourself); a leading UTF-8 BOM is stripped on read; `\r\n` inside a quoted CSV field reads back as `\n`; blank lines are skipped on read (a lone empty field does not survive a round trip).
+Every JSON/CSV builtin's arity is fixed; calling with the wrong number of arguments **aborts** the program (uncatchable). Type/runtime failures are per-builtin, noted below. Recover any `Err` value with `//` or `?`, or inspect it with `is_err`. Input/rendered output is capped at 64 MiB and the materialized result at one million aggregate cells/items; JSON additionally caps nesting at 512. Limit breaches are catchable Err values. Round-trip notes: JSON objects ↔ insertion-ordered `map` (key order preserved); JSON numbers decode to `int` when integral, else `float`; CSV fields are **always** strings on read (no type inference — convert with `int(...)` yourself); a leading UTF-8 BOM is stripped on read; `\r\n` inside a quoted CSV field reads back as `\n`; blank lines are skipped on read (a lone empty field does not survive a round trip).
 
 | Builtin | Signature | Behavior |
 |---|---|---|
@@ -543,6 +546,7 @@ Shared conventions:
 - **Pure path transforms** (`path_join`, `dirname`, `basename`, `ext`, `stem`, `to_slash`, `is_abs`, `clean`) never touch disk and never fail on a well-typed argument; a non-string argument is a catchable Err.
 - **Stat guards** (`is_within`, `exists`, `is_dir`) always return a `bool`, never an Err — a missing/unstattable/uncomparable path is simply `false`.
 - **Fallible I/O ops** return the operated path/value on success and a catchable Err (`error`, code 1) on real failure.
+- Directory scans for `glob`, `read_dir`, `walk`, and recursive `copy` are chunked and share a one-million-entry aggregate ceiling per operation; the ceiling counts examined entries, not only returned matches.
 - Paths are returned with the OS-native separator (`\` on Windows); use `to_slash` to normalize. `path_list_sep()` is `;` on Windows.
 - Every builtin below **aborts the program (uncatchable) on wrong argument count**; a wrong argument **type** is a catchable Err. Note builtins are shadowed by like-named variables (e.g. binding `$newer` masks `newer`).
 
@@ -564,21 +568,21 @@ Shared conventions:
 | `is_dir` | `is_dir(p: string) -> bool` | True if `p` exists and is a directory. | never (always bool); non-string → Err; aborts on wrong arity |
 | `is_file` | `is_file(p: string) -> bool` | True if `p` exists and is a regular file (not a dir/device). | never (always bool); non-string → Err; aborts on wrong arity |
 | `is_symlink` | `is_symlink(p: string) -> bool` | True if `p` itself is a symlink (uses `Lstat`, so it does not follow the link, unlike exists/is_dir/is_file). | never (always bool); non-string → Err; aborts on wrong arity |
-| `glob` | `glob(pattern: string) -> array` | Sorted array of matching paths; supports `**` (spans directories); no match → `[]`. | malformed pattern → Err; non-string → Err; aborts on wrong arity |
-| `read_dir` | `read_dir(p: string) -> array` | List a directory (one level) as `[{name, path, is_dir, is_symlink}]` records, sorted by name; `path` is the joined full path. | missing/unreadable dir → Err; non-string → Err; aborts on wrong arity |
-| `walk` | `walk(dir: string) -> array` | Recursively list everything under `dir` (root excluded) as `[{name, path, is_dir, is_symlink, size, mtime}]` records, depth-first in lexical order. Symlinks are reported but not followed (no cycles); unreadable entries are skipped. | non-directory / unreadable root → Err; non-string → Err; aborts on wrong arity |
+| `glob` | `glob(pattern: string) -> array` | Sorted array of matching paths; supports `**` (spans directories); no match → `[]`. | malformed pattern or entry-scan ceiling → Err; non-string → Err; aborts on wrong arity |
+| `read_dir` | `read_dir(p: string) -> array` | List a directory (one level) as `[{name, path, is_dir, is_symlink}]` records, sorted by name; `path` is the joined full path. | missing/unreadable dir or entry-scan ceiling → Err; non-string → Err; aborts on wrong arity |
+| `walk` | `walk(dir: string) -> array` | Recursively list everything under `dir` (root excluded) as `[{name, path, is_dir, is_symlink, size, mtime}]` records, depth-first in lexical order. Symlinks are reported but not followed (no cycles); unreadable entries are skipped. | non-directory / unreadable root / entry-scan ceiling → Err; non-string → Err; aborts on wrong arity |
 | `readlink` | `readlink(p: string) -> string` | The target a symlink points to (`os.Readlink`), without following it. | non-symlink / missing → Err; non-string → Err; aborts on wrong arity |
 | `mkdir` | `mkdir(p: string) -> string` | Create the directory tree (like `mkdir -p`, `os.MkdirAll` 0755); returns `p`. | create failure → Err; non-string → Err; aborts on wrong arity |
 | `mtime` | `mtime(p: string) -> float` | Modification time as float Unix seconds, sub-second precision (same unit as `now()`). | missing/unstattable → Err; non-string → Err; aborts on wrong arity |
 | `newer` | `newer(a: string, b: string) -> bool` | True if `a`'s mtime is strictly after `b`'s. | either path missing → Err; non-string → Err; aborts on wrong arity |
 | `stale` | `stale(target: string, sources: string \| array) -> bool` | True if `target` is missing or older than any source; `sources` is one path or an array of paths. | any listed source missing → Err; non-string target / non-string array element → Err; aborts on wrong arity |
-| `read_file` | `read_file(p: string) -> string` | Read the whole file into a string. | unreadable/missing → Err; a file exceeding the 1 GiB memory backstop → Err (not OOM); non-string → Err; aborts on wrong arity |
-| `write_file` | `write_file(p: string, content: any, opts?: map) -> string` | Write `content` (rendered as `say` would — a string writes raw bytes) to `p` (0644); with `{append: true}` opens O_APPEND\|O_CREATE. Returns `p`. Only key `append` is allowed. | write failure → Err; opts not a map / unknown opt key → Err; non-string path → Err; aborts on wrong arity (2–3 args) |
+| `read_file` | `read_file(p: string) -> string` | Read the whole file into a string. | unreadable/missing → Err; a file exceeding the 64 MiB whole-value backstop → Err (not OOM); non-string → Err; aborts on wrong arity |
+| `write_file` | `write_file(p: string, content: any, opts?: map) -> string` | Write `content` (rendered as `say` would — a string writes raw bytes) to `p` (0644); with `{append: true}` opens O_APPEND\|O_CREATE. Returns `p`. Only bool option `append` is allowed. | write failure → Err; opts not a map / unknown opt key / non-bool `append` → Err; non-string path → Err; aborts on wrong arity (2–3 args) |
 | `tempfile` | `tempfile(prefix?: string) -> string` | Create a fresh uniquely-named empty file in the system temp dir (`<prefix>-*`, default prefix `drang`); returns its path (remove with `rm`). | create failure → Err; non-string prefix → Err; aborts on wrong arity (0–1 args) |
 | `tempdir` | `tempdir(prefix?: string) -> string` | Create a fresh uniquely-named directory in the system temp dir; returns its path (remove with `rm`). | create failure → Err; non-string prefix → Err; aborts on wrong arity (0–1 args) |
 | `rename` | `rename(src: string, dst: string) -> string` | Rename/move `src` to `dst` (`os.Rename`); returns `dst`. | rename failure → Err; non-string → Err; aborts on wrong arity |
 | `rm` | `rm(p: string) -> string` | Remove a file or directory tree, recursively and idempotently (`os.RemoveAll` — a nonexistent path is not an error); returns `p`. (Named `rm` because `delete` removes map keys.) | removal failure → Err; non-string → Err; aborts on wrong arity |
-| `copy` | `copy(src: string, dst: string) -> string` | Copy a file, or recursively copy a directory tree, preserving file modes; creates parent dirs of `dst`; returns `dst`. | copy failure (e.g. missing `src`) → Err; non-string → Err; aborts on wrong arity |
+| `copy` | `copy(src: string, dst: string) -> string` | Copy a file, or recursively **merge** a directory tree into `dst`, preserving file modes and creating parent dirs. Rejects the same filesystem object and, for a directory, a destination inside the source after resolving existing aliases. A recursive merge rejects every pre-existing destination symlink, junction, or reparse-point component before using it. A directory alias passed as the source root is followed; nested directory links are rejected, while nested file symlinks are dereferenced into ordinary files. Each file replacement is staged/synced/renamed; a tree copy is not transactional and can remain partially merged after a later error. Component checks are best-effort against a concurrently mutating filesystem: another process can replace a checked path before the next operation. Returns `dst`. | missing source, invalid redirected/same/descendant target, entry-scan ceiling, or copy failure → Err; non-string → Err; aborts on wrong arity |
 | `size` | `size(p: string) -> int` | File size in bytes (`os.Stat().Size()`). | missing/unstattable → Err; non-string → Err; aborts on wrong arity |
 
 ### Persistent store
@@ -586,18 +590,24 @@ Shared conventions:
 A `store` is a durable JSON key-value map backed by a single file. `store(path?)` opens (or creates) one and returns a `store` handle; the operations below read and mutate it. Keys are strings; values are any **JSON-serializable** drang value (scalar, array, or map) — a value carrying a `channel`/`task`/`process`/`function`/`regex` is rejected with a catchable Err, exactly as `to_json` would reject it. `int` round-trips as an exact 64-bit integer.
 
 Durability & concurrency:
+
 - **Atomic snapshot per write.** Every mutation rewrites the whole file (temp + fsync + atomic rename), keeping the previous copy as `<path>.bak`; the file is never observed torn.
 - **One writer.** A store holds a process-exclusive advisory lock on `<path>.lock` for its lifetime; a second process opening the same store gets a catchable `store busy` Err. The data file itself is never locked, so other tools can read it.
-- The handle is a **shared reference** (like a channel): `DeepCopy` returns itself and a mutex guards all access, so it is safe to hand to `spawn`/`pmap` workers (access is serialized, not raced). Mutating one store from parallel workers is well-defined but serialized — not a parallelism win.
-- Opening the same absolute path twice in one process returns the **same** handle.
+- The handle is a **shared reference** (like a channel): `DeepCopy` returns itself and access/commits are synchronized, so it is safe to hand to `spawn`/`pmap` workers. Ordinary operations commit one at a time; concurrent `store_update` callbacks use the versioned retry contract below.
+- Each evaluator session has one registry shared by its main program, modules, spawned tasks, and `pmap` workers. Opening the same canonical path twice in that session returns the **same** live handle. At most **256** distinct handles may be live per session; the next open returns a catchable resource-limit Err (code 137).
+- `store_close` removes the handle from that registry, releases its sidecar lock, and frees its slot. Once the session's last owning execution scope becomes unreachable, runtime cleanup closes any handles and locks that remain.
 
 Location: `store()` with no path defaults to `.drang/<script>.store` in the running script's directory — a predictable, environment-variable-free location that travels with the script. `-e`/stdin have no script file, so they must pass an explicit path. `store("path")` resolves like every other file builtin (relative to the working directory).
 
-`store`, `store_update`, and `with_store` are **evaluator special forms** (they need the running environment or take a lambda); the rest are ordinary builtins. Error mode as elsewhere: wrong **argument count** aborts; a wrong **type**, a busy lock, a non-serializable value, an I/O failure, or exceeding the 64 MiB size cap is a catchable Err (code 1).
+`store`, `store_update`, and `with_store` are **evaluator special forms** (they need the running environment or take a lambda); the rest are ordinary builtins. Error mode as elsewhere: wrong **argument count** aborts; a wrong **type**, a busy lock/transaction, same-store transaction reentry, a non-serializable value, an I/O failure, or exceeding the 64 MiB size cap is a catchable Err (code 1). The 256-live-handle session ceiling is code 137.
+
+Callback ownership is keyed to the evaluator strand that entered it. `store_update` is an optimistic pure transform: it reads an isolated current/default value, runs the callback without holding the store mutex, and commits only if the store version is unchanged. A concurrent mutation makes it rerun from the newest value, up to **64 conflicts** before returning a catchable `store stayed busy` Err. Concurrent updates therefore remain atomic, but the callback may execute more than once and must not have side effects or access this same store on its own strand; such access returns `same-store transaction reentry is not allowed`. Other strands may keep using the store and their mutations simply force a retry.
+
+`with_store` is the exclusive transaction. Its owner may call ordinary operations on that same store, but a nested same-store `with_store`/`store_update` returns the reentry Err; access from another strand returns `store is busy in another transaction`. It also refuses to start while an optimistic update is active. `store_close` during either kind of transaction returns `store cannot be closed while a transaction is active`. Transactions on a different store are independent.
 
 | Builtin | Signature | Behavior | err |
 |---|---|---|---|
-| `store` | `store(path?: string) -> store` | Open/create a store at `path`, or at `.drang/<script>.store` when omitted. Idempotent per absolute path within a process. | busy lock / unreadable-or-corrupt file (no valid `.bak`) / no script for the default path / non-string path → Err; aborts on wrong arity (0–1) |
+| `store` | `store(path?: string) -> store` | Open/create a store at `path`, or at `.drang/<script>.store` when omitted. Idempotent per canonical path within one evaluator session; at most 256 distinct handles may be live. | busy lock / unreadable-or-corrupt file (no valid `.bak`) / no script for the default path / non-string path → Err code 1; live-handle ceiling → Err code 137; aborts on wrong arity (0–1) |
 | `store_get` | `store_get(s: store, key: string, default?: any) -> any` | Value for `key`; the `default` (or `nil`) when absent. Returns an isolated copy. | non-store / non-string key → Err; aborts on wrong arity (2–3) |
 | `store_set` | `store_set(s: store, key: string, value: any) -> true` | Store an isolated copy of `value`, durably. | non-serializable value / non-store / non-string key / I/O / size-cap → Err; aborts on wrong arity |
 | `store_has` | `store_has(s: store, key: string) -> bool` | Whether `key` is present. | non-store / non-string key → Err; aborts on wrong arity |
@@ -605,26 +615,28 @@ Location: `store()` with no path defaults to `.drang/<script>.store` in the runn
 | `store_keys` | `store_keys(s: store) -> array` | Keys in insertion order. | non-store → Err; aborts on wrong arity |
 | `store_all` | `store_all(s: store) -> map` | The whole store as an isolated map copy (for iteration/inspection). | non-store → Err; aborts on wrong arity |
 | `store_clear` | `store_clear(s: store) -> true` | Remove every key. | non-store / I/O → Err; aborts on wrong arity |
-| `store_update` | `store_update(s: store, key: string, default: any, fn: function) -> any` | **Atomic read-modify-write:** call `fn(current)`, or `fn(default)` if `key` is absent, under the store lock, then store and return the result. Argument order mirrors `reduce`. `fn` must be a pure transform and must not touch this store (it would deadlock). A `?`/`fail` inside `fn` leaves the store unchanged and surfaces the Err. | non-store / non-string key / non-function / non-serializable result / I/O → Err; aborts on wrong arity (4) |
-| `with_store` | `with_store(s: store, fn: function) -> any` | **All-or-nothing batch:** run `fn(s)`; mutations inside commit together in one atomic write on success, or roll the store back to its pre-batch state if `fn` returns/propagates an Err (or exits). Returns `fn`'s value. Not for concurrent batching of one store. | non-store / non-function / commit I/O → Err; aborts on wrong arity |
+| `store_update` | `store_update(s: store, key: string, default: any, fn: function) -> any` | **Atomic optimistic read-modify-write:** call the pure `fn(current)` (or `fn(default)`), retry it from fresh state after a concurrent mutation, then store and return the result. The 64th conflict returns busy. Argument order mirrors `reduce`; an Err leaves the store unchanged. | non-store / non-string key / non-function / same-strand same-store reentry / exclusive batch busy / sustained conflict / non-serializable result / I/O → Err; aborts on wrong arity (4) |
+| `with_store` | `with_store(s: store, fn: function) -> any` | **All-or-nothing exclusive batch:** run `fn(s)`; its ordinary same-store operations commit together in one atomic write on success, or roll back if `fn` returns/propagates an Err (or exits). Returns `fn`'s value. A nested same-store transaction is rejected. | non-store / non-function / same-store transaction reentry / active update or other-strand busy / commit I/O → Err; aborts on wrong arity |
 | `store_path` | `store_path(s: store) -> string` | The backing file's absolute path. | non-store → Err; aborts on wrong arity |
-| `store_close` | `store_close(s: store) -> nil` | Release the lock and forget the handle (also released on process exit). | non-store → Err; aborts on wrong arity |
+| `store_close` | `store_close(s: store) -> nil` | Release the lock, remove the session-registry entry, and free one live-handle slot. | active transaction / non-store → Err; aborts on wrong arity |
 
 ### Process & concurrency
 
 External commands go through Go `os/exec` directly — **no shell**, args passed verbatim (no word-splitting, no glob expansion). Handle value types: `process` (from `start`), `task` (from `spawn`), `channel` (from `chan`). Array arguments in an argv list are **flattened one level** (`run("git", ["log","--oneline"])`). A trailing map literal is the options map (see the option table). `spawn`, `stream_lines`, and `dispatch` are **evaluator special forms**, not ordinary builtins (they take a function/lambda and are handled before normal builtin dispatch).
 
-Error-mode convention (as elsewhere): wrong **argument count** aborts the program (uncatchable). A wrong argument **type** or a runtime failure is a first-class Err value (catchable with `//` or `?`) — with two documented exceptions where a structurally-invalid argument aborts instead: passing a `regex` where a command/arg string is expected, and a non-string for a string-valued option (`cwd`/`stdin`/`arg0`), both abort. Note a non-error scalar arg is stringified (`run(123)` execs `"123"` → 127 Err, not an abort).
+Error-mode convention: wrong **argument count** aborts the program (uncatchable), while a launch/runtime failure is a first-class Err value (catchable with `//` or `?`). Structurally invalid command data aborts: a `regex` where a command/arg string is expected, or any process-option schema error (non-string/unknown key, wrong type/range, incompatible pair). These checks happen before launch; the documented value-level exception `{timeout}` on `start` returns a catchable Err. A non-error scalar arg is stringified (`run(123)` execs `"123"` → 127 Err, not an abort).
 
 #### Synchronous exec
 
+Every synchronous form owns the launched Job Object for the duration of the call. After the root child exits, drang terminates any remaining descendants and closes the Job **before** joining stdin/stdout/stderr copier goroutines. A descendant that inherited a pipe therefore cannot keep `run`, `capture`, `capture_all`, `pipe`, or `stream_lines` blocked after its root is gone; use `start` when descendants are meant to survive the call.
+
 `run(cmd: string, args...: any, opts?: map) -> bool` — runs the command with the child's stdin/stdout/stderr wired straight to drang's; returns `true` on success. **err:** non-zero exit → Err (code = child exit); can't-start → Err 127; timeout → Err 124; killed/limit → Err 137. Aborts on 0 args.
 
-`capture(cmd: string, args...: any, opts?: map) -> string` — buffers the child's stdout and returns it **trimmed**. **err:** failure → Err with the child's stderr folded into the message (code = exit / 124 / 127 / 137); output past 256 MiB → catchable Err 137 (not an OOM). Aborts on 0 args.
+`capture(cmd: string, args...: any, opts?: map) -> string` — buffers the child's stdout and returns it **trimmed**. Captured stdout+stderr share one 64 MiB aggregate budget; overflow terminates the whole child tree. **err:** failure → Err with the child's stderr folded into the message (code = exit / 124 / 127 / 137); aggregate output past 64 MiB → catchable Err 137 (not an OOM). Aborts on 0 args.
 
-`capture_all(cmd: string, args...: any, opts?: map) -> map` — runs and returns `{out, err, code, ok}`; a **non-zero exit is data, not an Err** (`ok=false`, `code=`child exit). **err:** timeout → still returns the map? no — timeout → `code` 124 / can't-start → `code` 127 as data in the map; the map is always returned (never an Err on ordinary run). Aborts on 0 args.
+`capture_all(cmd: string, args...: any, opts?: map) -> map` — runs and returns `{out, err, code, ok}`; a **non-zero exit is data, not an Err** (`ok=false`, `code=`child exit). Timeout → `code` 124, can't-start → `code` 127, and aggregate stdout+stderr beyond 64 MiB terminates the tree and yields `code` 137; the capped prefixes remain in `out`/`err`. The map is always returned (never an Err on ordinary run). Aborts on 0 args.
 
-`pipe(stage: array, stages...: array, opts?: map) -> string` — wires each `[cmd, args...]` stage's stdout to the next stage's stdin through real OS pipes (streamed); returns the **last stage's trimmed stdout**. Bash pipeline semantics: 127 if any stage can't start, 124 on timeout, else the **last** stage's exit code. **err:** per those codes → Err. Aborts on 0 args.
+`pipe(stage: array, stages...: array, opts?: map) -> string` — wires each `[cmd, args...]` stage's stdout to the next stage's stdin through real OS pipes (streamed); returns the **last stage's trimmed stdout**. The final stage's captured stdout+stderr share the 64 MiB aggregate budget. Bash pipeline semantics: 127 if any stage can't start, 124 on timeout, 137 on output/resource overflow, else the **last** stage's exit code. **err:** per those codes → Err. Aborts on 0 args.
 
 `stream_lines(cmd: string, args...: any, opts?: map, cb: fn(line)) -> bool` — *special form*; invokes `cb` once per output line (newline stripped), streaming. Returns `true` on success. Callback arity: `|$line|`. **err:** non-zero exit / 124 timeout → Err. Aborts on wrong arity.
 
@@ -642,37 +654,41 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 
 `close_stdin(p: process) -> bool` — signals end-of-input on the child's stdin pipe; returns `true`. Pairs with `{stdin_pipe: true}` + `send_stdin`. **err:** aborts on wrong arity.
 
-`recv_stdout(p: process) -> string | nil` — reads the next available chunk of stdout (raw bytes, untrimmed) from a child launched with `{stdout_pipe: true}`; **blocks** until the child writes, and returns `nil` once the child has closed its stdout (exited and drained). Pairs with `send_stdin` to steer a live child (write a prompt, read the reply, repeat). The read is direct — the script is the drainer, so a child that outruns the read pace back-pressures, and awaiting a child with a large *unread* output blocks (drain to `nil` first, or `kill`). Note many programs block-buffer stdout when it is a pipe, so their output appears only when they flush or exit (a pty/ConPTY is not provided). **err:** returns Err if the child was not started with `{stdout_pipe: true}` or the read fails; aborts on wrong arity.
+`recv_stdout(p: process) -> string | nil` — reads the next available chunk of stdout (raw bytes, untrimmed) from a child launched with `{stdout_pipe: true}`; **blocks** until data is available, and returns `nil` once stdout is closed and drained. A background drainer prevents `await`/OS-pipe deadlock. Requested stdout+stderr share a **16 MiB unread queue per process**; consuming chunks frees room, while overflow terminates the whole child tree and makes `await`/`status` report code 137. After the root exits, both requested pipes get one aggregate **750 ms** grace to reach EOF; drang then closes any read end still held open by an unsupervised descendant, preserving bytes already queued but truncating later output so completion cannot hang. With `{supervise: true}`, closing the Job kills descendants before this drain finishes. Note many programs block-buffer stdout when it is a pipe, so output may appear only on flush/exit (no pty/ConPTY). **err:** returns Err if the child was not started with `{stdout_pipe: true}` or the read fails; aborts on wrong arity.
 
-`recv_stderr(p: process) -> string | nil` — the same as `recv_stdout`, but reads the child's **stderr** as a stream **distinct** from stdout, from a child launched with `{stderr_pipe: true}` (raw chunks, `nil` at EOF, same direct-read back-pressure). To read *both* streams from one child, **drain them concurrently** (e.g. read one in a `spawn`ed task): stdout and stderr are independent pipes, so draining only one while the child fills the other can back-pressure the child and stall. Use `{merge_stderr}` instead when you just want stderr folded into stdout in one stream; `{stderr_pipe}` and `{merge_stderr}` are mutually exclusive. **err:** returns Err if the child was not started with `{stderr_pipe: true}` or the read fails; aborts on wrong arity.
+`recv_stderr(p: process) -> string | nil` — the same as `recv_stdout`, but reads the child's **stderr** as a stream **distinct** from stdout, from a child launched with `{stderr_pipe: true}` (raw chunks, `nil` at EOF, sharing the same 16 MiB aggregate unread queue). Background draining makes sequential consumption safe within that budget; concurrent consumers remain useful for responsiveness. Use `{merge_stderr}` when one interleaved stream is sufficient; `{stderr_pipe}` and `{merge_stderr}` are mutually exclusive. **err:** returns Err if the child was not started with `{stderr_pipe: true}` or the read fails; aborts on wrong arity.
 
 #### Tasks
 
-`spawn(fn: function, args...: any) -> task` — *special form*; runs a drang function on its own goroutine (args deep-copied in, copy-on-send), returns a `task` immediately. **err:** aborts on wrong arity (needs a function). An error raised inside the task (returned, `?`-propagated, or panicked) is captured and surfaced by `await`.
+`spawn(fn: function, args...: any) -> task` — *special form*; runs a drang function on its own goroutine (args and mutable closure captures deep-copied in), returns a `task` immediately. At most 1,024 tasks are live process-wide; snapshot graphs are capped at 512 depth/one million nodes. Excess tasks or snapshot limits return a catchable Err (code 137), preserving aliases/cycles within the budget. **err:** non-function or resource ceiling → Err; aborts only when called with no arguments. An error raised inside the task (returned, `?`-propagated, or panicked) is captured and surfaced by `await`.
 
-`await(h: task | process) -> any` — blocks for a task's result (deep-copied out) **or** a started process's exit status. For a process: `true` on clean exit, else an Err carrying the code (child exit / 124 / 127 / 137). **err:** for a process, non-zero/killed → Err; a spawned task's captured error is returned as an Err. Aborts on wrong arity.
+`await(h: task | process) -> any` — blocks for a task's result (copied out with the bounded closure-aware snapshot described below) **or** a started process's exit status. For a process: `true` on clean exit, else an Err carrying the code (child exit / 124 / 127 / 137). **err:** for a task, snapshot depth beyond 512 or one million visited nodes → Err 137, and a same-session dependency cycle → catchable Err; for a process, non-zero/killed → Err; a spawned task's captured error is returned as an Err. Aborts on wrong arity.
 
 #### Channels
 
-`channel` is the one intentionally *shared* value type; values are copied on `send` and on `await`. A `send`/`recv` that could only ever deadlock (no counterparty, no other task running) is a **catchable Err**, not a process abort.
+Channels are intentionally shared handles. Values crossing `send`, and task results crossing `await`, use one closure-aware snapshot: mutable arrays/maps and reachable user-function environments become private, aliases/cycles are preserved, and channel/task/process/store handles remain shared. Traversal beyond 512 containers/functions deep or one million visited nodes returns a catchable resource-limit Err (code 137).
 
-`chan(n?: int) -> channel` — makes an unbuffered channel, or a buffered one of capacity `n`. **err:** aborts on wrong arity.
+Channel/task orphan detection is state-based, not a timeout. Each evaluator session tracks runnable language strands (the main strand, accepted `spawn`s, and parallel `pmap` workers). A strand blocked on a channel or a same-session task/pmap join stops counting as runnable; sleep and external I/O continue to count because they may resume as a counterparty. Only when no runnable strand remains, and no operation is already entering the shared channel, are unmatched sends/receives and task awaits that cannot complete woken with a **catchable Err**. Delayed same-session counterparties and already-in-flight matches from another evaluator context are therefore preserved; independently created sessions are not counted as each other's runnable work.
 
-`send(c: channel, v: any) -> bool` — sends a **copy** of `v`, blocking until received; returns `true`. **err:** send on a closed channel → Err; would-deadlock → Err. Aborts on wrong arity.
+`chan(n?: int) -> channel` — makes an unbuffered channel, or a buffered one with `0 <= n <= 65,536`. **err:** non-int/negative size → catchable Err code 1; over-limit size → catchable Err code 137; aborts on wrong arity.
 
-`recv(c: channel) -> any` — blocks for the next value; yields `undef` (nil) once the channel is **closed and drained**. **err:** would-deadlock → Err. Aborts on wrong arity.
+`send(c: channel, v: any) -> bool` — sends a **copy** of `v`, blocking until received; returns `true`. **err:** snapshot ceiling → Err 137; send on a closed channel / orphaned waiter → Err code 1. Aborts on wrong arity.
 
-`recv_ok(c: channel) -> array` — like `recv` but returns `[value, ok]`; `ok=false` when the channel is closed and drained. **err:** would-deadlock → Err. Aborts on wrong arity.
+`recv(c: channel) -> any` — blocks for the next value; yields `undef` (nil) once the channel is **closed and drained**. **err:** orphaned waiter → Err code 1. Aborts on wrong arity.
+
+`recv_ok(c: channel) -> array` — like `recv` but returns `[value, ok]`; `ok=false` when the channel is closed and drained. **err:** orphaned waiter → Err code 1. Aborts on wrong arity.
 
 `close(c: channel) -> nil` — closes the channel; **idempotent** and safe from any goroutine. **err:** aborts on wrong arity.
 
-`drain(c: channel) -> array` — collects every remaining value into an array, **blocking until the channel is closed**. **err:** aborts on wrong arity.
+`drain(c: channel) -> array` — collects every remaining value into an array, **blocking until the channel is closed**. **err:** an orphaned receive while the channel remains open → Err code 1; aborts on wrong arity.
 
 #### Task dispatch
 
 `dispatch(tasks: map) -> (never returns)` — *special form*; treats the map `{name: function}` as a subcommand CLI, looks up the task named by `$ARGV[0]`, runs it, and **exits the process** with a resolved code. No arg / `list` / `-l` / `--list` prints task names (exit 0); unknown task prints the list to stderr and exits 2. A task fn takes **0 params** (ignores argv) or **1 param** (receives post-name argv as a string array); 2+ params is an error. Exit code: success → 0; returned/propagated Err → its code clamped to `1..255`; `exit(n)`/`die` → that code; unknown task → 2. **err:** aborts on wrong arity of a task fn (>1 param).
 
 #### Exec options (trailing map on `run` / `capture` / `capture_all` / `pipe` / `stream_lines` / `start`)
+
+The schema is closed and validated before launch: keys are strings, every value has the exact type/range shown below, unknown keys abort, and incompatible combinations are rejected rather than silently ignored.
 
 | Option | Type | Effect |
 |---|---|---|
@@ -686,7 +702,7 @@ Error-mode convention (as elsewhere): wrong **argument count** aborts the progra
 | `stderr_pipe` | bool | **`start`-only**: keeps the child's stderr on its **own** pipe drained by `recv_stderr` (raw chunks; `nil` at EOF), separate from stdout. Mutually exclusive with `{merge_stderr}`. Rejected on synchronous forms. |
 | `merge_stderr` | bool | Folds the child's stderr into its stdout (like shell `2>&1`). Mutually exclusive with `{stderr_pipe}`. |
 | `arg0` | string | Presents a different argv[0] than the launched executable. Rejected for a `.bat`/`.cmd` target (launched via `cmd.exe`, which owns argv[0]) → catchable Err. |
-| `timeout` | int (ms) | Wall-clock cap; `0` = no limit. On breach the whole process **tree** is killed → Err 124. **Rejected on `start`** (detached, unbounded) → catchable Err. |
+| `timeout` | int (ms) | Wall-clock cap; `0` = no limit. Values outside the runtime duration range abort as invalid options instead of wrapping. On breach the whole process **tree** is killed → Err 124. **Rejected on `start`** (detached, unbounded) → catchable Err. |
 | `supervise` | bool | **`start`-only**: ties a detached child's lifetime to drang's job (dies with drang, kernel-enforced, even on clean exit). **Rejected** on the synchronous forms (they always die-with-parent while waiting) — this **aborts** (uncatchable), like the other start-only options. (Only `{timeout}` on `start` is a *catchable* Err.) |
 | `max_memory` | int (bytes) | Committed-memory cap, **per process**. Breach → child killed, Err 137. |
 | `max_job_memory` | int (bytes) | Committed-memory cap for the **whole job** (child + every descendant). Breach → whole tree killed, Err 137. |
@@ -716,7 +732,7 @@ A small HTTP client over Go's `net/http`. The whole surface is `http` plus the `
 
 **Response map.** A successful call returns `{status: int, ok: bool (status 200–299), body: string, headers: map (lowercased keys; multi-value headers joined with `", "`), url: string (final URL after redirects)}`.
 
-**`opts`** (trailing map; keys absent or wrong-typed are ignored, except as noted): `headers` (`{name: value}` string→string map; a non-map or non-string entry → Err), `body` (string; non-string → Err), `json` (any value; serialized and sent as `Content-Type: application/json`), `timeout` (int/float ms, `0` = unlimited; negative → Err), `redirects` (int cap, `0` = don't follow and return the 3xx; exceeding the cap → Err), `max_body` (int bytes, `0` = unlimited; counts *decompressed* bytes; exceeding → Err), `insecure` (truthy skips TLS verification). Supplying both `body` and `json` → Err.
+**`opts`** is a closed trailing map: an unknown key or wrong-typed value returns an Err. Fields are `headers` (`{name: value}` string→string map), `body` (string), `json` (any value; serialized and sent as `Content-Type: application/json`), `timeout` (finite int/float ms within duration range, `0` = unlimited), `redirects` (non-negative int cap, `0` = don't follow and return the 3xx), `max_body` (non-negative int bytes, `0` = unlimited; counts *decompressed* bytes), and `insecure` (bool; `true` skips TLS verification). Supplying both `body` and `json` → Err.
 
 **Defaults:** 30 s timeout, follow ≤10 redirects (dropping `Authorization` on a cross-host hop), TLS verification on, 32 MiB body cap, transparent gzip, `User-Agent: drang` (overridable via `headers`), one shared connection-pooled transport (safe under `pmap`).
 
@@ -728,15 +744,15 @@ A small HTTP client over Go's `net/http`. The whole surface is `http` plus the `
 
 ### GUI (local htmx server)
 
-`serve` runs a **local, single-user htmx GUI**: it binds `127.0.0.1` on an ephemeral port, routes request paths to drang handler functions that return HTML, serves the embedded htmx runtime at `/_/htmx.js`, and (by default) opens the page in a clamped Edge `--app` window against a throwaway isolated profile. It is a *tool cockpit* server — one browser, on the same machine — **not** a production web server or framework. Every request is gated on a per-launch random token (issued as the `drang_token` cookie on the first `?t=` navigation), so no other local process can drive it. VM handler calls are serialized (one at a time); a handler panic is a 500, never a crashed server. `serve` blocks until the window closes (`open:true`) or the process is interrupted, then shuts down and wipes the profile.
+`serve` runs a **local, single-user htmx GUI**: it binds `127.0.0.1` on an ephemeral port, routes request paths to drang handler functions that return HTML, serves the embedded htmx runtime at `/_/htmx.js`, and (by default) opens the page in a clamped Edge `--app` window against a throwaway isolated profile. It is a *tool cockpit* server — one browser, on the same machine — **not** a production web server or framework. Every request is gated on a cryptographically random per-launch token; the first `?t=` request issues an HttpOnly/SameSite cookie and redirects to a token-free URL. Handler bodies are capped at 8 MiB and the server applies header/read/write/idle timeouts. VM handler calls are serialized (one at a time); a handler panic or malformed response shape is a controlled 500, never a crashed server. `serve` blocks until the window closes (`open:true`) or the process is interrupted, then shuts down and wipes the profile.
 
-**Handlers.** A route value is a function of 0 or 1 parameter. With 1 parameter it receives a request map `{method, path, query, form, headers}` (`query`/`form` are first-value string maps; `form` includes an htmx POST body via `ParseForm`). It returns a **string** (sent as `text/html`), a **map** `{status?: int, headers?: {name: value}, body?: string}`, or **nil** (204). An `Err` return becomes a 500.
+**Handlers.** A route value is a function of 0 or 1 parameter. With 1 parameter it receives a request map `{method, path, query, form, headers}` (`query`/`form` are first-value string maps; `form` includes an htmx POST body via `ParseForm`). It returns a **string** (sent as `text/html`), a closed **map** `{status?: int(200..599), headers?: {string: string}, body?: string}`, or **nil** (204). Unknown response keys, invalid status/header/body values, an `Err`, or a handler panic become a controlled 500.
 
-**Assets and packaging.** `static: <dir>` serves a directory (traversal-safe `http.Dir`). `drang build script.dr --web <dir>` bundles that tree into the standalone exe (payload format v3), served from memory — so the same `static:` program serves from disk in dev and from the embedded copy when built. Add `--gui` for a Windows GUI-subsystem standalone that does not allocate a console when double-clicked. Console mode is the default and is preferable during development because a GUI-subsystem launch normally has no visible stdout/stderr or startup errors. `/_/htmx.js` is reserved for the embedded htmx runtime and cannot be shadowed by a route.
+**Assets and packaging.** `static: <dir>` serves through an OS-rooted filesystem handle, preventing traversal and symlink escape. `drang build script.dr --web <dir>` bundles that tree into the standalone exe (payload format v3), served from memory — so the same `static:` program serves from disk in dev and from the embedded copy when built. Add `--gui` for a Windows GUI-subsystem standalone that does not allocate a console when double-clicked. Console mode is the default and is preferable during development because a GUI-subsystem launch normally has no visible stdout/stderr or startup errors. `/_/htmx.js` is reserved for the embedded htmx runtime and cannot be shadowed by a route.
 
 | Builtin | Signature | Behavior |
 |---|---|---|
-| `serve` | `serve(opts: map) -> nil \| error` | Run the GUI server described by `opts`: `routes` (`{path: handler}` map, **required** — each path starts with `/`, each handler a fn of 0/1 params), `static` (dir string, optional), `port` (int `0`–`65535`, default `0` = ephemeral), `open` (bool, default `true` — launch the clamped browser). **err:** aborts on wrong arity (not 1 arg); a non-map `opts`, a bad `routes`/`port`, or a bind failure → Err (code 1). Blocks until shutdown. |
+| `serve` | `serve(opts: map) -> nil \| error` | Run the GUI server described by the closed `opts` schema: `routes` (`{path: handler}` map, **required** — each path starts with `/`, each handler a fn of 0/1 params), `static` (dir string, optional), `port` (int `0`–`65535`, default `0` = ephemeral), `open` (bool, default `true` — launch the clamped browser). **err:** aborts on wrong arity (not 1 arg); a non-map, unknown/wrong-typed option, bad route/port, or bind failure → Err (code 1). Blocks until shutdown. |
 
 ### System
 
@@ -764,7 +780,7 @@ Zero-arg builtins (`cwd`, `os`, `arch`, `home`, `exe`, `drang_pid`) abort on any
 `home() -> string` — **err:** lookup failure → catchable Err; else aborts on any arg.
 `exe() -> string` — **err:** lookup failure → catchable Err; else aborts on any arg.
 `is_terminal(stream?) -> bool` — **err:** non-string arg OR unknown stream name → catchable Err; aborts on arity > 1.
-`parse_args(argv, value_opts?) -> map` — **err:** non-array `argv`/`value_opts`, or any non-string element → **aborts** (uncatchable); aborts on arity ≠ 1–2. Never Err.
+`parse_args(argv, value_opts?) -> map` — **err:** non-array `argv`/`value_opts`, or any non-string element → **aborts** (uncatchable); a result/value-option set beyond one million aggregate items → catchable Err; aborts on arity ≠ 1–2.
 `drang_gc(mode) -> int` — **err:** unknown mode word OR non-int/non-string arg → catchable Err; aborts on arity ≠ 1.
 
 **`parse_args` rules** (permissive; unknown options are not errors, duplicates keep the last value):
@@ -779,10 +795,10 @@ Zero-arg builtins (`cwd`, `os`, `arch`, `home`, `exe`, `drang_pid`) abort on any
 
 ### Date & time
 
-A point in time is epoch seconds as a `float` (Unix epoch, sub-second precision); do time math/comparison with ordinary numeric operators (`$t + 3600`, `$a < $b`). `format_time`/`parse_time`/`date_parts` take an optional trailing opts `map`; the only honored key is `utc: true` (work in UTC instead of local time). The opts argument must be a `map` when present — a non-map, or (harmlessly) an unknown key, yields a catchable `Err`, never an abort. Strftime `%`-codes: `%Y %y %m %d %e %H %I %M %S %p %A %a %B %b %j %w %z %Z %n %t %%`. `format_time` leaves an unknown code literal; `parse_time` returns an `Err` on a code/string it cannot parse.
+A point in time is epoch seconds as a `float` (Unix epoch, sub-second precision); do time math/comparison with ordinary numeric operators (`$t + 3600`, `$a < $b`). `format_time`/`parse_time`/`date_parts` take an optional trailing opts `map`; the only honored key is `utc: bool` (work in UTC when true). A non-map, unknown key, or non-bool `utc` yields a catchable `Err`. Epoch arguments must be finite and within int64 seconds range. Strftime `%`-codes: `%Y %y %m %d %e %H %I %M %S %p %A %a %B %b %j %w %z %Z %n %t %%`. `format_time` leaves an unknown code literal; `parse_time` returns an `Err` on a code/string it cannot parse, round-trips dates outside the `UnixNano` window, and keeps a parsed fractional instant within its original calendar second when float precision rounds at the boundary.
 
 - `now() -> float` — current time as epoch seconds. **err:** aborts on wrong arity (expects 0 args).
-- `sleep(secs: float) -> nil` — pause `secs` seconds (fractional accepted); returns `nil`. **err:** non-numeric `secs` -> Err; aborts on wrong arity (expects 1).
+- `sleep(secs: float) -> nil` — pause `secs` seconds (fractional accepted); returns `nil`. **err:** non-numeric, negative, non-finite, or duration-overflowing `secs` -> Err; aborts on wrong arity (expects 1).
 - `format_time(epoch: float, fmt: string, opts?: map) -> string` — format `epoch` via strftime `%`-codes; local time, or UTC when `opts` is `{utc: true}`; unknown codes pass through literally. **err:** wrong-type `epoch`/`fmt`, or non-map/invalid `opts` -> Err; aborts on wrong arity (expects 2 or 3).
 - `parse_time(str: string, fmt: string, opts?: map) -> float` — parse `str` per `fmt` `%`-codes back to epoch seconds; interprets `str` as local time, or UTC when `opts` is `{utc: true}`. **err:** unparseable `str`, wrong-type args, or non-map/invalid `opts` -> Err; aborts on wrong arity (expects 2 or 3).
 - `date_parts(epoch: float, opts?: map) -> map` — decompose `epoch` into `{year, month, day, hour, minute, second, weekday, yearday}` (`weekday` 0–6, Sunday = 0; `yearday` 1-based; `month`/`day`/`hour`/`minute`/`second` natural values); local, or UTC when `opts` is `{utc: true}`. **err:** wrong-type `epoch` or non-map/invalid `opts` -> Err; aborts on wrong arity (expects 1 or 2).
@@ -821,11 +837,12 @@ drang test <files...>              # run tests
 drang build script.dr [-o out.exe] [--web <dir>] [--gui]   # standalone executable
 ```
 
-- `drang build` embeds the script (and, with `--web <dir>`, a web asset tree) into a copy of the interpreter — one self-contained exe. `--gui` flips the standalone's Windows subsystem so Explorer launches it without a console window (console stays the default so development errors remain visible).
+- `drang build` embeds the script (and, with `--web <dir>`, a web asset tree) into a copy of the interpreter — one self-contained exe. `--gui` flips the standalone's Windows subsystem so Explorer launches it without a console window (console stays the default so development errors remain visible). Limits: source 64 MiB; each asset 64 MiB; assets 192 MiB total / 65,535 files; payload 128 MiB compressed / 256 MiB decompressed. Build and load reject invalid lengths, duplicate asset paths, trailing data, or over-limit payloads; output is synced and installed atomically.
+- `drang fmt` accepts exactly one of `-w`/`--write`, `-c`/`--check`, `-l`/`--list`, or `-d`/`--diff`, plus optional `--fix`; `--` ends options. Source reads are capped at 64 MiB, directory-walk errors are reported, and `-w` respects read-only files and syncs its same-directory atomic replacement. `-d` caps LCS work at four million cells before using a linear prefix/suffix fallback; each side is capped at one million lines and rendered diff output at 64 MiB.
 
 - `-e <src>` — run source from the argument instead of a file.
 - `--run` (default), `--ast` (print the AST), `--tokens` (print the token stream), `--version`/`-V`, `--help`/`-h`.
-- Leading flags are consumed up to the first non-flag token (the program); everything after becomes script arguments, exposed as the array `$ARGV`. The process environment is the map `$ENV`. `parse_args($ARGV, [named...])` folds flags into a map (`--flag` -> `true`, `--key=val` or `--key val` -> string, positionals under `"_"`).
+- Leading flags are consumed up to the first non-flag token (the program); `--` forces the following token to be a program path even when it is exactly `-e` or begins with `-`. Unknown/duplicate flags and contradictory modes are usage errors (exit 2); `-a` requires `-n`/`-p`, `-i` requires `-p`, and `--repl`/version/help must stand alone. Everything after the program becomes script arguments, exposed as the array `$ARGV`. The process environment is the map `$ENV`. `parse_args($ARGV, [named...])` folds flags into a map (`--flag` -> `true`, `--key=val` or `--key val` -> string, positionals under `"_"`).
 
 ### One-liner / stream mode
 

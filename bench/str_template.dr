@@ -8,7 +8,7 @@ for $i in 1..$n {
 	$name := $names[$seed % 5]
 	$seed = ($seed * 1103515245 + 12345) % 2147483648
 	$amount := $seed % 10000
-	$line := "#" ~ str($i) ~ " " ~ $name ~ ": $" ~ str($amount) ~ ".00"
+	$line := "#" ~ str($i) ~ " " ~ $name ~ ": $" ~ str($amount) ~ ".00"  # lint:ignore err-output
 	$total = $total + len($line)
 }
 say($total)

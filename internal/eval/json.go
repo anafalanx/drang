@@ -29,10 +29,63 @@ const (
 	// maxJSONDepth bounds BOTH parse and render recursion, so deeply nested input
 	// (or a cyclic structure pushed onto itself) yields a clean Err instead of a
 	// stack overflow — Go's fatal stack-overflow is NOT recoverable by safeBuiltin.
-	maxJSONDepth = 10000
+	maxJSONDepth = 512
 	// maxJSONIndent caps to_json's indent width, so a giant indent can't exhaust memory.
 	maxJSONIndent = 80
 )
+
+var maxJSONBytes int64 = 64 << 20
+
+type jsonItemBudget struct{ used int }
+
+func (b *jsonItemBudget) take(n int) error {
+	if n < 0 || n > maxCollectionItems-b.used {
+		return fmt.Errorf("JSON value exceeds the %d-item collection limit", maxCollectionItems)
+	}
+	b.used += n
+	return nil
+}
+
+type jsonBuffer struct {
+	strings.Builder
+	limit int64
+	err   error
+}
+
+func newJSONBuffer(limit int64) *jsonBuffer { return &jsonBuffer{limit: limit} }
+
+func (b *jsonBuffer) Write(p []byte) (int, error) {
+	return b.WriteString(string(p))
+}
+
+func (b *jsonBuffer) WriteString(s string) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
+	if int64(len(s)) > b.limit-int64(b.Len()) {
+		b.err = fmt.Errorf("JSON output exceeds the %d-byte limit", b.limit)
+		return 0, b.err
+	}
+	var n int
+	n, b.err = b.Builder.WriteString(s)
+	return n, b.err
+}
+
+func (b *jsonBuffer) WriteByte(c byte) error {
+	if b.err != nil {
+		return b.err
+	}
+	if int64(b.Len()) >= b.limit {
+		b.err = fmt.Errorf("JSON output exceeds the %d-byte limit", b.limit)
+		return b.err
+	}
+	b.err = b.Builder.WriteByte(c)
+	return b.err
+}
+
+func (b *jsonBuffer) WriteRune(r rune) (int, error) {
+	return b.WriteString(string(r))
+}
 
 // builtinFromJSON parses a JSON string into a drang value.
 func builtinFromJSON(args []value.Value) (value.Value, error) {
@@ -42,9 +95,12 @@ func builtinFromJSON(args []value.Value) (value.Value, error) {
 	if args[0].Tag() != value.Str {
 		return value.MakeNil(), typeErrf("from_json expects a string, got %s", args[0].TypeName())
 	}
+	if int64(len(args[0].AsStr())) > maxJSONBytes {
+		return value.MakeErr(fmt.Sprintf("from_json: input exceeds the %d-byte limit", maxJSONBytes), 1), nil
+	}
 	dec := json.NewDecoder(strings.NewReader(args[0].AsStr()))
 	dec.UseNumber() // keep int/float distinction and large-int precision
-	v, err := decodeJSON(dec, 0)
+	v, err := decodeJSON(dec, 0, &jsonItemBudget{})
 	if err != nil {
 		return value.MakeErr("from_json: "+err.Error(), 1), nil
 	}
@@ -55,7 +111,7 @@ func builtinFromJSON(args []value.Value) (value.Value, error) {
 	return v, nil
 }
 
-func decodeJSON(dec *json.Decoder, depth int) (value.Value, error) {
+func decodeJSON(dec *json.Decoder, depth int, budget *jsonItemBudget) (value.Value, error) {
 	if depth > maxJSONDepth {
 		return value.MakeNil(), fmt.Errorf("nested too deeply (over %d levels)", maxJSONDepth)
 	}
@@ -63,10 +119,10 @@ func decodeJSON(dec *json.Decoder, depth int) (value.Value, error) {
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	return decodeJSONValue(dec, tok, depth)
+	return decodeJSONValue(dec, tok, depth, budget)
 }
 
-func decodeJSONValue(dec *json.Decoder, tok json.Token, depth int) (value.Value, error) {
+func decodeJSONValue(dec *json.Decoder, tok json.Token, depth int, budget *jsonItemBudget) (value.Value, error) {
 	switch t := tok.(type) {
 	case json.Delim:
 		switch t {
@@ -74,6 +130,9 @@ func decodeJSONValue(dec *json.Decoder, tok json.Token, depth int) (value.Value,
 			m := value.MakeMap()
 			om := m.Obj().(*value.OrderedMap)
 			for dec.More() {
+				if err := budget.take(1); err != nil {
+					return value.MakeNil(), err
+				}
 				keyTok, err := dec.Token()
 				if err != nil {
 					return value.MakeNil(), err
@@ -82,7 +141,7 @@ func decodeJSONValue(dec *json.Decoder, tok json.Token, depth int) (value.Value,
 				if !ok {
 					return value.MakeNil(), fmt.Errorf("object key is not a string")
 				}
-				val, err := decodeJSON(dec, depth+1)
+				val, err := decodeJSON(dec, depth+1, budget)
 				if err != nil {
 					return value.MakeNil(), err
 				}
@@ -95,7 +154,10 @@ func decodeJSONValue(dec *json.Decoder, tok json.Token, depth int) (value.Value,
 		case '[':
 			var elems []value.Value
 			for dec.More() {
-				el, err := decodeJSON(dec, depth+1)
+				if err := budget.take(1); err != nil {
+					return value.MakeNil(), err
+				}
+				el, err := decodeJSON(dec, depth+1, budget)
 				if err != nil {
 					return value.MakeNil(), err
 				}
@@ -156,14 +218,17 @@ func builtinToJSON(args []value.Value) (value.Value, error) {
 			return value.MakeNil(), typeErrf("to_json indent must be an int or string, got %s", args[1].TypeName())
 		}
 	}
-	var b strings.Builder
-	if err := encodeJSON(&b, args[0], indent, 0); err != nil {
+	b := newJSONBuffer(maxJSONBytes)
+	if err := encodeJSON(b, args[0], indent, 0, &jsonItemBudget{}); err != nil {
 		return value.MakeErr("to_json: "+err.Error(), 1), nil
 	}
 	return value.MakeStr(b.String()), nil
 }
 
-func encodeJSON(b *strings.Builder, v value.Value, indent string, depth int) error {
+func encodeJSON(b *jsonBuffer, v value.Value, indent string, depth int, budget *jsonItemBudget) error {
+	if b.err != nil {
+		return b.err
+	}
 	if depth > maxJSONDepth {
 		return fmt.Errorf("value nested too deeply (cycle?)")
 	}
@@ -195,19 +260,22 @@ func encodeJSON(b *strings.Builder, v value.Value, indent string, depth int) err
 		}
 		writeJSONString(b, s)
 	case value.Arr:
-		return encodeJSONArray(b, v.Obj().(*value.Array), indent, depth)
+		return encodeJSONArray(b, v.Obj().(*value.Array), indent, depth, budget)
 	case value.Map:
-		return encodeJSONMap(b, v.Obj().(*value.OrderedMap), indent, depth)
+		return encodeJSONMap(b, v.Obj().(*value.OrderedMap), indent, depth, budget)
 	default:
 		return fmt.Errorf("cannot encode %s as JSON", v.TypeName())
 	}
-	return nil
+	return b.err
 }
 
-func encodeJSONArray(b *strings.Builder, a *value.Array, indent string, depth int) error {
+func encodeJSONArray(b *jsonBuffer, a *value.Array, indent string, depth int, budget *jsonItemBudget) error {
+	if err := budget.take(len(a.Elems)); err != nil {
+		return err
+	}
 	if len(a.Elems) == 0 {
 		b.WriteString("[]")
-		return nil
+		return b.err
 	}
 	b.WriteByte('[')
 	for i, e := range a.Elems {
@@ -215,19 +283,22 @@ func encodeJSONArray(b *strings.Builder, a *value.Array, indent string, depth in
 			b.WriteByte(',')
 		}
 		writeJSONNewline(b, indent, depth+1)
-		if err := encodeJSON(b, e, indent, depth+1); err != nil {
+		if err := encodeJSON(b, e, indent, depth+1, budget); err != nil {
 			return err
 		}
 	}
 	writeJSONNewline(b, indent, depth)
 	b.WriteByte(']')
-	return nil
+	return b.err
 }
 
-func encodeJSONMap(b *strings.Builder, m *value.OrderedMap, indent string, depth int) error {
+func encodeJSONMap(b *jsonBuffer, m *value.OrderedMap, indent string, depth int, budget *jsonItemBudget) error {
+	if err := budget.take(m.Len()); err != nil {
+		return err
+	}
 	if m.Len() == 0 {
 		b.WriteString("{}")
-		return nil
+		return b.err
 	}
 	keys, vals := m.Keys(), m.Vals()
 	// Distinct map keys can stringify to the same JSON key (int 1 vs string "1"); emitting both
@@ -253,33 +324,39 @@ func encodeJSONMap(b *strings.Builder, m *value.OrderedMap, indent string, depth
 		if indent != "" {
 			b.WriteByte(' ')
 		}
-		if err := encodeJSON(b, vals[i], indent, depth+1); err != nil {
+		if err := encodeJSON(b, vals[i], indent, depth+1, budget); err != nil {
 			return err
 		}
 	}
 	writeJSONNewline(b, indent, depth)
 	b.WriteByte('}')
-	return nil
+	return b.err
 }
 
 // writeJSONNewline writes a newline and depth-level indentation when pretty
 // (indent != ""); a no-op for compact output.
-func writeJSONNewline(b *strings.Builder, indent string, depth int) {
+func writeJSONNewline(b *jsonBuffer, indent string, depth int) {
 	if indent == "" {
 		return
 	}
 	b.WriteByte('\n')
 	for i := 0; i < depth; i++ {
 		b.WriteString(indent)
+		if b.err != nil {
+			return
+		}
 	}
 }
 
 // writeJSONString writes s as a quoted, escaped JSON string. Control characters
 // are escaped; valid UTF-8 passes through (HTML metacharacters are not escaped,
 // unlike encoding/json's default).
-func writeJSONString(b *strings.Builder, s string) {
+func writeJSONString(b *jsonBuffer, s string) {
 	b.WriteByte('"')
 	for _, r := range s {
+		if b.err != nil {
+			return
+		}
 		switch r {
 		case '"':
 			b.WriteString(`\"`)

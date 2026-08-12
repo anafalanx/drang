@@ -100,7 +100,11 @@ func minMax(name string, args []value.Value, wantMin bool) (value.Value, error) 
 	}
 	best := nums[0]
 	for _, n := range nums[1:] {
-		if (wantMin && n.Num() < best.Num()) || (!wantMin && n.Num() > best.Num()) {
+		cmp, ok := value.CompareNumbers(n, best)
+		if !ok {
+			return value.MakeErr(name+": NaN is not orderable", 1), nil
+		}
+		if (wantMin && cmp < 0) || (!wantMin && cmp > 0) {
 			best = n
 		}
 	}
@@ -314,10 +318,16 @@ func builtinTan(args []value.Value) (value.Value, error)  { return mathUnary("ta
 func builtinAtan(args []value.Value) (value.Value, error) { return mathUnary("atan", math.Atan, args) }
 func builtinExp(args []value.Value) (value.Value, error)  { return mathUnary("exp", math.Exp, args) }
 
-func builtinAsin(args []value.Value) (value.Value, error) { return mathArcUnary("asin", math.Asin, args) }
-func builtinAcos(args []value.Value) (value.Value, error) { return mathArcUnary("acos", math.Acos, args) }
+func builtinAsin(args []value.Value) (value.Value, error) {
+	return mathArcUnary("asin", math.Asin, args)
+}
+func builtinAcos(args []value.Value) (value.Value, error) {
+	return mathArcUnary("acos", math.Acos, args)
+}
 
-func builtinAtan2(args []value.Value) (value.Value, error) { return mathBinary("atan2", math.Atan2, args) }
+func builtinAtan2(args []value.Value) (value.Value, error) {
+	return mathBinary("atan2", math.Atan2, args)
+}
 
 // builtinPi is the constant pi as a zero-arg builtin (bare names are functions in drang;
 // bind a constant if you prefer: $PI ::= pi()). log2/log10 (use log(x, 2)/log(x, 10)),

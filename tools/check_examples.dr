@@ -5,26 +5,32 @@
 #   drang tools/check_examples.dr REFERENCE.md
 #
 # Run from the repo root. A runnable example is a ```drang fenced block; when it is
-# immediately followed by a plain ``` block, that block is its expected output and
-# is compared byte-for-byte (CRLF- and trailing-whitespace-normalized) against what
-# drang actually prints — stdout, stderr, or the two combined, since an error demo
-# shows stderr. Exit 0 iff every deterministic example with shown output matches.
+# followed (allowing blank lines) by a plain ``` block, that block is its expected
+# output. The output is compared with the declared stream after CRLF/outer-whitespace
+# normalization. A fence may carry explicit checker metadata:
 #
-#   - Non-deterministic examples (now()/rand/uuid/…) are run but NOT compared — their
-#     output legitimately varies from run to run.
+#   ```drang exit=1 stream=stderr   # expected non-zero outcome and output stream
+#   ```drang stream=combined        # stdout followed by stderr
+#   ```drang nondeterministic       # run and require exit 0, but do not compare output
+#   ```drang norun                  # display-only/context-dependent example
+#
+# Defaults are exit=0 and stream=stdout. An unexplained non-zero exit is therefore a
+# failure, including for a block with no shown output.
+#
+#   - Non-deterministic examples must opt in with the fence metadata above. They are
+#     run and must succeed, but their output legitimately is not compared.
 #   - Shell-invocation examples (drang -ne '…', printf | drang) document command-line
 #     usage, not a drang program, so they are skipped.
 #   - A ```drang block with no shown output is run only to surface an unexpected abort.
 #
-# Each example runs in a throwaway ./.drang_examples/ working directory, so any file
-# or store side effects it creates stay contained and are removed at the end.
+# Each checker run uses a fresh system temporary directory shared by its examples,
+# so concurrent checks do not collide and side effects stay contained. It is removed at the end.
 $doc := $ARGV[0] // "MANUAL.md"
 $src := read_file($doc)?
 $lines := split(replace_all($src, "\r\n", "\n"), "\n")
-$n := len($lines)
-$work ::= ".drang_examples"  # throwaway cwd for each example's side effects
-capture_all("cmd", "/c", "rmdir", "/s", "/q", $work)  # clear any stale copy
-mkdir($work) // true
+$n := len($lines)?
+$work ::= tempdir("drang-examples")?
+$prog ::= path_join($work, "prog.dr")
 
 fn .norm($s) {
 	trim(replace_all($s, "\r", ""))
@@ -32,8 +38,12 @@ fn .norm($s) {
 
 fn .first_code_line($code) {
 	for $l in split($code, "\n") {
-		if trim($l) != "" and !starts_with(trim($l), "#") {
-			return trim($l)
+		$t := trim($l)?
+		if $t != "" {
+			$comment := starts_with($t, "#")?
+			if !$comment {
+				return $t
+			}
 		}
 	}
 	""
@@ -46,7 +56,7 @@ fn .first_code_line($code) {
 fn .is_norun($code) {
 	for $l in split($code, "\n") {
 		if trim($l) != "" {
-			return starts_with(trim($l), "# norun")
+			return starts_with(trim($l), "# norun")?
 		}
 	}
 	false
@@ -54,37 +64,86 @@ fn .is_norun($code) {
 
 # A shell-invocation example documents command-line usage, not a drang program.
 fn .is_shell($code) {
-	$first := .first_code_line($code)
+	$first := .first_code_line($code)?
 	for $p in ["drang ", "printf ", "echo ", "$ "] {
-		if starts_with($first, $p) {
+		if starts_with($first, $p)? {
 			return true
 		}
 	}
-	contains($code, "| drang") or contains($code, "&& drang")
+	$pipe := contains($code, "| drang")?
+	$and := contains($code, "&& drang")?
+	$pipe or $and
 }
 
-# An example whose output cannot be reproduced byte-for-byte (wall-clock, randomness).
-fn .is_nondet($code) {
-	for $m in ["now(", "rand(", "rand_int(", "uuid(", "sample(", "shuffle(", "tempfile(", "tempdir("] {
-		if contains($code, $m) {
-			return true
+# Parse the optional words after ```drang. Unknown or malformed metadata is a gate
+# failure rather than a silently ignored typo.
+fn .meta($fence) {
+	$m := {exit: 0, stream: "stdout", nondeterministic: false, norun: false, error: ""}
+	$tail := trim(replace_first(trim($fence), "```drang", ""))
+	if $tail == "" {
+		return $m
+	}
+	for $word in split($tail, " ") {
+		if $word == "" {
+			next
+		}
+		if starts_with($word, "exit=")? {
+			$v := int(replace_first($word, "exit=", ""))
+			if is_err($v) or $v < 0 or $v > 255 {
+				$m.error = "bad exit metadata " ~ $word ~ " (want exit=0..255)"
+				return $m
+			}
+			$m.exit = $v
+		} else if starts_with($word, "stream=")? {
+			$v := replace_first($word, "stream=", "")
+			$valid := contains(["stdout", "stderr", "combined"], $v)?
+			if !$valid {
+				$m.error = "bad stream metadata " ~ $word ~ " (want stdout, stderr, or combined)"
+				return $m
+			}
+			$m.stream = $v
+		} else if $word == "nondeterministic" {
+			$m.nondeterministic = true
+		} else if $word == "norun" {
+			$m.norun = true
+		} else {
+			$m.error = "unknown checker metadata " ~ $word
+			return $m
 		}
 	}
-	false
+	$m
+}
+
+fn .actual($r, $stream) {
+	if $stream == "stderr" {
+		return $r.err
+	}
+	if $stream == "combined" {
+		if trim($r.out) != "" and trim($r.err) != "" {
+			return $r.out ~ "\n" ~ $r.err
+		}
+		return $r.out ~ $r.err
+	}
+	$r.out
 }
 
 # --- collect (code, expected?, line) triples -----------------------------------
 $cases := []
 $i := 0
 while $i < $n {
-	if trim($lines[$i]) == "```drang" {
+	$fence := trim($lines[$i])
+	if $fence == "```drang" or starts_with($fence, "```drang ")? {
 		$start := $i + 1
 		$j := $start
 		while $j < $n and trim($lines[$j]) != "```" {
 			$j = $j + 1
 		}
 		$code := join($lines[$start..$j - 1], "\n")
+		$metadata := .meta($fence)?
 		$k := $j + 1
+		while $k < $n and trim($lines[$k]) == "" {
+			$k = $k + 1
+		}
 		if $k < $n and trim($lines[$k]) == "```" {
 			$ostart := $k + 1
 			$m := $ostart
@@ -93,18 +152,25 @@ while $i < $n {
 			}
 			push(
 				$cases,
-				{code: $code, expected: join($lines[$ostart..$m - 1], "\n"), hasout: true, line: $start}
-			)
+				{
+					code: $code,
+					expected: join($lines[$ostart..$m - 1], "\n"),
+					hasout: true,
+					line: $start + 1,
+					meta: $metadata
+				}
+			)?
 			$i = $m + 1
 		} else {
-			push($cases, {code: $code, expected: "", hasout: false, line: $start})
+			push($cases, {code: $code, expected: "", hasout: false, line: $start + 1, meta: $metadata})?
 			$i = $j + 1
 		}
 	} else {
 		$i = $i + 1
 	}
 }
-say($"Checking ${len($cases)} drang example blocks in ${doc}")
+$caseCount := len($cases)?
+say($"Checking ${caseCount} drang example blocks in ${doc}")
 say("")
 $pass := 0
 $fail := 0
@@ -113,31 +179,48 @@ $shell := 0
 $norun := 0
 $noout := 0
 for $c in $cases {
-	if .is_norun($c.code) {
+	if $c.meta.error != "" {
+		$fail = $fail + 1
+		say($"FAIL  ${doc}:${c.line} — ${c.meta.error}")
+		next
+	}
+	if $c.meta.norun or .is_norun($c.code)? {
 		$norun = $norun + 1
 		next
 	}
-	if .is_shell($c.code) {
+	if .is_shell($c.code)? {
 		$shell = $shell + 1
 		next
 	}
-	write_file($work ~ "/prog.dr", $c.code)
+	write_file($prog, $c.code)?
 	$r := capture_all(exe(), "prog.dr", {cwd: $work})  # cwd -> the child sees prog.dr and writes here
-	if !$c.hasout {
-		$noout = $noout + 1
-		if !$r.ok and $r.code != 0 {
-			say($"INFO  no-output block at ${doc}:${c.line} exits ${r.code}")
+	if $r.code != $c.meta.exit {
+		$fail = $fail + 1
+		say($"FAIL  ${doc}:${c.line} exits ${r.code}, want ${c.meta.exit}")
+		if trim($r.out) != "" {
+			say("--- actual (stdout) ---")
+			say(.norm($r.out))
 		}
+		if trim($r.err) != "" {
+			say("--- actual (stderr) ---")
+			say(.norm($r.err))
+		}
+		say("")
 		next
 	}
-	if .is_nondet($c.code) {
+	if $c.meta.nondeterministic {
 		$nondet = $nondet + 1
 		say($"SKIP  non-deterministic at ${doc}:${c.line}")
 		next
 	}
+	if !$c.hasout {
+		$noout = $noout + 1
+		$pass = $pass + 1
+		next
+	}
 	$want := .norm($c.expected)
-	$cands := [.norm($r.out), .norm($r.err), .norm($r.out ~ $r.err), .norm($r.out ~ "\n" ~ $r.err)]
-	if contains($cands, $want) {
+	$got := .norm(.actual($r, $c.meta.stream))
+	if $got == $want {
 		$pass = $pass + 1
 	} else {
 		$fail = $fail + 1
@@ -146,26 +229,22 @@ for $c in $cases {
 		say($c.code)
 		say("--- expected ---")
 		say($want)
-		say("--- actual (stdout) ---")
-		say(.norm($r.out))
-		if trim($r.err) != "" {
-			say("--- actual (stderr) ---")
-			say(.norm($r.err))
-		}
+		say($"--- actual (${c.meta.stream}) ---")
+		say($got)
 		say("")
 	}
 }
-capture_all("cmd", "/c", "rmdir", "/s", "/q", $work)  # remove the throwaway dir + all example artifacts
+rm($work) // true
 say("")
 say("=== summary ===")
-say($"  blocks:            ${len($cases)}")
-say($"  checked (output):  ${$pass + $fail}")
+say($"  blocks:            ${caseCount}")
+say($"  checked:           ${$pass + $fail}")
 say($"  passed:            ${pass}")
 say($"  mismatches:        ${fail}")
 say($"  non-deterministic: ${nondet} (run, not compared)")
 say($"  shell-skipped:     ${shell}")
 say($"  norun-skipped:     ${norun} (shown, not run — blocking/display examples)")
-say($"  no-output:         ${noout} (run to catch an unexpected abort)")
+say($"  no-output:         ${noout} (exit status checked)")
 say("")
 if $fail == 0 {
 	say("EXAMPLES OK")

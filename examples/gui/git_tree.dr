@@ -46,14 +46,14 @@ fn .h($value) {
 }
 
 fn .param($req, $name, $fallback) {
-	if has($req.form, $name) {
+	if has($req.form, $name)? {
 		return $req.form[$name]
 	}
 	$fallback
 }
 
 fn .choice($value, $allowed, $fallback) {
-	if contains($allowed, $value) {
+	if contains($allowed, $value)? {
 		return $value
 	}
 	$fallback
@@ -71,7 +71,7 @@ fn .git_value($args, $fallback = "—") {
 	if !$result.ok {
 		return $fallback
 	}
-	$value := trim($result.out)
+	$value := trim($result.out)?
 	if $value == "" {
 		return $fallback
 	}
@@ -86,12 +86,12 @@ fn .ref_html($decorations) {
 	for $raw in split($decorations, ", ") {
 		$ref := $raw
 		$class := "branch"
-		if starts_with($ref, "tag: ") {
+		if starts_with($ref, "tag: ")? {
 			$class = "tag"
 			$ref = replace_first($ref, "tag: ", "")
-		} else if starts_with($ref, "HEAD") {
+		} else if starts_with($ref, "HEAD")? {
 			$class = "head"
-		} else if contains($ref, "/") {
+		} else if contains($ref, "/")? {
 			$class = "remote"
 		}
 		$html = $html ~ '<span class="ref ref-' ~ $class ~ '" title="' ~ .h($raw) ~ '">' ~ .h($ref) ~ "</span>"
@@ -100,7 +100,7 @@ fn .ref_html($decorations) {
 }
 
 fn .graph_html($text) {
-	if trim($text) == "" {
+	if trim($text)? == "" {
 		return <<'HTML'
 <div class="empty-state">
   <div class="empty-glyph">⌁</div>
@@ -111,7 +111,7 @@ HTML
 	}
 	$rows := ""
 	$commits := 0
-	for $line in lines($text) {
+	for $line in lines($text)? {
 		$at := find_index($line, $MARK)
 		if $at < 0 {
 			$rows = $rows ~ '<tr class="connector"><td class="lanes">' ~ .h($line) ~ '</td><td colspan="5"></td></tr>'
@@ -123,17 +123,17 @@ HTML
 		}
 		$payload := $line[$at + len($MARK)..-1]
 		$fields := split($payload, "\t")
-		if len($fields) < 5 {
+		if len($fields)? < 5 {
 			$rows = $rows ~ '<tr class="connector"><td class="lanes">' ~ .h($line) ~ '</td><td colspan="5"></td></tr>'
 			next
 		}
 		$commits = $commits + 1
-		$subject := join(drop($fields, 4), "\t")
+		$subject := join(drop($fields, 4)?, "\t")
 		$rows = $rows ~ '<tr class="commit">' ~ '<td class="lanes">' ~ .h($graph) ~ "</td>" ~ '<td class="hash">' ~ .h(
 			$fields[0]
 		) ~ "</td>" ~ '<td class="subject" title="' ~ .h($subject) ~ '">' ~ .h($subject) ~ "</td>" ~ '<td class="decorations">' ~ .ref_html(
 			$fields[3]
-		) ~ "</td>" ~ '<td class="author">' ~ .h($fields[2]) ~ "</td>" ~ '<td class="date">' ~ .h(
+		)? ~ "</td>" ~ '<td class="author">' ~ .h($fields[2]) ~ "</td>" ~ '<td class="date">' ~ .h(
 			$fields[1]
 		) ~ "</td></tr>"
 	}
@@ -141,9 +141,9 @@ HTML
 }
 
 fn .tree($req) {
-	$scope := .choice(.param($req, "scope", "visible"), ["visible", "current"], "visible")
-	$limit := .choice(.param($req, "limit", "all"), ["80", "160", "all"], "all")
-	$query := trim(.param($req, "q", ""))
+	$scope := .choice(.param($req, "scope", "visible")?, ["visible", "current"], "visible")?
+	$limit := .choice(.param($req, "limit", "all")?, ["80", "160", "all"], "all")?
+	$query := trim(.param($req, "q", "")?)?
 	$args := [
 		"log",
 		"--graph",
@@ -153,13 +153,13 @@ fn .tree($req) {
 		"--format=" ~ $MARK ~ "%h%x09%ad%x09%an%x09%D%x09%s"
 	]
 	if $scope == "visible" {
-		push($args, "--branches", "--remotes", "--tags")
+		push($args, "--branches", "--remotes", "--tags")?
 	}
 	if $query != "" {
-		push($args, "--regexp-ignore-case", "--fixed-strings", "--grep=" ~ $query)
+		push($args, "--regexp-ignore-case", "--fixed-strings", "--grep=" ~ $query)?
 	}
 	if $limit != "all" {
-		push($args, "--max-count=" ~ $limit)
+		push($args, "--max-count=" ~ $limit)?
 	}
 	$log := .git($args)
 	if !$log.ok {
@@ -167,22 +167,22 @@ fn .tree($req) {
 			$log.err
 		) ~ "</pre></section>"
 	}
-	$commit_total := .git_value(["rev-list", "--count", "--branches", "--remotes", "--tags"])
+	$commit_total := .git_value(["rev-list", "--count", "--branches", "--remotes", "--tags"])?
 	$branch_total := .git_value(
 		["for-each-ref", "--count=99999", "--format=%(refname:short)", "refs/heads"]
-	)
+	)?
 	if $branch_total != "—" {
-		$branch_total = str(len(lines($branch_total)))
+		$branch_total = str(len(lines($branch_total)?)?)
 	}
-	$tag_total := .git_value(["tag", "--list"])
+	$tag_total := .git_value(["tag", "--list"])?
 	if $tag_total != "—" {
-		$tag_total = str(len(lines($tag_total)))
+		$tag_total = str(len(lines($tag_total)?)?)
 	}
-	$branch := .git_value(["branch", "--show-current"], "detached")
+	$branch := .git_value(["branch", "--show-current"], "detached")?
 	$status := .git(["status", "--porcelain=v1"])
 	$pending := 0
 	if $status.ok {
-		$pending = len(lines($status.out))
+		$pending = len(lines($status.out)?)?
 	}
 	$work_label := "Clean"
 	$work_detail := "no pending files"
@@ -193,8 +193,8 @@ fn .tree($req) {
 		$work_class = "dirty"
 	}
 	$shown := 0
-	for $line in lines($log.out) {
-		if contains($line, $MARK) {
+	for $line in lines($log.out)? {
+		if contains($line, $MARK)? {
 			$shown = $shown + 1
 		}
 	}
@@ -202,16 +202,16 @@ fn .tree($req) {
 	if $scope == "current" {
 		$scope_label = "current branch"
 	}
-	$match_label := str($shown) ~ " commits shown"
+	$match_label := str($shown)? ~ " commits shown"
 	if $query != "" {
-		$match_label = str($shown) ~ " matches"
+		$match_label = str($shown)? ~ " matches"
 	}
 	$scope_visible := .selected($scope, "visible")
 	$scope_current := .selected($scope, "current")
 	$limit_80 := .selected($limit, "80")
 	$limit_160 := .selected($limit, "160")
 	$limit_all := .selected($limit, "all")
-	$tree_html := .graph_html($log.out)
+	$tree_html := .graph_html($log.out)?
 	$updated := format_time(now(), "%H:%M:%S")
 	<<$HTML
 <section class="metrics" aria-label="Repository summary">
@@ -412,7 +412,7 @@ fn .home($req) {
     </div>
     <div class="repo-path" title="${.h($ROOT)}">${.h($ROOT)}</div>
   </header>
-  <div id="tree-panel">${.tree($req)}</div>
+  <div id="tree-panel">${.tree($req)?}</div>
   <footer><span>Rendered directly from Git’s topology · no cached history</span><span>Local-only htmx UI · powered by drang</span></footer>
 </main>
 HTML
@@ -420,7 +420,7 @@ HTML
 }
 
 $probe := .git(["rev-parse", "--is-inside-work-tree"])
-if !$probe.ok or trim($probe.out) != "true" {
-	die("git_tree: not a Git work tree: " ~ $ROOT ~ "\n" ~ trim($probe.err))
+if !$probe.ok or trim($probe.out)? != "true" {
+	die("git_tree: not a Git work tree: " ~ $ROOT ~ "\n" ~ trim($probe.err)?)
 }
 serve({routes: {"/": .home, "/tree": .tree}, open: $OPEN_WINDOW})?

@@ -2,8 +2,11 @@ package winjob
 
 import (
 	"runtime"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // drainFor collects events until done(collected) is true or the deadline passes.
@@ -204,6 +207,56 @@ func TestMonitorClose(t *testing.T) {
 	}
 }
 
+// Close posts an orderly marker behind already-queued notifications. A limit event that raced the
+// child's exit therefore remains observable when Close returns instead of being discarded with the
+// completion-port handle.
+func TestMonitorCloseDrainsQueuedEvents(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		mon, err := NewMonitor()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.PostQueuedCompletionStatus(mon.port.raw(), jobMsgActiveProcessLimit, 77, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := mon.Close(); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for ev := range mon.Events() {
+			if ev.Kind == EventActiveProcessLimit && ev.Job == 77 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("iteration %d: Close discarded an event queued before shutdown", i)
+		}
+	}
+}
+
+// Close is a join, not merely a close request: when it returns the delivery loop has exited and
+// Events is already closed. Repeated concurrent callers must observe the same boundary.
+func TestMonitorConcurrentCloseJoinsLoop(t *testing.T) {
+	mon, err := NewMonitor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := mon.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if _, ok := <-mon.Events(); ok {
+		t.Fatal("Events remained open after all Close calls returned")
+	}
+}
+
 // D1: a Monitor dropped without Close() must not leak its port handle or its loop goroutine — the
 // GC backstop reclaims both.
 func TestMonitorNoLeakOnDrop(t *testing.T) {
@@ -211,23 +264,36 @@ func TestMonitorNoLeakOnDrop(t *testing.T) {
 		t.Skip("skipping monitor-leak scan in -short")
 	}
 	baseG := runtime.NumGoroutine()
-	baseH := processHandleCount(t)
+	ports := make([]*ioport, 0, 20)
 	for i := 0; i < 20; i++ {
-		if _, err := NewMonitor(); err != nil { // created and immediately dropped, no Close
+		mon, err := NewMonitor()
+		if err != nil {
 			t.Fatal(err)
 		}
+		// Keep only the cleanup target, not Monitor itself. This lets us assert the exact
+		// completion-port handles were closed without confusing the result with Windows handles
+		// retained by Go's expanded OS-thread pool after many blocking GQCS calls.
+		ports = append(ports, mon.port)
+		mon = nil
 	}
-	var gGrew, hGrew int
+	var gGrew, openPorts int
 	for i := 0; i < 12; i++ { // give the cleanups + loop exits time to settle
 		runtime.GC()
 		time.Sleep(50 * time.Millisecond)
 		gGrew = runtime.NumGoroutine() - baseG
-		hGrew = int(processHandleCount(t)) - int(baseH)
-		if gGrew <= 3 && hGrew <= 5 {
+		openPorts = 0
+		for _, p := range ports {
+			p.mu.Lock()
+			if p.handle != 0 || !p.closed {
+				openPorts++
+			}
+			p.mu.Unlock()
+		}
+		if gGrew <= 3 && openPorts == 0 {
 			return // reclaimed
 		}
 	}
-	t.Errorf("after dropping 20 monitors, goroutines grew by %d and handles by %d — leak", gGrew, hGrew)
+	t.Errorf("after dropping 20 monitors, goroutines grew by %d and %d completion ports remain open — leak", gGrew, openPorts)
 }
 
 // D3: Watch after Close returns an error rather than associating a job with a closed/recycled port.
@@ -348,5 +414,11 @@ func TestClassifyContract(t *testing.T) {
 		if isProcessMsg(msg) && classifyMsg(msg) == EventOther {
 			t.Errorf("msg %d carries a pid but classifies to EventOther (ambiguous shape)", msg)
 		}
+	}
+}
+
+func TestClassifyActiveProcessLimit(t *testing.T) {
+	if got := classifyMsg(jobMsgActiveProcessLimit); got != EventActiveProcessLimit {
+		t.Fatalf("active-process-limit message classified as %v", got)
 	}
 }

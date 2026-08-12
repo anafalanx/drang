@@ -1,31 +1,64 @@
 # version_lint.dr — assert the user-facing version stamps agree with the source of
 # truth, `var version` in cmd/drang/main.go. The release flow bumps the docs it
 # touches, but overview stamps drift silently unless gated (README's Status sat at
-# "drang 0.8" through four releases). Checked stamps:
+# "drang 0.8" through four releases). Primary-document stamps are checked at their
+# exact line location, not by a broad substring that another mention could satisfy.
+# Checked stamps:
 #
-#   README.md            the Status section must mention "drang <version>"
-#   tools/gen_manual.dr  the manual.html footer template must carry "drang <version>"
-#   CHANGELOG.md         a "## [<version>]" release section must exist
+#   README.md            the Status heading
+#   MANUAL.md            the "Covers drang" declaration
+#   REFERENCE.md         heading and formal-rules declaration
+#   tools/gen_manual.dr  the manual.html footer template
+#   CHANGELOG.md         the release section
+#   docs/index.html      hero/download/footer stamps
 #
 #   drang tools/version_lint.dr
 #
 # Run from the repo root. Exits 0 iff every stamp matches.
 $main := read_file("cmd/drang/main.go")?
-$m := match($main, qr/var version = "([0-9]+\.[0-9]+\.[0-9]+)"/)
+$m := match($main, qr/var version = "([0-9]+\.[0-9]+\.[0-9]+)"/)?
 if !$m {
 	die("version_lint: no `var version = \"X.Y.Z\"` in cmd/drang/main.go")
 }
 $V ::= $m[1]
-$checks := [
+# A line stamp must occur exactly once at its structural marker and begin with the
+# expected current-version text. This catches a stale primary declaration even if
+# the current number happens to appear elsewhere in the same document.
+$lineChecks := [
 	{
 		file: "README.md",
-		needle: "drang " ~ $V,
-		why: "the Status section must mention the current version"
+		marker: "**drang ",
+		want: "**drang " ~ $V ~ "**:",
+		exact: false,
+		why: "the Status section heading must name the current version"
 	},
 	{
+		file: "MANUAL.md",
+		marker: "*Covers drang ",
+		want: "*Covers drang " ~ $V ~ ".*",
+		exact: true,
+		why: "the manual coverage declaration must name the current version"
+	},
+	{
+		file: "REFERENCE.md",
+		marker: "# drang — Formal Reference (v",
+		want: "# drang — Formal Reference (v" ~ $V ~ ")",
+		exact: true,
+		why: "the reference heading must name the current version"
+	},
+	{
+		file: "REFERENCE.md",
+		marker: "Formal rules for drang ",
+		want: "Formal rules for drang " ~ $V ~ ".",
+		exact: false,
+		why: "the formal-rules declaration must name the current version"
+	}
+]
+$containsChecks := [
+	{
 		file: "tools/gen_manual.dr",
-		needle: "drang " ~ $V,
-		why: "the manual.html footer must carry the current version"
+		needle: "MIT licensed · drang " ~ $V ~ " · built by drang",
+		why: "the manual.html footer template must carry the current version"
 	},
 	{
 		file: "CHANGELOG.md",
@@ -34,19 +67,53 @@ $checks := [
 	},
 	{
 		file: "docs/index.html",
-		needle: "drang " ~ $V,
+		needle: "MIT licensed · drang " ~ $V,
 		why: "the drang.dev landing-page footer must carry the current version"
 	},
 	{
 		file: "docs/index.html",
-		needle: "v" ~ $V,
-		why: "the drang.dev hero pill / download button must name the current release"
+		needle: "v" ~ $V ~ " · released",
+		why: "the drang.dev hero pill must name the current release"
+	},
+	{
+		file: "docs/index.html",
+		needle: "Download v" ~ $V,
+		why: "the drang.dev download button must name the current release"
 	}
 ]
 $failed := 0
-for $c in $checks {
+for $c in $lineChecks {
 	$text := read_file($c.file)?
-	if contains($text, $c.needle) {
+	$hits := []
+	for $line in lines($text)? {
+		if starts_with(trim($line), $c.marker)? {
+			push($hits, trim($line))?
+		}
+	}
+	$hitCount := len($hits)?
+	if $hitCount != 1 {
+		say(
+			$"  FAIL  ${c.file} — marker \"${c.marker}\" occurs ${hitCount} times (want exactly 1): ${c.why}"
+		)
+		$failed = $failed + 1
+	} else {
+		$matches := starts_with($hits[0], $c.want)?
+		$kind := "prefix"
+		if $c.exact {
+			$matches = $hits[0] == $c.want
+			$kind = "exact line"
+		}
+		if !$matches {
+			say($"  FAIL  ${c.file} — got \"${hits[0]}\", want ${kind} \"${c.want}\": ${c.why}")
+			$failed = $failed + 1
+		} else {
+			say($"  ok    ${c.file}  (${c.want})")
+		}
+	}
+}
+for $c in $containsChecks {
+	$text := read_file($c.file)?
+	if contains($text, $c.needle)? {
 		say($"  ok    ${c.file}  (found ${c.needle})")
 	} else {
 		say($"  FAIL  ${c.file} — missing \"${c.needle}\": ${c.why}")

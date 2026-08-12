@@ -17,7 +17,7 @@
 <main id="main" class="wrap"><div class="prose">
 <h1 id="drang-language-manual">drang: Language Manual</h1>
 <p><em>A small, Perl-inspired scripting language for text processing, system glue, and orchestration, implemented in Go.</em></p>
-<p><em>Covers drang 0.10.0.</em></p>
+<p><em>Covers drang 0.12.1.</em></p>
 <blockquote>Every code example in this manual was executed against the interpreter; the shown output is real.</blockquote>
 <p>This manual is the worked, example-driven guide. For a terse formal specification (the grammar, the semantics, and every builtin with exact signatures and error modes), see <a href="https://github.com/anafalanx/drang/blob/main/REFERENCE.md">REFERENCE.md</a>.</p>
 <h2 id="contents">Contents</h2>
@@ -27,9 +27,11 @@
 <p>drang is a small scripting language for text processing and system glue: the work of wrangling text, shelling out to other programs, and orchestrating small jobs. It is implemented in Go and is Windows-only.</p>
 <p>Three commitments shape it.</p>
 <p><strong>One sigil for all data.</strong> Every variable wears a <code>$</code>, whether it holds a number, a string, an array, or a map: <code>$x</code> is <code>$x</code> regardless of what is inside it. There is no scalar-versus-list distinction and no punctuation-variable menagerie. Names carry their <em>kind</em> by sigil, not their type: <code>$</code> marks data, a leading <code>.</code> marks the functions you define, and a bare name marks a builtin. The three form separate namespaces (covered under Functions), so your <code>.split</code> and the builtin <code>split</code> never collide.</p>
-<p><strong>Parallelism made safe by subtraction.</strong> drang runs on real threads with no global lock, and it stays correct by removing the things that make shared-memory parallelism dangerous. Constants declared with <code>::=</code> are deeply frozen, strings are immutable, and there are no shared mutable globals reachable from a parallel worker. Data-parallel combinators like <code>pmap</code> therefore need no locks: each worker gets its own deep copy of the data it touches.</p>
-<p><strong>Errors are values.</strong> A failure is an ordinary value you can inspect (<code>is_err</code>, <code>err_msg</code>, <code>err_code</code>) or forward with a trailing <code>?</code>. There is no ambient error variable and nothing is thrown by default. Ignoring a failure is something you write on purpose, not something that happens behind your back.</p>
+<p><strong>Parallelism made safe by isolation.</strong> drang runs callbacks concurrently with no interpreter-wide lock. Constants declared with <code>::=</code> are deeply frozen and strings are immutable; when <code>spawn</code> or <code>pmap</code> crosses a concurrency boundary, captured mutable arrays and maps are copied into a private closure snapshot with their internal aliases preserved. Synchronization and resource handles such as channels, stores, tasks, and processes are the deliberate shared exceptions.</p>
+<p><strong>Errors are values.</strong> A failure is an ordinary value you can inspect (<code>is_err</code>, <code>err_msg</code>, <code>err_code</code>) or forward with a trailing <code>?</code>. There is no ambient error variable and nothing is thrown by default. Handle failures explicitly: migration warnings catch directly recognizable omissions, while indirect values remain the program's responsibility.</p>
 <p>The standard library is a curated binding over Go's own facilities (strings, files, process spawning, RE2 regex), not a reimplementation of them. Internally drang runs a tree-walking interpreter alongside a register bytecode VM held in lockstep with it, but that is invisible: the language behaves identically either way.</p>
+<p><strong>Whole values are bounded.</strong> Core string construction and whole-file/JSON/CSV/captured-process operations use a 64 MiB ceiling, and materialized collections use a one-million-item ceiling. Filesystem enumeration for <code>glob</code>, <code>read_dir</code>, <code>walk</code>, and recursive <code>copy</code> is likewise read in bounded batches and capped at one million aggregate entries per operation. The relevant builtin returns a catchable <code>Err</code> instead of attempting an unbounded allocation. Streaming paths (<code>-n</code>/<code>-p</code>, <code>stream_lines</code>, started-process pipe readers) remain available for larger flows. A few APIs expose their own explicit limit, such as HTTP's <code>max_body</code>.</p>
+<p>Source files read by run, test, format, build, or module loading use the same <strong>64 MiB</strong> front-door ceiling. Once read, retained comments are capped at <strong>one million</strong>, delimiter and recursive-parser nesting at <strong>512</strong>, and aggregate parse work by a shared <strong>one-million-construct</strong> budget. Deeply nested syntax and aggregate forms charged by that budget become ordinary source diagnostics. Extremely large legal flat infix/postfix chains remain bounded by the 64 MiB source ceiling, but exact structural-depth accounting for those iterative forms is a known hardening residual.</p>
 <h3 id="running-programs">Running programs</h3>
 <p>drang reads a program from one of four places.</p>
 <p>A <strong>file</strong>, conventionally with a <code>.dr</code> extension:</p>
@@ -41,7 +43,7 @@
 <pre><code>echo 'say("from stdin")' | drang</code></pre>
 <pre><code>from stdin</code></pre>
 <p>The <strong>REPL.</strong> Run <code>drang</code> with no program on an interactive terminal (also what launching the executable directly does), or force it with <code>--repl</code>. Bindings persist across submissions, and each entered expression prints its value:</p>
-<pre><code>drang 0.10.0 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
+<pre><code>drang 0.12.1 — type 'exit' (or Ctrl+D / Ctrl+Z) to quit
 drang&gt; $x := 21
 21
 drang&gt; $x * 2
@@ -51,12 +53,14 @@ drang&gt; exit</code></pre>
 <pre><code>drang build greet.dr -o greet.exe</code></pre>
 <p>A self-contained local GUI with embedded assets can be packaged as:</p>
 <pre><code>drang build cockpit.dr --web web --gui -o cockpit.exe</code></pre>
+<p>The standalone format is bounded and validated at both build and load time: source is capped at <strong>64 MiB</strong>, each web asset at <strong>64 MiB</strong>, the web tree at <strong>192 MiB</strong> and <strong>65,535 files</strong>, and the complete payload at <strong>128 MiB compressed / 256 MiB decompressed</strong>. Malformed lengths, duplicate asset paths, or trailing payload data are rejected. The output file is synced and renamed into place only after the complete image has been written.</p>
 <pre><code>built greet.exe (8209998 bytes) from greet.dr</code></pre>
 <pre><code>greet.exe world     # where greet.dr is: say($"hi, ${$ARGV[0]}")</code></pre>
 <pre><code>hi, world</code></pre>
 <h3 id="flags">Flags</h3>
 <p>Leading flags are consumed up to the first non-flag token, which is taken as the program. Everything after the program becomes script arguments, not flags, so a program can accept its own <code>--foo</code> options without drang intercepting them.</p>
-<table><thead><tr><th>Flag</th><th>Effect</th></tr></thead><tbody><tr><td><code>--run</code></td><td>Run the program. This is the default and is rarely written.</td></tr><tr><td><code>--ast</code></td><td>Print the parsed syntax tree instead of running.</td></tr><tr><td><code>--tokens</code></td><td>Print the token stream instead of running.</td></tr><tr><td><code>--repl</code></td><td>Start the interactive REPL.</td></tr><tr><td><code>--version</code>, <code>-V</code></td><td>Print the version and exit.</td></tr><tr><td><code>--help</code>, <code>-h</code></td><td>Print usage and exit.</td></tr></tbody></table>
+<table><thead><tr><th>Flag</th><th>Effect</th></tr></thead><tbody><tr><td><code>--run</code></td><td>Run the program. This is the default and is rarely written.</td></tr><tr><td><code>--ast</code></td><td>Print the parsed syntax tree instead of running.</td></tr><tr><td><code>--tokens</code></td><td>Print the token stream instead of running.</td></tr><tr><td><code>--repl</code></td><td>Start the interactive REPL.</td></tr><tr><td><code>--version</code>, <code>-V</code></td><td>Print the version and exit.</td></tr><tr><td><code>--help</code>, <code>-h</code></td><td>Print usage and exit.</td></tr><tr><td><code>--</code></td><td>End leading option parsing so the following token is always a program path, even when it is <code>-e</code> or begins with <code>-</code>.</td></tr></tbody></table>
+<p>The interpreter option grammar is closed: an unknown or repeated leading option, conflicting <code>--run</code>/<code>--ast</code>/<code>--tokens</code> modes, <code>-a</code> without <code>-n</code>/<code>-p</code>, or <code>-i</code> without <code>-p</code> is a usage error (exit 2). <code>--repl</code>, <code>--version</code>, and <code>--help</code> must be used by themselves. These checks happen only before the program token; script arguments after it remain untouched.</p>
 <p><code>--ast</code> and <code>--tokens</code> are windows onto the front end, useful when a parse surprises you. The AST prints in a compact parenthesized form:</p>
 <pre><code>drang --ast -e 'say(1+2)'</code></pre>
 <pre><code># ast of &lt;-e&gt;
@@ -153,7 +157,7 @@ $safe := push($NAMES, "cy") // "push refused"
 say($safe)</code></pre>
 <pre><code>true
 push refused</code></pre>
-<p>This is what makes a constant safe to share read-only across parallel workers (<code>pmap</code>, <code>spawn</code>) with no copying and no locks: a worker reads it freely, and an accidental write fails loudly instead of racing. Mutable <code>:=</code> containers are <em>not</em> frozen; sharing a mutable container into parallel callbacks and writing it is still a data race you must avoid by collecting each callback's return value instead.</p>
+<p>This is what makes a constant safe to share read-only across parallel workers (<code>pmap</code>, <code>spawn</code>): a worker reads it freely, and an accidental write fails loudly. Mutable <code>:=</code> containers are <em>not</em> frozen, but captured mutable arrays and maps are copied into each worker's private closure snapshot at the concurrency boundary. Mutating that snapshot cannot race with or change the caller's container. Ordinary closures still capture by reference when they are called without crossing <code>spawn</code>/<code>pmap</code>.</p>
 <p>Freezing follows the <em>object</em>, not the name. Binding an existing mutable container to a constant freezes that object, so every other name for it becomes read-only too:</p>
 <pre><code class="language-drang">$existing := [1, 2, 3]
 $C ::= $existing
@@ -176,9 +180,9 @@ say(nil)            # but the keyword does not exist</code></pre>
 <pre><code>nil
 drang: undefined: nil
   at prog.dr:3:5
-    say(nil)
+    say(nil)            # but the keyword does not exist
         ^</code></pre>
-<p>One display quirk to internalize now: a whole-valued float prints identically to an int. <code>say</code> renders <code>3.0</code> as <code>3</code>, so a float result can look like an int on screen. Use <code>type(x)</code> when the distinction matters (the <code>/</code> operator below is the common way to end up holding an int-looking float).</p>
+<p>One display quirk to internalize now: a whole-valued float prints identically to an int. <code>say</code> renders <code>3.0</code> as <code>3</code>, so a float result can look like an int on screen. Use <code>type(x)</code> when the distinction matters (the <code>/</code> operator below is the common way to end up holding an int-looking float). <code>str(x)</code> produces this same display form as a string. It accepts every value type, but rendering beyond the 64 MiB whole-string ceiling returns a catchable <code>Err</code> rather than attempting an unbounded allocation.</p>
 <pre><code class="language-drang">say(42)
 say([1, 2, 3])
 say({"a": 1, "b": 2})
@@ -262,7 +266,7 @@ true
 false true</code></pre>
 <p><code>boom ran</code> never prints because both calls short-circuit. <code>not</code> and <code>!</code> are <em>tight prefix</em> operators: <code>not 1 == 2</code> parses as <code>(not 1) == 2</code>, which is <code>false == 2</code>, so it prints <code>false</code>. Parenthesize when you mean to negate the comparison: <code>not (1 == 2)</code>.</p>
 <h4 id="defined-or">Defined-or: <code>//</code></h4>
-<p><code>expr // fallback</code> yields the fallback only when the left side is <strong>nil or an error</strong>. Every other value, including the falsy <code>0</code>, <code>""</code>, <code>false</code>, and <code>[]</code>, is a real result and passes straight through. This makes <code>//</code> the tool for supplying a default without swallowing legitimate falsy values. The right side is evaluated eagerly, so it defaults a value; it does not guard an expensive call (use <code>if</code> for that).</p>
+<p><code>expr // fallback</code> yields the fallback only when the left side is <strong>nil or an error</strong>. Every other value, including the falsy <code>0</code>, <code>""</code>, <code>false</code>, and <code>[]</code>, is a real result and passes straight through. This makes <code>//</code> the tool for supplying a default without swallowing legitimate falsy values. The right side is evaluated lazily: when the left side is defined, the fallback is skipped.</p>
 <pre><code class="language-drang">$m := {"port": 0}
 say($m["host"] // "localhost")   # key absent -&gt; nil -&gt; fallback
 say($m["port"] // 8080)          # present and 0 -&gt; the 0 stands
@@ -539,7 +543,7 @@ error: format: template has 0 placeholder(s) but got 1 argument(s). format uses 
 <h2 id="control-flow">Control flow</h2>
 <p>Control flow in drang is built from <em>statements</em>, not expressions. <code>if</code>, <code>while</code>, and <code>for</code> produce no value, so you cannot bind one to a variable or drop one into the middle of an expression:</p>
 <pre><code class="language-drang">$x := if 1 { 2 } else { 3 }</code></pre>
-<pre><code># parse errors in ex1.dr
+<pre><code># parse errors in prog.dr
 line 1: unexpected IF "if"
 line 1: expected end of statement, got INT "1"</code></pre>
 <p>If you came expecting <code>if</code> to be an expression that yields its taken branch, adjust: assign inside each branch instead. There is one place the value still flows out. A function returns the value of its last <em>statement</em>, and a block (including an <code>if</code>/<code>else</code>) in tail position hands out the value of whichever branch it took. See <a href="#implicit-and-explicit-return">Implicit and explicit return</a>. The restriction is narrow: you may not use <code>if</code> <em>inline</em>, part-way through an expression.</p>
@@ -557,7 +561,7 @@ else { say("fail") }</code></pre>
 <h3 id="unless">unless</h3>
 <p><code>unless</code> exists only as a <em>postfix modifier</em> (covered below). There is no block <code>unless</code>. Writing <code>unless cond { ... }</code> is a parse error:</p>
 <pre><code class="language-drang">unless 0 { say("x") }</code></pre>
-<pre><code># parse errors in ex3.dr
+<pre><code># parse errors in prog.dr
 line 1: unexpected UNLESS "unless"
 line 1: expected end of statement, got INT "0"</code></pre>
 <p>For a negated block, write <code>if !cond { ... }</code>:</p>
@@ -643,13 +647,13 @@ y</code></pre>
 2,1</code></pre>
 <p>Placement is validated at parse time, not at runtime. A <code>break</code> or <code>next</code> that sits outside any loop is rejected before the program runs:</p>
 <pre><code class="language-drang">break</code></pre>
-<pre><code># parse errors in ex13.dr
+<pre><code># parse errors in prog.dr
 line 1: 'break' outside a loop</code></pre>
 <p>The loop-nesting count resets at every function and lambda boundary. A <code>break</code> or <code>next</code> written inside a lambda or an <code>fn</code> body cannot reach a loop outside that function, even when the function is called from within a loop. Because the check is structural, this is a parse error rather than a silent no-op:</p>
 <pre><code class="language-drang">for $n in 1..3 {
   each([10, 20], |$x| { break })
 }</code></pre>
-<pre><code># parse errors in ex14.dr
+<pre><code># parse errors in prog.dr
 line 2: 'break' outside a loop</code></pre>
 <p>The reason is that the lambda passed to <code>each</code> is an independent function value. It has no static knowledge of the loop that happens to be running when <code>each</code> invokes it, so drang refuses to let control jump across that boundary.</p>
 <h3 id="postfix-modifiers">Postfix modifiers</h3>
@@ -715,7 +719,7 @@ web://localhost:9090
 <pre><code class="language-drang">fn .serve($app, $port = 8080, $host = "localhost") { $app }
 say(.serve("a", "b", "c", "d") // "recovered")</code></pre>
 <pre><code>drang: .serve expects 1 to 3 arguments, got 4
-  at ...:2:5
+  at prog.dr:2:5
     say(.serve("a", "b", "c", "d") // "recovered")
         ^</code></pre>
 <p>The <code>// "recovered"</code> on that line never runs. Treat argument count as a contract checked before the call, in the same class as a builtin arity error, and distinct from a wrong argument <em>type</em> to a builtin (which does produce a catchable error value).</p>
@@ -855,7 +859,7 @@ say($len)
 say(len([1, 2, 3]))</code></pre>
 <pre><code>99
 drang: len is not a function (it is a int)
-  at ...:3:5
+  at prog.dr:3:5
     say(len([1, 2, 3]))
         ^</code></pre>
 <p>The lesson is practical: if you still need a builtin, do not bind its name to non-function data in the same scope. Choose a different variable name.</p>
@@ -938,9 +942,11 @@ for $p in pairs($m) {
 }</code></pre>
 <pre><code>a = 1
 b = 2</code></pre>
-<p>Keys must be <strong>hashable scalars</strong>: integers, strings, booleans, floats, and nil. Using an array (or any other container) as a key is a catchable error at index time:</p>
+<p>Keys are <code>int</code>, <code>string</code>, <code>bool</code>, or a finite, integral <code>float</code> within the int64 range. An integral float canonicalizes to its equal int key, so <code>1</code> and <code>1.0</code> address the same entry. Nil, errors, non-integral or out-of-range floats, and heap-backed values (containers, functions, regexes, and handles) are unhashable.</p>
+<p>Map construction or an index read with an unhashable key produces a catchable <code>Err</code>. Index assignment is a statement, so <code>$m[bad_key] = value</code> instead aborts. <code>has(m, bad_key)</code> reports <code>false</code>, and <code>delete(m, bad_key)</code> leaves the map unchanged; these membership helpers deliberately treat an unhashable key like an absent one.</p>
 <pre><code class="language-drang">$m := {1: "one", 2: "two"}
 say($m[1])               # one
+say($m[1.0])             # one: integral float is the same key
 
 $m := {a: 1}
 say($m[[1, 2]])          # error: unhashable map key: array</code></pre>
@@ -980,8 +986,12 @@ saw 3
 $r := [1, 2, 3] |&gt; map(|$x| .check($x))
 say(is_err($r), err_msg($r))   # true bad two</code></pre>
 <p>Distinguish that from a callback that hits a <strong>type error in an operator</strong>. Operators do not produce catchable Err values; they abort. So a callback like <code>|$x| $x + 1</code> run over a mixed array stops the program at the <code>+</code>, and neither <code>//</code> nor <code>?</code> can intercept it:</p>
-<pre><code class="language-drang">say([1, "x", 3] |&gt; map(|$x| $x + 1))</code></pre>
-<pre><code>drang: cannot use string and int with '+' (no automatic coercion: convert with int()/float()/str(), or ~ to join strings)</code></pre>
+<pre><code class="language-drang"># lint:ignore err-output
+say([1, "x", 3] |&gt; map(|$x| $x + 1))</code></pre>
+<pre><code>drang: cannot use string and int with '+' (no automatic coercion: convert with int()/float()/str(), or ~ to join strings)
+  at prog.dr:2:32
+    say([1, "x", 3] |&gt; map(|$x| $x + 1))
+                                   ^</code></pre>
 <p>The rule is general: a bad <em>value</em> handed to a builtin is a recoverable Err, but a bad operand to an operator is a hard abort. Convert types explicitly (<code>int(...)</code>, <code>float(...)</code>, <code>str(...)</code>) before arithmetic if the array might be heterogeneous.</p>
 <h3 id="the-ordering-family">The ordering family</h3>
 <p><code>sort</code> returns a new array in natural ascending order: numbers numerically, strings lexicographically. The sort is stable:</p>
@@ -1058,8 +1068,10 @@ say(err_code(42), err_msg(42) == "")</code></pre>
 <pre><code>true 1 boom
 0 true</code></pre>
 <p>An Err renders through <code>say</code> as <code>error: &lt;msg&gt;</code>, so a stray error surfaces visibly rather than silently:</p>
+<p><code>say</code> and <code>warn</code> also fail loudly if their stdout/stderr sink itself rejects a write (for example, a broken embedding pipe). They never return <code>nil</code> after a short or failed write; this is an uncatchable output failure, distinct from printing an Err value.</p>
 <pre><code class="language-drang">say(int("x"))</code></pre>
 <pre><code>error: cannot parse "x" as int</code></pre>
+<p>Run, stream, test, build, and module-load paths also emit migration warnings for directly recognizable Err hazards. <code>err-discard</code> covers a fallible result discarded through identity-preserving operations; <code>err-bool</code> covers a direct Err-capable value used as truth/control; and <code>err-output</code> follows a direct fallible value through nested display expressions into stringifying output or effect sinks such as interpolation, <code>~</code>, <code>str</code>, <code>format</code>, <code>join</code>, <code>say</code>/<code>warn</code>/<code>die</code>, <code>write_file</code>, <code>send_stdin</code>, and <code>-p</code>'s automatic output after a direct assignment to <code>$_</code>. The analysis respects lexical scope and declaration order. Explicit <code>?</code>, <code>//</code>, Err inspection, equality, and values retained in collections count as intentional handling or data. The analysis is intentionally lightweight: it does not infer user-function return types or track a value through later variable assignments, and it does not change runtime behavior. Suppress an intentional site with <code># lint:ignore &lt;code&gt;</code> on that line or on a standalone line immediately above it; bare <code># lint:ignore</code> suppresses every migration warning at that site.</p>
 <h3 id="creating-errors-fail">Creating errors: fail</h3>
 <p><code>fail(msg)</code> builds an Err with the given message and code <code>1</code>. Called with no argument it uses the message <code>"failed"</code>.</p>
 <pre><code class="language-drang">$r := fail()
@@ -1074,7 +1086,7 @@ say(is_err($r), err_msg($r), err_code($r))</code></pre>
 <p>First, <code>//</code> triggers <em>only</em> on Err or nil. Other falsy values (<code>0</code>, <code>""</code>, <code>false</code>, an empty array or map) are legitimate results and pass straight through. Recovery keys on the failure tag, not on emptiness.</p>
 <pre><code class="language-drang">say(0 // 99, "" // "x", false // "y")</code></pre>
 <pre><code>0  false</code></pre>
-<p>Second, the fallback is evaluated <strong>eagerly</strong>, not lazily. Both sides of <code>//</code> run before the operator picks a result. So the right-hand side must be safe to evaluate even when the left-hand side succeeded. If you need a fallback that must not run on the happy path, guard it with an <code>if</code>.</p>
+<p>Second, the fallback is evaluated <strong>lazily</strong>. When the left side is neither nil nor an Err, the right side does not run. This makes a fallback safe for an expensive call or one with side effects; it runs only on the recovery path.</p>
 <h3 id="propagating-with">Propagating with ?</h3>
 <p>The <code>?</code> postfix operator is the early-exit half of the model. <code>expr?</code> evaluates <code>expr</code>. If the result is an Err, <code>?</code> propagates it out of the <strong>enclosing function</strong> immediately. If it is not an Err, the value flows through unchanged. This lets you write the happy path without a check after every call.</p>
 <pre><code class="language-drang">fn .parse($s) {
@@ -1106,7 +1118,7 @@ say("unreached")</code></pre>
 <ul><li>A wrong <strong>argument count</strong> is a programmer error. It is a hard abort with a source location. Neither <code>//</code> nor <code>?</code> can intercept it, because there is nothing sensible to recover: the call itself is malformed.</li><li>A wrong <strong>argument type</strong> or a <strong>runtime failure</strong> is a runtime condition. It returns a catchable Err value you can recover.</li></ul>
 <pre><code class="language-drang">say(is_err(int([1, 2])))   # wrong type -&gt; catchable Err</code></pre>
 <pre><code>true</code></pre>
-<pre><code class="language-drang">say(int(1, 2) // 99)       # wrong arg count -&gt; hard abort, // cannot save it</code></pre>
+<pre><code class="language-drang">say(int(1, 2) // 99)</code></pre>
 <pre><code>drang: int expects 1 argument, got 2
   at prog.dr:1:5
     say(int(1, 2) // 99)
@@ -1180,7 +1192,7 @@ false
 [&lt;a&gt;]</code></pre>
 <p>An unknown flag letter is a parse error, caught before the program runs rather than at the point of use:</p>
 <pre><code class="language-drang">say(qr/foo/x)</code></pre>
-<pre><code># parse errors in &lt;-e&gt;
+<pre><code># parse errors in prog.dr
 line 1: unexpected ILLEGAL "invalid regex flag after qr//"
 line 1: expected end of statement, got IDENT "x"</code></pre>
 <h4 id="delimiters">Delimiters</h4>
@@ -1284,7 +1296,8 @@ say($"is_err: ${is_err($r)}  code: ${err_code($r)}")
 say(err_msg($r))</code></pre>
 <pre><code>is_err: true  code: 1
 cmd exited with code 1: boom</code></pre>
-<p>(If a child floods more than 256 MiB to stdout, <code>capture</code> gives up with a catchable <code>Err</code> of code 137 rather than exhausting memory.)</p>
+<p><code>capture</code>, <code>capture_all</code>, and the final stage of <code>pipe</code> share one <strong>64 MiB aggregate</strong> budget across captured stdout and stderr. If a child exceeds it, drang terminates the whole process tree immediately and reports code <code>137</code> (or a <code>capture_all</code> result with <code>code: 137</code>) instead of retaining output until the process runs out of memory.</p>
+<p>Every synchronous form owns its complete process tree for the duration of the call. Once the root child exits — even successfully — drang terminates any descendants still in its Job Object and closes the Job before joining the stdin/stdout/stderr copier goroutines. A descendant that inherited a capture pipe therefore cannot postpone completion after its root is gone. Use <code>start</code> when a descendant is deliberately meant to survive the call, and <code>{timeout: ...}</code> when the synchronous root itself needs a hard wall-clock bound.</p>
 <h3 id="capture_all-outcome-as-data-never-an-error"><code>capture_all</code>: outcome as data, never an error</h3>
 <p>Sometimes a non-zero exit is not a failure. <code>findstr</code> returns 1 when it finds nothing; a diff tool returns 1 when files differ. For these, use <code>capture_all</code>, which always returns a map <code>{out, err, code, ok}</code> and treats a non-zero exit as ordinary data. It never returns an <code>Err</code> for a normal run.</p>
 <pre><code class="language-drang">$r := capture_all("cmd", "/c", "echo hi&amp; exit 3")
@@ -1303,6 +1316,7 @@ say($"is_err: ${is_err($r)}  code: ${err_code($r)}")</code></pre>
 <pre><code>is_err: true  code: 127</code></pre>
 <h3 id="options-a-trailing-map-on-every-exec-form">Options: a trailing map on every exec form</h3>
 <p><code>run</code>, <code>capture</code>, <code>capture_all</code>, <code>pipe</code>, <code>stream_lines</code>, and <code>start</code> all accept a trailing map of per-command options. This one block covers the ones you reach for most: working directory, environment, stdin, and stderr merging.</p>
+<p>The map is a closed schema. Option keys must be strings, unknown names are rejected, bool options require actual bools, sizes/counts/times require non-negative ints in their representable range, and incompatible pairs such as <code>env_exact</code>+<code>env_add</code>, <code>stdin</code>+<code>stdin_file</code>, or <code>stderr_pipe</code>+<code>merge_stderr</code> fail before a child is launched. These schema mistakes abort uncatchably; value-level failures called out below (for example, <code>{timeout}</code> on <code>start</code>) remain catchable Errs.</p>
 <pre><code class="language-drang">$dir := capture("cmd", "/c", "cd", {cwd: "C:\\Windows"})
 say($"cwd -&gt; $dir")
 $e := capture("cmd", "/c", "echo", "%GREETING%", {env_add: {GREETING: "hi there"}})
@@ -1335,7 +1349,7 @@ say($"case-insensitive env -&gt; $v")</code></pre>
 <pre><code>out
 err</code></pre>
 <p><strong>Die-with-parent.</strong> Every child drang launches runs inside a Windows Job Object configured to kill its contents when the job closes. If drang exits, crashes, or is itself killed, the child and its entire descendant tree are terminated too, and this is enforced by the kernel rather than by best-effort cleanup. A child cannot escape by spawning grandchildren: the whole tree belongs to the job. For the synchronous forms (<code>run</code>, <code>capture</code>, <code>capture_all</code>, <code>pipe</code>, <code>stream_lines</code>), this is always on, so a blocking call never leaves an orphan behind.</p>
-<p><strong>Resource limits.</strong> A child, and its whole descendant tree, can be capped in memory, CPU time, and process count, all kernel-enforced through the same Job Object. Every option is an optional non-negative integer.</p>
+<p><strong>Resource limits.</strong> A child, and its whole descendant tree, can be capped in memory, CPU time, and process count, all kernel-enforced through the same Job Object. Every option is an optional non-negative integer; millisecond values that cannot fit the runtime duration range are rejected instead of wrapping.</p>
 <table><thead><tr><th>Option</th><th>Unit</th><th>Scope</th></tr></thead><tbody><tr><td><code>max_memory</code></td><td>bytes</td><td>committed memory, per process</td></tr><tr><td><code>max_job_memory</code></td><td>bytes</td><td>committed memory, whole job (child and every descendant)</td></tr><tr><td><code>max_cpu</code></td><td>milliseconds</td><td>user CPU time, per process</td></tr><tr><td><code>max_job_cpu</code></td><td>milliseconds</td><td>user CPU time, whole job</td></tr><tr><td><code>max_job_procs</code></td><td>count</td><td>concurrent processes allowed in the job</td></tr></tbody></table>
 <p>A breach terminates the offending child (for a job-wide cap, the whole tree) with exit code <code>137</code>, and the error message names the cap that tripped. A runaway build or a fork-bomb becomes ordinary catchable data instead of a machine-swamping event.</p>
 <pre><code class="language-drang"># a busy loop capped at 100 ms of user CPU; the breach kills it with code 137
@@ -1416,8 +1430,9 @@ say(trim($out))</code></pre>
 <pre><code>apple
 banana
 cherry</code></pre>
-<p>Two things to keep in mind. First, <code>recv_stdout</code> returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the <code>\n</code>. Second, the script is the one draining the pipe, so read the child's output (to <code>nil</code>) before you <code>await</code> it: a child that fills its output pipe while you are not reading blocks, and so would the <code>await</code>; a <code>kill(p)</code> always unblocks. One inherent limit: many programs <em>block-buffer</em> their stdout when it is a pipe rather than a terminal, so their output appears only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.</p>
-<p><strong>Read stdout and stderr apart.</strong> <code>recv_stderr(p)</code> reads a started child's <em>stderr</em> as a stream separate from its stdout, when you launch with <code>{stderr_pipe: true}</code>. It is the alternative to <code>{merge_stderr}</code>, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). Because the two are independent pipes, reading them takes a little care: if you drain only stdout while the child keeps writing to stderr, the child eventually blocks on the full stderr pipe and your stdout read stalls with it — the classic two-pipe deadlock. So drain the two <strong>concurrently</strong>, reading one of them in a <code>spawn</code>ed task — <code>spawn</code> runs a drang function on its own thread and <code>await</code> collects its result, both covered in <em>In-language concurrency</em> below; here they let us read the second pipe while the first drains:</p>
+<p>Two things to keep in mind. First, <code>recv_stdout</code> returns raw chunks, not lines, so a prompt written without a trailing newline still arrives — unlike a line reader that would wait for the <code>\n</code>. Second, drang continuously drains requested stdout/stderr pipes into a bounded queue, so <code>await</code> no longer deadlocks merely because you have not started reading yet. The queue holds at most <strong>16 MiB of unread output in aggregate per process</strong>; consuming chunks frees room. If an unattended child exceeds that ceiling, drang terminates its whole tree and <code>await</code> reports an <code>Err</code> with code <code>137</code>. Drain promptly when output can be large.</p>
+<p>Started-pipe completion is bounded too. After the root child exits, requested stdout and stderr get one aggregate <strong>750 ms</strong> grace to reach natural EOF. If an unsupervised descendant is still holding a writer open, drang then closes the read ends and joins the drainers before publishing the final <code>await</code>/<code>status</code> result. Bytes already queued in drang remain available to <code>recv_stdout</code>/<code>recv_stderr</code>; later descendant output is intentionally truncated. With <code>{supervise: true}</code>, closing the Job kills remaining descendants first, so their inherited pipes normally reach EOF during the grace period. Many programs still <em>block-buffer</em> stdout when it is a pipe rather than a terminal, so output may appear only when they flush or exit — a full pseudo-terminal (ConPTY) is not provided.</p>
+<p><strong>Read stdout and stderr apart.</strong> <code>recv_stderr(p)</code> reads a started child's <em>stderr</em> as a stream separate from its stdout, when you launch with <code>{stderr_pipe: true}</code>. It is the alternative to <code>{merge_stderr}</code>, which instead folds stderr into stdout as one interleaved stream — pick one, not both (drang rejects the pair). The background drainers remove the classic OS-pipe deadlock, so sequential reads are safe within the shared 16 MiB unread budget. Concurrent consumers are still useful for live responsiveness and keep that budget available when both streams are busy:</p>
 <pre><code class="language-drang">$p := start("cmd", "/c", "echo out line&amp; echo err line 1&gt;&amp;2",
             {stdout_pipe: true, stderr_pipe: true})
 
@@ -1428,8 +1443,8 @@ fn .drain($read) {
   trim($acc)
 }
 
-# Read stdout and stderr at once, each on its own pipe. Draining them
-# concurrently keeps a burst on one stream from blocking the child on the other.
+# Read stdout and stderr at once, each from its independently buffered stream.
+# Concurrent consumption also keeps the aggregate unread queue small.
 $errs := spawn(|$_| .drain(|| recv_stderr($p)), 0)
 say($"out: ${.drain(|| recv_stdout($p))}")
 say($"err: ${await($errs)}")
@@ -1459,11 +1474,13 @@ say(err_msg($r))</code></pre>
 <pre><code>is_err: true
 start does not accept {timeout}: a started process is detached and runs unbounded</code></pre>
 <h2 id="in-language-concurrency">In-language concurrency</h2>
-<p>drang runs work across all your CPU cores in genuine parallel, and it does so without a single lock in your code. That is not luck. It is the payoff of a language deliberately built with almost nothing to share between parallel workers: top-level bindings are frozen constants, scoping is lexical only, strings are immutable, and there is no shared mutable global state. When two workers cannot reach the same mutable object, there is nothing to guard, so there is nothing to lock.</p>
+<p>drang runs work across CPU cores in genuine parallel, and ordinary data needs no user-written lock. Mutable arrays and maps reachable through a callback closure are copied into a private worker snapshot; aliases and cycles inside that graph remain intact. The values intentionally shared across workers are the ones built for coordination: channels and stores, plus task and process handles.</p>
 <p>You might expect parallelism here to be cooperative or interleaved on one core. It is not. Spawned tasks and <code>pmap</code> workers occupy real OS threads and run at the same instant on different cores. The sections below show that speedup measured, not promised.</p>
-<p>The rule that makes it safe is uniform: values cross into a parallel worker by copy, never by reference. A worker gets its own private duplicate of every argument and every element it processes, so one worker's mutations are invisible to every other worker and to the original data. The single exception is the channel, the one value type intentionally designed to be shared, which is how workers talk to each other on purpose.</p>
+<p>The rule for ordinary data is uniform: values cross into a parallel worker by copy. A worker gets a private duplicate of its arguments, callback captures, and each element it processes, so mutations are invisible to the caller and sibling workers. Channels, stores, tasks, and process handles cross by shared reference because their implementations provide the required synchronization.</p>
 <h3 id="spawn-and-await-tasks"><code>spawn</code> and <code>await</code>: tasks</h3>
 <p><code>spawn(fn, args...)</code> runs a drang function on its own thread and hands you back a <code>task</code> immediately, without waiting. <code>await(task)</code> blocks until that task finishes and gives you its result. The arguments are deep-copied into the task as it starts, over a snapshot of the surrounding bindings, so the task cannot observe later changes to the caller's variables and the caller cannot see into the task's private state.</p>
+<p>At most <strong>1,024</strong> spawned tasks may be live in one drang process. A task stops consuming a slot as soon as it has published its result; it need not already have been awaited. Attempting to exceed the ceiling returns a catchable resource-limit <code>Err</code> (code <code>137</code>) instead of creating another goroutine, so a runaway launch loop can be recovered or propagated normally.</p>
+<p>Closure-aware copy traversal is itself bounded: a captured or passed graph may be at most <strong>512 containers/functions deep</strong> and one million visited nodes. A deeper or larger graph returns a catchable resource-limit <code>Err</code> (code <code>137</code>) from <code>spawn</code>, <code>pmap</code>, <code>send</code>, or <code>await</code>; cycles and aliases within the budget are preserved exactly.</p>
 <p>The natural pattern is fan-out then fan-in: launch every task, then collect every result.</p>
 <pre><code class="language-drang">fn .work($n) { $n * 2 }
 $tasks := [1, 2, 3, 4] |&gt; map(|$n| spawn(.work, $n))
@@ -1476,11 +1493,11 @@ say($"fan-out: $results")</code></pre>
 $res := await(spawn(.boom))
 say($"is_err: ${is_err($res)}  msg: ${err_msg($res)}")</code></pre>
 <pre><code>is_err: true  msg: worker failed</code></pre>
-<p><code>await</code> is idempotent: awaiting the same task again returns the same result. It also accepts a <code>process</code> handle from <code>start</code>, so a single <code>await</code> waits on either kind of asynchronous work. For a started process it returns <code>true</code> on a clean exit, or an <code>Err</code> carrying the exit code otherwise.</p>
+<p><code>await</code> is idempotent: awaiting the same task again returns an isolated copy of the same result. It also accepts a <code>process</code> handle from <code>start</code>, so a single <code>await</code> waits on either kind of asynchronous work. For a started process it returns <code>true</code> on a clean exit, or an <code>Err</code> carrying the exit code otherwise.</p>
 <h3 id="channels-chan-send-recv-recv_ok-close-drain">Channels: <code>chan</code>, <code>send</code>, <code>recv</code>, <code>recv_ok</code>, <code>close</code>, <code>drain</code></h3>
 <p>Channels are the one place drang lets two workers reach the same object on purpose. A channel is a typed conduit: one side sends values in, the other side receives them out. Passing a channel to a spawned task shares the same channel (a channel's copy is itself), which is exactly what makes it a communication line rather than a per-worker duplicate.</p>
-<ul><li><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> makes one buffered to capacity <code>n</code>.</li><li><code>send(ch, v)</code> puts a copy of <code>v</code> onto the channel, blocking until there is room or a receiver takes it.</li><li><code>recv(ch)</code> blocks for the next value.</li><li><code>recv_ok(ch)</code> is <code>recv</code> plus a flag: it returns <code>[value, ok]</code>.</li><li><code>close(ch)</code> marks the channel finished; it is idempotent and safe to call from any thread.</li><li><code>drain(ch)</code> collects every remaining value into an array, blocking until the channel is closed.</li></ul>
-<p>Values are copied on <code>send</code>, so once a value is on the channel the sender can keep mutating its own copy without disturbing the receiver.</p>
+<ul><li><code>chan()</code> makes an unbuffered channel; <code>chan(n)</code> makes one buffered to capacity <code>n</code>, where <code>0 &lt;= n &lt;= 65,536</code>. A negative size is a catchable input <code>Err</code>; a larger size is a catchable resource-limit <code>Err</code> (code <code>137</code>).</li><li><code>send(ch, v)</code> puts a copy of <code>v</code> onto the channel, blocking until there is room or a receiver takes it.</li><li><code>recv(ch)</code> blocks for the next value.</li><li><code>recv_ok(ch)</code> is <code>recv</code> plus a flag: it returns <code>[value, ok]</code>.</li><li><code>close(ch)</code> marks the channel finished; it is idempotent and safe to call from any thread.</li><li><code>drain(ch)</code> collects every remaining value into an array, blocking until the channel is closed.</li></ul>
+<p>Values are copied on <code>send</code>, so once a value is on the channel the sender can keep mutating its own copy without disturbing the receiver. <code>send</code> and task <code>await</code> use the same closure-aware copier as worker snapshots: mutable arrays/maps and environments reachable through user functions become private, aliases and cycles remain intact, and the handles built for coordination — channels, stores, tasks, and processes — stay shared.</p>
 <p>A producer thread feeding a channel that the main thread drains:</p>
 <pre><code class="language-drang">$c := chan(3)
 fn .produce($ch) {
@@ -1510,7 +1527,8 @@ await($t)</code></pre>
 recv_ok: [second, true]
 after close, empty: true</code></pre>
 <p>Once a channel is closed and every value has been taken, <code>recv</code> stops blocking and yields drang's empty value: it has type <code>nil</code>, renders as <code>nil</code>, and is falsy, so <code>not recv($c)</code> is <code>true</code> at exhaustion. This is a signal, not a sentinel you write in your own code. To distinguish a real received <code>nil</code> from end-of-channel, use <code>recv_ok</code>, whose <code>ok</code> flag is <code>false</code> only when the channel is closed and drained.</p>
-<p>drang refuses to let a channel silently hang your program. A <code>send</code> or <code>recv</code> that could only ever deadlock, because there is no counterparty and no other task is running to become one, does not freeze: it returns a catchable <code>Err</code>. So a lone <code>send(chan(), x)</code> on the main thread with nothing to receive it fails as data you can recover, rather than stalling forever:</p>
+<p>drang refuses to let an orphaned channel or cyclic task dependency silently hang an evaluator session. This is state-based detection, not a polling timeout: the session tracks its runnable main strand, accepted <code>spawn</code> tasks, and parallel <code>pmap</code> workers. A strand blocked on a channel or on a same-session task/pmap join stops counting as runnable; a strand sleeping or waiting on external I/O still counts because it can resume and become a counterparty. Only when none can make language-level progress, and no operation is already entering the shared channel, are unmatched senders/receivers and task awaits that cannot complete woken with a catchable <code>Err</code>.</p>
+<p>That distinction preserves real coordination. A delayed producer or consumer in the same session is allowed to wake and match normally. Independently created evaluator sessions do not count as each other's runnable work, but channel operations already entering the same shared handle can still match across contexts. A lone <code>send(chan(), x)</code> on the main strand with nothing to receive it fails as data you can recover, rather than stalling forever:</p>
 <pre><code class="language-drang">$r := send(chan(), "orphan") // "no reader"
 say($"recovered: $r")</code></pre>
 <pre><code>recovered: no reader</code></pre>
@@ -1523,7 +1541,7 @@ say($"is_err: ${is_err($closed)}  msg: ${err_msg($closed)}")</code></pre>
 <h3 id="pmap-parallel-map-across-cpu-cores"><code>pmap</code>: parallel map across CPU cores</h3>
 <p><code>pmap(arr, fn)</code> is the high-level way to parallelize, and the one you will reach for most. It has the same contract as <code>map</code>, so switching a serial <code>map</code> to a parallel <code>pmap</code> is usually a one-word edit:</p>
 <ul><li>array-first, so <code>$xs |&gt; pmap(f)</code> composes in a pipeline;</li><li>the callback takes the element and, optionally, its index;</li><li>results come back in <strong>input order</strong>, regardless of which worker finished first;</li><li>it is <strong>fail-loud</strong>: the first <code>Err</code> any callback produces becomes the whole result and stops further work.</li></ul>
-<p>What <code>pmap</code> adds is a bounded pool of workers, one per CPU as reported by the machine's core count, running the callback in true parallel.</p>
+<p>What <code>pmap</code> adds is a <strong>process-wide</strong> worker budget capped at the machine's reported CPU count. Concurrent <code>pmap</code> calls share that budget instead of each creating a full pool. A nested or concurrently saturated call that cannot borrow a slot runs sequentially on its current worker, which prevents semaphore deadlock and goroutine multiplication without changing input order or error behavior.</p>
 <pre><code class="language-drang">$squares := [1, 2, 3, 4, 5] |&gt; pmap(|$x| $x * $x)
 say($"pmap squares: $squares")</code></pre>
 <pre><code>pmap squares: [1, 4, 9, 16, 25]</code></pre>
@@ -1545,7 +1563,7 @@ say($"parallel (pmap): ${round(($t2 - $t1) * 100) / 100}s")</code></pre>
 <pre><code>serial   (map):  8.19s
 parallel (pmap): 2.04s</code></pre>
 <p>Four two-second jobs take eight seconds one after another and two seconds all at once. That factor is the core count at work.</p>
-<p><strong>The purity contract.</strong> A <code>pmap</code> callback must be pure. It may read frozen top-level constants and its own parameters, and it must not mutate state shared with other workers. This is not a discipline you have to enforce by hand; the language mostly enforces it for you. Each element is deep-copied to its worker, so mutating the element changes only that worker's private copy and never touches the original array:</p>
+<p><strong>The isolation contract.</strong> Each element is deep-copied for its callback, so mutating the element changes only that invocation's private copy and never touches the original array:</p>
 <pre><code class="language-drang">$rows := [[1], [2], [3]]
 $out := pmap($rows, |$row| {
   push($row, 99)   # mutates this worker's private copy
@@ -1555,14 +1573,14 @@ say($"callback saw lengths: $out")
 say($"original rows unchanged: $rows")</code></pre>
 <pre><code>callback saw lengths: [2, 2, 2]
 original rows unchanged: [[1], [2], [3]]</code></pre>
-<p>Each worker saw a two-element array (its copy, with <code>99</code> pushed on), while the source <code>$rows</code> is untouched. There is deliberately no shared accumulator to reduce into, so the classic racy pattern of many threads writing one collector is largely unwriteable. Collect each callback's return value instead, which <code>pmap</code> already does for you in order. Passing a constant container (declared with <code>::=</code>, deep-frozen) into a callback is always safe. Mutating a captured mutable container declared with <code>:=</code> from inside a parallel callback is documented-undefined; keep callbacks pure and this never arises.</p>
+<p>Each callback saw a two-element array (its copy, with <code>99</code> pushed on), while the source <code>$rows</code> is untouched. Captured mutable arrays and maps are likewise private worker snapshots, so mutating one is race-free and cannot change the caller or a sibling worker. Do not use such a capture as an accumulator: a pool worker may process several elements, so the accumulated value would depend on scheduling. Collect callback return values instead, which <code>pmap</code> already does in input order. Deep-frozen <code>::=</code> containers remain read-only in every snapshot. Channels and stores are intentionally shared when explicit coordination is needed.</p>
 <p><code>pmap</code> inherits <code>map</code>'s fail-loud behavior. The first <code>Err</code> a callback produces becomes the entire result, and remaining work stops:</p>
 <pre><code class="language-drang">$r := pmap([1, 2, 3], |$x| {
   if $x == 2 { fail("boom on 2") } else { $x }
 })
 say($"is_err: ${is_err($r)}  msg: ${err_msg($r)}")</code></pre>
 <pre><code>is_err: true  msg: boom on 2</code></pre>
-<p>Because each worker runs lock-free with its own copies, running many subprocesses in parallel is just <code>pmap</code> over commands. Each call carries its own <code>{timeout}</code>, <code>cwd</code>, or <code>env_exact</code>, and a per-element <code>//</code> recovers a missing tool without sinking the batch:</p>
+<p>Because callback data is isolated and the worker budget is shared process-wide, running many subprocesses in parallel is just <code>pmap</code> over commands. Each call carries its own <code>{timeout}</code>, <code>cwd</code>, or <code>env_exact</code>, and a per-element <code>//</code> recovers a missing tool without sinking the batch:</p>
 <pre><code class="language-drang">$versions := ["git", "go", "cmd"] |&gt; pmap(|$tool| capture($tool, "--version") // "(missing)")
 say($"captured: ${len($versions)}")</code></pre>
 <pre><code>captured: 3</code></pre>
@@ -1605,7 +1623,7 @@ say("recovered: " ~ $txt)            # recovered: DEFAULT</code></pre>
 <pre><code class="language-drang">read_file("nope_missing.txt")?
 say("unreached")</code></pre>
 <pre><code>drang: read_file nope_missing.txt: open nope_missing.txt: The system cannot find the file specified.
-  at propagate.dr:1:1
+  at prog.dr:1:1
     read_file("nope_missing.txt")?
     ^</code></pre>
 <p><strong>Pure path transforms never touch the disk and never fail on a well-typed argument.</strong> <code>dirname</code>, <code>basename</code>, <code>ext</code>, <code>stem</code>, <code>to_slash</code>, <code>path_join</code>, <code>is_abs</code>, and <code>clean</code> are string math. They cannot report "file not found" because they never look at the filesystem.</p>
@@ -1623,7 +1641,7 @@ false</code></pre>
 say(basename(42) // "recovered")     # recovered</code></pre>
 <p>A wrong argument <strong>count</strong>, by contrast, is a hard abort that no <code>?</code> or <code>//</code> can catch. It signals a bug in your script, not a runtime condition to handle. One further caveat: these builtins are shadowed by like-named variables, so binding <code>$newer</code> masks the <code>newer</code> builtin for the rest of that scope.</p>
 <h3 id="file-io-read_file-write_file-lines">File I/O: read_file, write_file, lines</h3>
-<p><code>read_file(path)</code> returns the whole file as one string, or an <code>Err</code> if it is missing or unreadable. There is a 1 GiB backstop: a file larger than that returns an <code>Err</code> rather than exhausting memory.</p>
+<p><code>read_file(path)</code> returns the whole file as one string, or an <code>Err</code> if it is missing or unreadable. There is a <strong>64 MiB</strong> whole-file backstop: larger input returns an <code>Err</code> rather than exhausting memory. Use one-liner mode, <code>stream_lines</code>, or an external streaming tool for larger data.</p>
 <p><code>write_file(path, content, opts?)</code> writes <code>content</code> to <code>path</code>, creating or truncating it, and returns the path. <code>content</code> need not be a string. Any value is rendered the way <code>say</code> would render it, so a string writes its raw bytes and a number writes its digits:</p>
 <pre><code class="language-drang">$f := path_join(tempdir(), "n.txt")
 write_file($f, 42)
@@ -1650,7 +1668,9 @@ say("dir  basename : " ~ basename($d))   # e.g. build-1231652904
 say("dir  is_dir   : " ~ is_dir($d))     # true
 rm($f); rm($d)</code></pre>
 <h3 id="filesystem-operations">Filesystem operations</h3>
-<ul><li><code>exists(p)</code> returns a bool: true if the path exists.</li><li><code>is_dir(p)</code> returns a bool: true only if <code>p</code> exists and is a directory.</li><li><code>mkdir(p)</code> creates <code>p</code> and any missing parent directories, then returns <code>p</code>. Creating an existing directory is not an error.</li><li><code>glob(pattern)</code> returns a sorted array of matching paths. No match is an empty array, not an error. It supports <code>*</code>, <code>?</code>, <code>[...]</code>, and a recursive <code>**</code> segment that spans directories.</li><li><code>read_dir(p)</code> lists a directory as an array of records, one per entry, sorted by name.</li><li><code>rename(src, dst)</code> moves or renames and returns <code>dst</code>.</li><li><code>copy(src, dst)</code> copies a single file, or recursively copies a directory tree, preserving file modes and creating any needed parent directories of <code>dst</code>. It returns <code>dst</code>.</li><li><code>rm(p)</code> removes a file or an entire directory tree, recursively and idempotently. A path that does not exist is not an error. It is named <code>rm</code> because <code>delete</code> is reserved for removing a map key.</li><li><code>size(p)</code> returns the file size in bytes as an int, or an <code>Err</code> if the path is missing.</li></ul>
+<ul><li><code>exists(p)</code> returns a bool: true if the path exists.</li><li><code>is_dir(p)</code> returns a bool: true only if <code>p</code> exists and is a directory.</li><li><code>mkdir(p)</code> creates <code>p</code> and any missing parent directories, then returns <code>p</code>. Creating an existing directory is not an error.</li><li><code>glob(pattern)</code> returns a sorted array of matching paths. No match is an empty array, not an error. It supports <code>*</code>, <code>?</code>, <code>[...]</code>, and a recursive <code>**</code> segment that spans directories.</li><li><code>read_dir(p)</code> lists a directory as an array of records, one per entry, sorted by name.</li><li><code>rename(src, dst)</code> moves or renames and returns <code>dst</code>.</li><li><code>copy(src, dst)</code> copies a single file, or recursively merges a directory tree into <code>dst</code>, preserving file modes and creating any needed parent directories. It returns <code>dst</code>.</li><li><code>rm(p)</code> removes a file or an entire directory tree, recursively and idempotently. A path that does not exist is not an error. It is named <code>rm</code> because <code>delete</code> is reserved for removing a map key.</li><li><code>size(p)</code> returns the file size in bytes as an int, or an <code>Err</code> if the path is missing.</li></ul>
+<p>Directory enumeration is bounded before a wide directory can be materialized: <code>glob</code>, <code>read_dir</code>, <code>walk</code>, and recursive <code>copy</code> scan in chunks and share a one-million-entry aggregate ceiling per operation. The ceiling counts entries examined, not only entries returned by a glob; crossing it returns a catchable <code>Err</code>.</p>
+<p><code>copy</code> refuses a source and destination that identify the same filesystem object. For a directory source it also refuses any destination inside that source, resolving existing symlink and junction aliases before the containment check. During a recursive merge, every pre-existing destination component is checked before use; a symlink, junction, or other Windows reparse point is rejected rather than followed, so an existing redirect cannot send the copy outside the destination or back into the source. A directory alias explicitly supplied as the source root is followed, but directory links encountered below that root are not traversed; a nested file symlink is copied by dereferencing its file contents. A single destination file is staged in its destination directory, synced, and renamed only after the copy succeeds, preserving an existing file if reading or writing fails. A recursive copy is a <strong>merge</strong>, not a mirror: pre-existing destination entries absent from the source remain. The tree as a whole is not transactional, so a later error can leave directories and files copied earlier in the traversal; retry or remove the destination when all-or-nothing tree replacement is required. These component checks are best-effort against a concurrently mutating filesystem: another process with write access can replace a checked path before the next filesystem operation, so do not treat <code>copy</code> as a sandbox boundary against an active local adversary.</p>
 <p>Copy, rename, and remove in one pass:</p>
 <pre><code class="language-drang">$dir := path_join($ENV["TEMP"], "drang_fs_moves")
 rm($dir)
@@ -1811,6 +1831,8 @@ say("run " ~ str(store_get($s, "n")))</code></pre>
 <pre><code>{
   "n": 3
 }</code></pre>
+<p>Primary and backup snapshots are read through a <strong>64 MiB</strong> cap, and a write that would exceed the same cap returns a catchable <code>Err</code>. A store holds the sidecar lock for the lifetime of its handle, so another process cannot interleave a second writer; recovery may read the bounded <code>.bak</code>, but never an unbounded or torn primary file.</p>
+<p>Handles belong to the current evaluator session. The main program, its modules, spawned tasks, and <code>pmap</code> workers share one registry, so opening the same canonical path again returns the same live handle. At most <strong>256</strong> distinct handles may be live in one session; another open returns a catchable resource-limit <code>Err</code> (code <code>137</code>). <code>store_close</code> releases the sidecar lock, removes the handle, and frees its slot. Once the session's last owning execution scope becomes unreachable, runtime cleanup closes any handles and locks left behind. A separate evaluator session has a separate registry, but its attempt to open the same still-locked file correctly gets <code>store busy</code>.</p>
 <h3 id="reading-and-writing">Reading and writing</h3>
 <p>The core operations read like map access. A missing key reads as <code>nil</code>, or as a default you supply:</p>
 <pre><code class="language-drang">$s := store("kv.store")
@@ -1829,7 +1851,8 @@ store_update($s, "hits", 0, |$n| $n + 1)
 store_update($s, "hits", 0, |$n| $n + 1)
 say(store_get($s, "hits"))</code></pre>
 <pre><code>2</code></pre>
-<p>The third argument is the starting value the function receives when the key is absent — here <code>0</code>, so the very first <code>store_update</code> sees <code>0</code> rather than a nil it would have to guard against (the argument order mirrors <code>reduce</code>). The function returns the new value. Because the whole step happens under the store's lock, counters and accumulators stay correct even when scheduled runs race — and across processes only one run holds a store at a time anyway: a second opener gets a catchable <code>store busy</code> error rather than silently clobbering the first.</p>
+<p>The third argument is the starting value the function receives when the key is absent — here <code>0</code>, so the very first <code>store_update</code> sees <code>0</code> rather than a nil it would have to guard against (the argument order mirrors <code>reduce</code>). The function returns the new value.</p>
+<p>Concurrent updates use optimistic versioning instead of holding the store mutex while your function runs. <code>store_update</code> reads an isolated value, calls the function, and commits only if no mutation landed meanwhile. If one did, it calls the function again with the newest value; the 64th conflict returns a catchable <code>store stayed busy</code> Err rather than retrying forever. Counters and accumulators therefore stay atomic when workers race. Treat the callback as a pure transform that is safe to repeat: do not put a one-shot side effect in it, and do not access this same store again on the callback's own strand. Same-strand access returns a catchable reentry Err instead of deadlocking. Other strands may continue using the store; a mutation simply makes the update retry. Across processes only one run holds the sidecar lock at a time, so a second opener gets a catchable <code>store busy</code> error rather than silently clobbering the first.</p>
 <h3 id="grouping-writes-with_store">Grouping writes: <code>with_store</code></h3>
 <p>Sometimes several writes must land together or not at all — advance a cursor <em>and</em> record its result, never one without the other. <code>with_store</code> batches every mutation inside its block into a single all-or-nothing commit:</p>
 <pre><code class="language-drang">$s := store("job.store")
@@ -1851,8 +1874,9 @@ say(store_has($s, "started"))</code></pre>
 <pre><code>recovered
 false</code></pre>
 <p>Nothing the failed batch wrote was committed.</p>
+<p><code>with_store</code> is deliberately exclusive while its callback is open. The owning strand may use ordinary <code>store_get</code>/<code>store_set</code>-style operations on the same handle, but another strand receives a catchable <code>store is busy in another transaction</code> Err instead of waiting indefinitely. Starting another <code>with_store</code> or <code>store_update</code> on this store from the owner returns <code>same-store transaction reentry is not allowed</code>; a batch also refuses to start while an optimistic update is active. <code>store_close</code> during either kind of transaction returns <code>store cannot be closed while a transaction is active</code>. A transaction on a different store is independent.</p>
 <h3 id="one-store-many-workers">One store, many workers</h3>
-<p>A store handle is a shared thing, like a channel: hand it to a <code>spawn</code>ed task or a <code>pmap</code> worker and they all see the same store, with access serialized so nothing races. Mutating one store from many workers is safe but not a speed-up — the writes take turns. Reach for a store to <em>coordinate</em> parallel work (a shared tally, a set of seen ids), not to parallelize the writes themselves.</p>
+<p>A store handle is a shared thing, like a channel: hand it to a <code>spawn</code>ed task or a <code>pmap</code> worker and they all see the same store. Ordinary operations and durable commits are synchronized, while concurrent <code>store_update</code> callbacks can run and retry optimistically, so a shared tally remains exact without making the callback itself a critical section. <code>with_store</code> is intentionally not a parallel batching primitive: its exclusive callback rejects competing same-handle access with a catchable busy Err. Reach for a store to <em>coordinate</em> parallel work (a shared tally, a set of seen ids), not to make disk writes parallel.</p>
 <h3 id="scope">Scope</h3>
 <p>A store is a small key-value checkpoint, not a database. There are no queries, no indexes, and no joins — one obvious operation per task. When you need those, reach for a real database through an external tool. When you just need a script to remember something between runs, a store is the whole answer.</p>
 <h2 id="json">JSON</h2>
@@ -1887,6 +1911,7 @@ say(type($doc.n))</code></pre>
 {"n":3.0}
 float</code></pre>
 <p>If you need an integer instead, convert explicitly with <code>int</code> before serializing.</p>
+<p>JSON is a whole-value operation, so both input and rendered output are capped at <strong>64 MiB</strong>. A document/value may contain at most <strong>one million aggregate array elements and map entries</strong> and nest at most <strong>512 levels</strong>. Crossing any of those ceilings returns a catchable <code>Err</code> rather than risking an allocation or native stack failure.</p>
 <h3 id="errors">Errors</h3>
 <p>Bad input from <code>from_json</code> is a catchable error value, not an abort. Malformed JSON, and a non-string argument, both yield an <code>Err</code> you can inspect with <code>is_err</code> or supply a default for with the <code>//</code> operator:</p>
 <pre><code class="language-drang">say(is_err(from_json("{ broken")))
@@ -1900,11 +1925,16 @@ say(is_err(to_json({}, 2.5)))   # a float indent is rejected</code></pre>
 <pre><code>true
 true</code></pre>
 <p>Two indent mistakes abort instead of returning an <code>Err</code>, because they signal a programming error rather than bad data: an <code>int</code> indent outside the range 0 to 80, and a string indent containing non-whitespace characters.</p>
-<pre><code class="language-drang">say(to_json({}, 200))</code></pre>
-<pre><code>drang: to_json indent count must be between 0 and 80, got 200</code></pre>
+<pre><code class="language-drang"># lint:ignore err-output
+say(to_json({}, 200))</code></pre>
+<pre><code>drang: to_json indent count must be between 0 and 80, got 200
+  at prog.dr:2:5
+    say(to_json({}, 200))
+        ^</code></pre>
 <hr>
 <h2 id="csv">CSV</h2>
 <p><code>from_csv</code> parses RFC 4180 CSV into rows; <code>to_csv</code> renders rows back to CSV. The parser handles the awkward parts for you: fields that contain commas, quotes, or newlines, and the doubled-quote escape (<code>""</code>).</p>
+<p>CSV is likewise bounded as a materialized value: input and output are capped at <strong>64 MiB</strong>, and the converted result at <strong>one million cells</strong> (including a generated header row). Parsing is incremental, so the limit is checked before the entire intermediate <code>[][]string</code> graph is retained.</p>
 <p>Every parsed field comes back as a string. There is no type inference, so convert numeric columns yourself with <code>int($row.age)</code> or <code>float($row.price)</code>.</p>
 <p>By default rows are arrays of strings. Pass <code>{header: true}</code> and the first row names the columns; every later row becomes a map record keyed by those names:</p>
 <pre><code class="language-drang">say(from_csv("a,b\n1,2"))
@@ -1964,8 +1994,12 @@ say(len(to_csv($rows, {crlf: false})))      # 3 + LF + 3 + LF</code></pre>
 <pre><code class="language-drang">say(is_err(from_csv("a,b\n1,2,3")))    # ragged row, strict</code></pre>
 <pre><code>true</code></pre>
 <p>Misusing the call itself aborts, because it is a bug in your program rather than bad data. A non-string first argument, a <code>sep</code> that is not exactly one character, and an unknown option key all abort:</p>
-<pre><code class="language-drang">say(from_csv("a,b\n1,2", {sep: "::"}))</code></pre>
-<pre><code>drang: sep option must be exactly one character, got "::"</code></pre>
+<pre><code class="language-drang"># lint:ignore err-output
+say(from_csv("a,b\n1,2", {sep: "::"}))</code></pre>
+<pre><code>drang: sep option must be exactly one character, got "::"
+  at prog.dr:2:5
+    say(from_csv("a,b\n1,2", {sep: "::"}))
+        ^</code></pre>
 <h3 id="inherited-quirks">Inherited quirks</h3>
 <p>A leading UTF-8 byte-order mark is stripped automatically on read, so a header key never carries an invisible prefix:</p>
 <pre><code class="language-drang">$src := from_hex("efbbbf") ~ "name,age\nalice,30"
@@ -2002,6 +2036,7 @@ say(is_err($e))              # true
 say($e // "unparseable")     # unparseable</code></pre>
 <h3 id="local-versus-utc">Local versus UTC</h3>
 <p>All three of <code>format_time</code>, <code>parse_time</code>, and <code>date_parts</code> work in <strong>local time by default</strong>. Pass <code>{utc: true}</code> as the trailing options map to work in UTC instead. Use UTC whenever a timestamp crosses machines or gets compared against another system's clock. Local time is for display to a person sitting at the machine.</p>
+<p>That options map is closed: <code>utc</code> is the only key and its value must be a bool. A non-map, unknown key, or wrong-typed value is a catchable <code>Err</code>; it is never silently ignored. Epoch inputs must be finite and within the supported int64-seconds range.</p>
 <pre><code class="language-drang">say(format_time(1000000000, "%Y-%m-%d %H:%M:%S", {utc: true}))   # 2001-09-09 01:46:40</code></pre>
 <p><code>format_time</code> and <code>parse_time</code> are exact inverses under a matching format and the same time zone, so a value survives a round trip:</p>
 <pre><code class="language-drang">$s    := format_time(1000000000, "%Y-%m-%d %H:%M:%S", {utc: true})
@@ -2086,8 +2121,8 @@ if is_err($r) {
   say(from_json($r.body).name)
 }</code></pre>
 <h3 id="options-1">Options</h3>
-<p>The third argument to <code>http</code> (and the second to <code>http_get</code> / <code>http_post</code>) is a trailing options map, in the same style as the subprocess builtins. Unknown keys are ignored; keys with the wrong type are an error where noted.</p>
-<table><thead><tr><th>Option</th><th>Type</th><th>Effect</th></tr></thead><tbody><tr><td><code>headers</code></td><td>map</td><td><code>{name: value}</code>, both strings. Overrides the defaults; a non-string entry is an <code>Err</code>.</td></tr><tr><td><code>body</code></td><td>string</td><td>A raw request body. A non-string value is an <code>Err</code>.</td></tr><tr><td><code>json</code></td><td>any</td><td>Serialized to JSON and sent with <code>Content-Type: application/json</code>. Supplying <code>body</code> and <code>json</code> together is an <code>Err</code>.</td></tr><tr><td><code>timeout</code></td><td>int (ms)</td><td>Wall-clock cap on the whole request. <code>0</code> means unlimited. Default 30000.</td></tr><tr><td><code>redirects</code></td><td>int</td><td>Redirect cap. <code>0</code> means do not follow: the 3xx response is returned as-is.</td></tr><tr><td><code>max_body</code></td><td>int (bytes)</td><td>Cap on the decompressed body. <code>0</code> means unlimited. Exceeding it is an <code>Err</code>, never a silent truncation.</td></tr><tr><td><code>insecure</code></td><td>bool</td><td>When truthy, skip TLS certificate verification.</td></tr></tbody></table>
+<p>The third argument to <code>http</code> (and the second to <code>http_get</code> / <code>http_post</code>) is a trailing options map, in the same style as the subprocess builtins. The schema is closed: an unknown key, a non-string key, or a value of the wrong type is a catchable <code>Err</code>, never silently ignored.</p>
+<table><thead><tr><th>Option</th><th>Type</th><th>Effect</th></tr></thead><tbody><tr><td><code>headers</code></td><td>map</td><td><code>{name: value}</code>, both strings. Overrides the defaults; a non-string entry is an <code>Err</code>.</td></tr><tr><td><code>body</code></td><td>string</td><td>A raw request body. A non-string value is an <code>Err</code>.</td></tr><tr><td><code>json</code></td><td>any</td><td>Serialized to JSON and sent with <code>Content-Type: application/json</code>. Supplying <code>body</code> and <code>json</code> together is an <code>Err</code>.</td></tr><tr><td><code>timeout</code></td><td>number (ms)</td><td>Finite, non-negative wall-clock cap within the platform duration range. <code>0</code> means unlimited. Default 30000.</td></tr><tr><td><code>redirects</code></td><td>int</td><td>Non-negative redirect cap. <code>0</code> means do not follow: the 3xx response is returned as-is.</td></tr><tr><td><code>max_body</code></td><td>int (bytes)</td><td>Non-negative cap on the decompressed body. <code>0</code> means unlimited. Exceeding it is an <code>Err</code>, never a silent truncation.</td></tr><tr><td><code>insecure</code></td><td>bool</td><td>When <code>true</code>, skip TLS certificate verification.</td></tr></tbody></table>
 <p>Sending JSON is a one-liner. The <code>json</code> option takes any drang value, serializes it, and sets the content type for you:</p>
 <pre><code class="language-drang">$r := http("POST", "https://httpbin.org/post", {json: {name: "ada", n: 3}})?
 $echo := from_json($r.body)
@@ -2193,7 +2228,7 @@ fn .tick($req) {
 serve({routes: {"/": .home, "/tick": .tick}})</code></pre>
 <p>Run it and a chrome-less app window opens showing the page; the button fires an htmx <code>GET /tick</code>, your <code>.tick</code> runs, and its HTML fragment lands in <code>#out</code>. Close the window and the script ends. The htmx runtime (2.0.4) is baked into the drang binary and served at <code>/_/htmx.js</code> — nothing to install, fully offline.</p>
 <h3 id="handlers">Handlers</h3>
-<p>A route maps a path to a function of zero or one parameters. The parameter, if declared, receives a request map — <code>{method, path, query, form, headers}</code> — with <code>query</code> and <code>form</code> already parsed into maps. A handler returns one of three things: a <strong>string</strong> (sent as <code>text/html</code>), a <strong>map</strong> <code>{status?, headers?, body}</code> for full control, or <strong>nil</strong> (a 204, for fire-and-forget actions). Handler calls are serialized — one at a time, which is exactly right for a single browser window — and a handler that dies becomes a 500 response, never a crashed server.</p>
+<p>A route maps a path to a function of zero or one parameters. The parameter, if declared, receives a request map — <code>{method, path, query, form, headers}</code> — with <code>query</code> and <code>form</code> already parsed into maps. A handler returns one of three things: a <strong>string</strong> (sent as <code>text/html</code>), a closed <strong>map</strong> <code>{status?, headers?, body?}</code> for full control, or <strong>nil</strong> (a 204, for fire-and-forget actions). A response-map status must be an int from 200 through 599, header names and values must be strings without injection newlines, and <code>body</code> must be a string; an unknown key or malformed field becomes a controlled 500. Handler calls are serialized — one at a time, which is exactly right for a single browser window — and a handler that dies becomes a 500 response, never a crashed server.</p>
 <p>Privacy composes here the way it does everywhere: routes hold function <em>values</em>, so in a module a private handler works fine — <code>serve({routes: {"/": .home}})</code> needs no <code>export</code>.</p>
 <h3 id="options-assets-and-shipping-it">Options, assets, and shipping it</h3>
 <pre><code class="language-drang"># norun: serve options
@@ -2203,11 +2238,11 @@ serve({
 	port:   0,         # 0 or omitted = an ephemeral port; fixed number to pin it
 	open:   true       # false = start the server, open no window (tests, curl)
 })</code></pre>
-<p><code>static</code> serves a directory of plain files alongside your routes — and this is the dev-to-ship hinge: run the script and <code>static: "web"</code> reads from disk; build it with</p>
+<p><code>static</code> serves a directory of plain files alongside your routes — and this is the dev-to-ship hinge: run the script and <code>static: "web"</code> reads from disk through an OS-rooted file handle (a symlink cannot escape that root); build it with</p>
 <pre><code>drang build tool.dr --web web --gui -o tool.exe</code></pre>
 <p>and the same program serves the <strong>embedded</strong> copy of <code>web/</code> from memory — one double-clickable, signable exe (<code>--gui</code> suppresses the console window; see the standalone section of the README).</p>
 <h3 id="lifetime-and-clamping">Lifetime and clamping</h3>
-<p>Every request is gated on a per-launch random token (delivered on the first navigation, then carried by a cookie), so no other local process can drive your tool. The window is Microsoft Edge in <code>--app</code> mode against a <strong>throwaway profile</strong> — background networking, sync, and extensions off — launched inside a dedicated Job Object so drang watches the <em>whole</em> browser process tree: closing the window shuts the server down and wipes the profile, even when Edge hands the window off to a helper process. If Edge is absent, the default browser opens the page unclamped; with <code>open: false</code> nothing opens at all and the server just runs until the process is killed.</p>
+<p>Every request is gated on a cryptographically random per-launch token, so no other local process can drive your tool. The first <code>?t=</code> navigation issues an HttpOnly, SameSite cookie and immediately redirects to a token-free URL, keeping the secret out of later browser history and Referer headers. Handler request bodies are capped at <strong>8 MiB</strong>, and the local server applies header/read/write/idle timeouts; malformed handler response maps become a controlled 500. The window is Microsoft Edge in <code>--app</code> mode against a <strong>throwaway profile</strong> — background networking, sync, and extensions off — launched inside a dedicated Job Object so drang watches the <em>whole</em> browser process tree: closing the window shuts the server down and wipes the profile, even when Edge hands the window off to a helper process. If Edge is absent, the default browser opens the page unclamped; with <code>open: false</code> nothing opens at all and the server just runs until the process is killed.</p>
 <p>Two worked examples ship in the repo: <a href="examples/gui/cockpit.dr"><code>examples/gui/cockpit.dr</code></a> (the minimal ping button above) and <a href="examples/gui/git_tree.dr"><code>examples/gui/git_tree.dr</code></a> (an interactive Git history viewer — metrics, debounced search, a graph table — in ~400 lines of drang).</p>
 <h2 id="one-liner-mode">One-liner mode</h2>
 <p><code>-n</code> and <code>-p</code> turn drang into a stream processor: the program runs once per input line, in the tradition of the classic line-oriented text tools. <code>-n</code> just loops over the lines. <code>-p</code> loops and, after each line, prints the topic variable <code>$_</code> — the filter mode, where you edit <code>$_</code> in place and let drang do the writing.</p>
@@ -2307,7 +2342,7 @@ say($g.hi())</code></pre>
 <pre><code>hi from spaced dir</code></pre>
 <p>Entry points that have no source file of their own — <code>-e</code>, standard input, the REPL, and a <code>drang build</code> standalone — resolve relative paths against the <strong>current working directory</strong> instead, since there is no containing file to anchor them.</p>
 <h3 id="loading-rules">Loading rules</h3>
-<p><strong>Load once.</strong> A module's top level is evaluated exactly once per process and cached by canonical path (case-folded, matching how Windows treats file names). If several modules import the same dependency, its top level still runs a single time. In a diamond, where a left and a right module both import a shared module, the shared module loads once:</p>
+<p><strong>Load once per evaluation session.</strong> A module's top level is evaluated exactly once for one top-level run/test session and cached by canonical path (case-folded, matching how Windows treats file names). If several modules — including concurrent <code>spawn</code>/<code>pmap</code> workers — first import the same dependency, they share one in-flight load and then one result. Independent evaluation sessions have independent registries, so one run cannot retain or observe another run's module state. In a diamond, where a left and a right module both import a shared module, the shared module loads once:</p>
 <pre><code class="language-drang"># count.dr
 say("loading count")
 export fn .n() { 1 }</code></pre>
@@ -2333,7 +2368,7 @@ aborts top-level runs
 true
 true</code></pre>
 <p>The module's top level ran both times.</p>
-<p><strong>Cycles are an error, not a hang.</strong> If imports form a cycle, the load fails with a message containing <code>import cycle through …</code> rather than looping forever:</p>
+<p><strong>Cycles are an error, not a hang.</strong> If imports form a cycle, including a cycle formed by concurrent first imports, the load fails with a message containing <code>import cycle through …</code> rather than looping or leaving two workers waiting on each other forever:</p>
 <pre><code>drang: use "./cyc_a": … use "./cyc_b": … use "./cyc_a": import cycle through …\cyc_a.dr</code></pre>
 <p><strong>Flat merge is not transitive.</strong> If module <code>b</code> does <code>use "./d"</code>, importing <code>b</code> gives you <code>b</code>'s own exports only; <code>d</code>'s names are not re-exported through <code>b</code>. A merge injects names into the importing module's scope and stops there. (A <em>deliberate</em> re-export is spelled, like everything else, with <code>export</code>: a module containing <code>export $d ::= use("./d")</code> exposes the whole captured record as <code>$u.d</code>.) Reaching for a name that was merged one level down is an unknown-name error:</p>
 <pre><code>drang: unknown function .fromD</code></pre>
@@ -2360,7 +2395,7 @@ $m := use("./exiter") // {}
 say("this should not print")</code></pre>
 <p>The program exits with code <code>7</code> and prints nothing; the <code>say</code> never runs. A module that calls <code>die("...")</code> likewise ends the program with its stderr message and exit code <code>1</code>, past any <code>//</code>.</p>
 <h3 id="limits-and-notes">Limits and notes</h3>
-<p><strong>A module may not hold mutable top-level state — even privately.</strong> A module's top level runs once and is shared by every importer, so a mutable top-level <code>:=</code> variable would be cross-importer shared state (and a data race under <code>pmap</code>) no matter its visibility. It makes the whole module fail at import:</p>
+<p><strong>A module may not hold mutable top-level state — even privately.</strong> A module's top level runs once per evaluation session and is shared by every importer in that session, so a mutable top-level <code>:=</code> variable would be cross-importer shared state (and a data race under <code>pmap</code>) no matter its visibility. It makes the whole module fail at import:</p>
 <pre><code class="language-drang"># badmod.dr
 $counter := 0
 fn .bump() { $counter = $counter + 1 }</code></pre>
@@ -2520,9 +2555,11 @@ $ drang fmt -w script.dr         # rewrite the file in place
 $ drang fmt -w src/              # rewrite every *.dr under a directory
 $ drang fmt --check src/         # exit non-zero if anything is unformatted (a CI gate)
 $ cat script.dr | drang fmt      # filter stdin to stdout</code></pre>
-<p>With no paths, <code>fmt</code> reads stdin and writes formatted source to stdout, so it drops into a pipeline as a filter. Given paths, files are formatted directly and directories are searched for <code>*.dr</code> files (dot-directories such as <code>.git</code> are skipped).</p>
-<table><thead><tr><th>flag</th><th>effect</th></tr></thead><tbody><tr><td><code>-w</code>, <code>--write</code></td><td>rewrite each changed file in place, atomically; requires paths</td></tr><tr><td><code>-c</code>, <code>--check</code></td><td>list unformatted files to stderr and exit non-zero (for CI)</td></tr><tr><td><code>-l</code>, <code>--list</code></td><td>list files that would change, to stdout</td></tr><tr><td><code>-d</code>, <code>--diff</code></td><td>print a diff of the changes</td></tr><tr><td><code>--fix</code></td><td>also apply migration rewrites (see below)</td></tr></tbody></table>
-<p>Exit status is <code>0</code> when everything is already formatted, <code>1</code> when a file would change (under <code>--check</code>, <code>-l</code>, or <code>-d</code>) or a file fails to parse, and <code>2</code> for a usage error (for example, <code>-w</code> with no paths, since stdin cannot be rewritten in place).</p>
+<p>With no paths, <code>fmt</code> reads stdin and writes formatted source to stdout, so it drops into a pipeline as a filter. Given paths, files are formatted directly and directories are searched for <code>*.dr</code> files (dot-directories such as <code>.git</code> are skipped). Each source read is capped at <strong>64 MiB</strong>, and an unreadable directory entry aborts the walk instead of being silently skipped.</p>
+<table><thead><tr><th>flag</th><th>effect</th></tr></thead><tbody><tr><td><code>-w</code>, <code>--write</code></td><td>rewrite each changed file in place, atomically; requires paths</td></tr><tr><td><code>-c</code>, <code>--check</code></td><td>list unformatted files to stderr and exit non-zero (for CI)</td></tr><tr><td><code>-l</code>, <code>--list</code></td><td>list files that would change, to stdout</td></tr><tr><td><code>-d</code>, <code>--diff</code></td><td>print a diff of the changes</td></tr><tr><td><code>--fix</code></td><td>also apply migration rewrites (see below)</td></tr><tr><td><code>--</code></td><td>end formatter-option parsing; following paths may begin with <code>-</code></td></tr></tbody></table>
+<p>The four output modes <code>-w</code>, <code>--check</code>, <code>-l</code>, and <code>-d</code> are mutually exclusive, and repeating <code>--fix</code> is a usage error. Exit status is <code>0</code> on success, <code>1</code> when a reporting mode finds a change (or stdin fails to parse), and <code>2</code> for a usage error or any named-path read/walk/parse/write failure.</p>
+<p><code>-w</code> leaves a read-only source untouched. For a writable file it writes a temporary sibling, syncs it, preserves the original mode, and only then renames it over the target; a write, sync, chmod, or rename failure is reported and does not install a partial replacement.</p>
+<p><code>-d</code> uses line-aligned LCS output for ordinary files. Its matrix is capped at four million cells; larger comparisons switch to an exact linear-time prefix/suffix diff whose changed middle may be less minimally aligned. Diff input is capped at one million lines per side and rendered output at 64 MiB, so a bounded source file cannot trigger an unbounded quadratic allocation.</p>
 <h3 id="what-it-does">What it does</h3>
 <p>Give <code>fmt</code> this deliberately messy file:</p>
 <pre><code class="language-drang">fn .add($a,$b){$a+$b}
@@ -2661,6 +2698,6 @@ say(err_msg($r))    # .\greet.bat: winjob: batch argument contains a newline: "l
 <p>To iterate over letters, build the array you want (for example with <code>chars()</code> over a literal) and loop that instead.</p>
 <p>Finally, note that first-class builtin values <em>do</em> work now, so <code>map($xs, basename)</code> and similar point-free forms are fine; that was once listed here as a gap. These remaining items are tracked in the design and roadmap notes as deferred or planned, not shipped.</p>
 </div></main>
-<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.12.0 · built by drang</div></footer>
+<footer><nav><a href="/">Home</a><a href="https://github.com/anafalanx/drang">GitHub</a><a href="https://github.com/anafalanx/drang/blob/main/DESIGN.md">Design notes</a></nav><div>MIT licensed · drang 0.12.1 · built by drang</div></footer>
 <script src="site.js"></script>
 </body></html>

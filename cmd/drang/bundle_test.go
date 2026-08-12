@@ -15,7 +15,7 @@ func TestStandalonePayloadRoundTrip(t *testing.T) {
 	src := []byte("say(\"hi\")\n$x := 42\nsay($x * 2)\n")
 
 	// A built standalone = base image + packed payload; name + source round-trip.
-	full := append(append([]byte{}, base...), packPayload("demo.dr", src, nil)...)
+	full := append(append([]byte{}, base...), mustPackPayload(t, "demo.dr", src, nil)...)
 	got, name, _, found, err := extractPayload(bytes.NewReader(full), int64(len(full)))
 	if !found || err != nil {
 		t.Fatalf("round-trip: found=%v err=%v", found, err)
@@ -44,7 +44,7 @@ func TestStandalonePayloadRoundTrip(t *testing.T) {
 	}
 
 	// Magic present but an incompatible version -> found=true, error.
-	verbad := append(append([]byte{}, base...), packPayload("demo.dr", src, nil)...)
+	verbad := append(append([]byte{}, base...), mustPackPayload(t, "demo.dr", src, nil)...)
 	binary.LittleEndian.PutUint32(verbad[len(verbad)-12:len(verbad)-8], sfxVersion+1)
 	if _, _, _, found, err := extractPayload(bytes.NewReader(verbad), int64(len(verbad))); !found || err == nil {
 		t.Errorf("version mismatch: want found=true with error, got found=%v err=%v", found, err)
@@ -59,7 +59,7 @@ func TestBundleAssetsRoundTrip(t *testing.T) {
 		"css/app.css": []byte("body{color:red}"),
 		"logo.png":    {0x89, 0x50, 0x4e, 0x47, 0x00, 0xff}, // arbitrary binary
 	}
-	full := append(append([]byte{}, base...), packPayload("tool.dr", src, assets)...)
+	full := append(append([]byte{}, base...), mustPackPayload(t, "tool.dr", src, assets)...)
 	gotSrc, name, gotAssets, found, err := extractPayload(bytes.NewReader(full), int64(len(full)))
 	if !found || err != nil {
 		t.Fatalf("round-trip: found=%v err=%v", found, err)
@@ -77,11 +77,63 @@ func TestBundleAssetsRoundTrip(t *testing.T) {
 	}
 
 	// No assets -> an empty asset set, still a clean round-trip.
-	full2 := append(append([]byte{}, base...), packPayload("tool.dr", src, nil)...)
+	full2 := append(append([]byte{}, base...), mustPackPayload(t, "tool.dr", src, nil)...)
 	_, _, a2, found2, err2 := extractPayload(bytes.NewReader(full2), int64(len(full2)))
 	if !found2 || err2 != nil || len(a2) != 0 {
 		t.Errorf("no-asset round-trip: found=%v err=%v assets=%d", found2, err2, len(a2))
 	}
+}
+
+func TestUnframePayloadRejectsAmbiguousOrOversizedMetadata(t *testing.T) {
+	frame := func(assetCount uint32, assets func(*bytes.Buffer)) []byte {
+		var raw bytes.Buffer
+		putU16(&raw, 1)
+		raw.WriteByte('x')
+		putU32(&raw, 1)
+		raw.WriteByte('s')
+		putU32(&raw, int(assetCount))
+		if assets != nil {
+			assets(&raw)
+		}
+		return raw.Bytes()
+	}
+
+	tooMany := frame(maxWebAssetCount+1, nil)
+	if _, _, _, _, err := unframePayload(tooMany); err == nil || !strings.Contains(err.Error(), "too many assets") {
+		t.Fatalf("asset-count error = %v", err)
+	}
+
+	duplicate := frame(2, func(raw *bytes.Buffer) {
+		for range 2 {
+			putU16(raw, 1)
+			raw.WriteByte('a')
+			putU32(raw, 1)
+			raw.WriteByte('x')
+		}
+	})
+	if _, _, _, _, err := unframePayload(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate asset path") {
+		t.Fatalf("duplicate-path error = %v", err)
+	}
+
+	trailing := append(frame(0, nil), 0xff)
+	if _, _, _, _, err := unframePayload(trailing); err == nil || !strings.Contains(err.Error(), "trailing") {
+		t.Fatalf("trailing-data error = %v", err)
+	}
+}
+
+func TestPackPayloadRejectsOversizedNames(t *testing.T) {
+	if _, err := packPayload(strings.Repeat("n", 1<<16), []byte("say(1)"), nil); err == nil {
+		t.Fatal("packPayload accepted a source name that cannot fit in uint16 framing")
+	}
+}
+
+func mustPackPayload(t *testing.T, name string, src []byte, assets map[string][]byte) []byte {
+	t.Helper()
+	b, err := packPayload(name, src, assets)
+	if err != nil {
+		t.Fatalf("packPayload: %v", err)
+	}
+	return b
 }
 
 func TestWriteStandaloneRoundTrip(t *testing.T) {

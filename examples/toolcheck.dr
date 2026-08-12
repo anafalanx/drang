@@ -91,11 +91,11 @@ fn .version_of($c) {
 }
 
 fn .status_of($c) {
-	if !exists(.probe_path($c)) {
+	if !exists(.probe_path($c))? {
 		return {state: "missing", note: ""}
 	}
 	$v := .version_of($c)
-	if starts_with($v, "ERROR") {
+	if starts_with($v, "ERROR")? {
 		return {state: "broken", note: $v}
 	}
 	if $c.want != "" and $v != $c.want {
@@ -105,20 +105,22 @@ fn .status_of($c) {
 }
 
 fn .pad($s, $n) {
-	if len($s) >= $n {
+	$width := len($s)?
+	if $width >= $n {
 		return $s
 	}
-	$s ~ repeat(" ", $n - len($s))
+	$s ~ repeat(" ", $n - $width)?
 }
 
 fn .check() {
 	say("")
 	say(format("els toolcheck  —  .toolchain at {}", $tc))
 	say("")
-	say("  " ~ .pad("COMPONENT", 28) ~ .pad("STATUS", 9) ~ "VERSION / NOTE")
-	say("  " ~ repeat("-", 60))
-	$rows := $components |> map(|$c| ({comp: $c, st: .status_of($c)}))
-	$rows |> each(|$r| say("  " ~ .pad($r.comp.name, 28) ~ .pad(upper($r.st.state), 9) ~ $r.st.note))
+	say("  " ~ .pad("COMPONENT", 28)? ~ .pad("STATUS", 9)? ~ "VERSION / NOTE")
+	say("  " ~ repeat("-", 60)?)
+	$rows := ($components |> map(|$c| ({comp: $c, st: .status_of($c)?})))?
+	($rows |>
+		each(|$r| say("  " ~ .pad($r.comp.name, 28)? ~ .pad(upper($r.st.state), 9)? ~ $r.st.note)))?
 	$issues := $rows |> count(|$r| $r.comp.kind == "core" and $r.st.state != "ok")
 	say("")
 	if $issues > 0 {

@@ -15,6 +15,14 @@ const browserTreeHelperEnv = "DRANG_BROWSER_TREE_HELPER"
 // and exits. That is the Edge failure shape: the first PID can disappear while
 // the actual app process remains alive.
 func TestMain(m *testing.M) {
+	if os.Getenv(inheritedPipeHelperEnv) != "" {
+		inheritedPipeHelper()
+		os.Exit(0)
+	}
+	if os.Getenv(activeProcessLimitHelperEnv) == "1" {
+		activeProcessLimitHelper()
+		os.Exit(0)
+	}
 	switch os.Getenv(browserTreeHelperEnv) {
 	case "parent":
 		browserTreeParent(os.Args[1:])

@@ -16,11 +16,11 @@ fn .test($args) {
 }
 
 fn .ver($args) {
-	say("version:", capture("cmd", "/c", "echo", "1.2.3"))
+	say("version:", capture("cmd", "/c", "echo", "1.2.3")?)
 }
 
 fn .clean($args) {
-	rm($root)
+	rm($root)?
 	say("cleaned", $root)
 }
 

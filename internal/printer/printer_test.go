@@ -129,6 +129,7 @@ func TestCommentPlacement(t *testing.T) {
 		{"lambda-body-comment", "$f := |$x| {\n\t# inner\n\t$x + 1\n}", "# inner"},
 		{"semicolon-trailing-last", "a(); b(); c()  # x", "c()  # x"},
 		{"else-brace-comment", "if x {\n\ta()\n}  # done\nelse {\n\tb()\n}", "}  # done"},
+		{"block-header-lint-directive", "if matches($x, $rx) { # lint:ignore err-bool\n\tsay($x)\n}", "# lint:ignore err-bool\nif matches"},
 	}
 	for _, c := range cases {
 		got := mustFormat(t, c.in)

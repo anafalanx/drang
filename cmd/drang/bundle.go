@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/anafalanx/drang/internal/eval"
 	"github.com/anafalanx/drang/internal/parser"
 )
 
@@ -36,6 +37,12 @@ const (
 	sfxMagic   = "DRANGsfx" // marks an appended standalone payload
 	sfxVersion = uint32(3)  // payload format version (v3 adds the web/ asset tree)
 	sfxFooter  = 8 + 4 + 8  // payloadLen + version + magic
+
+	maxStandaloneCompressedBytes = int64(128 << 20)
+	maxStandalonePayloadBytes    = int64(256 << 20)
+	maxWebAssetBytes             = int64(64 << 20)
+	maxWebTotalBytes             = int64(192 << 20)
+	maxWebAssetCount             = uint32(65_535)
 )
 
 // embeddedProgram returns the standalone program (and any bundled web assets)
@@ -86,6 +93,9 @@ func extractPayload(r io.ReaderAt, size int64) (src []byte, name string, assets 
 	if plen < 0 || start < 0 {
 		return nil, "", nil, true, fmt.Errorf("standalone payload length out of range")
 	}
+	if plen > maxStandaloneCompressedBytes {
+		return nil, "", nil, true, fmt.Errorf("standalone compressed payload exceeds the %d MiB limit", maxStandaloneCompressedBytes>>20)
+	}
 	comp := make([]byte, plen)
 	if _, e := r.ReadAt(comp, start); e != nil {
 		return nil, "", nil, true, e
@@ -95,7 +105,7 @@ func extractPayload(r io.ReaderAt, size int64) (src []byte, name string, assets 
 		return nil, "", nil, true, e
 	}
 	defer gz.Close()
-	raw, e := io.ReadAll(gz)
+	raw, e := readAllLimited(gz, maxStandalonePayloadBytes, "standalone decompressed payload")
 	if e != nil {
 		return nil, "", nil, true, e
 	}
@@ -114,13 +124,20 @@ func unframePayload(raw []byte) (src []byte, name string, assets map[string][]by
 	if !ok {
 		return nil, "", nil, true, fmt.Errorf("standalone payload truncated (source)")
 	}
+	if int64(len(srcB)) > maxSourceBytes {
+		return nil, "", nil, true, fmt.Errorf("standalone source exceeds the %d MiB limit", maxSourceBytes>>20)
+	}
 	nAssets, ok := c.u32()
 	if !ok {
 		return nil, "", nil, true, fmt.Errorf("standalone payload truncated (asset count)")
 	}
+	if nAssets > maxWebAssetCount {
+		return nil, "", nil, true, fmt.Errorf("standalone payload has too many assets (%d; limit %d)", nAssets, maxWebAssetCount)
+	}
 	if nAssets > 0 {
 		assets = make(map[string][]byte, nAssets)
 	}
+	var assetTotal int64
 	for i := uint32(0); i < nAssets; i++ {
 		pathB, ok := c.bytesU16()
 		if !ok {
@@ -130,7 +147,21 @@ func unframePayload(raw []byte) (src []byte, name string, assets map[string][]by
 		if !ok {
 			return nil, "", nil, true, fmt.Errorf("standalone payload truncated (asset data)")
 		}
-		assets[string(pathB)] = append([]byte(nil), dataB...) // own the bytes (raw may be reused)
+		if int64(len(dataB)) > maxWebAssetBytes {
+			return nil, "", nil, true, fmt.Errorf("standalone web asset exceeds the %d MiB limit", maxWebAssetBytes>>20)
+		}
+		assetTotal += int64(len(dataB))
+		if assetTotal > maxWebTotalBytes {
+			return nil, "", nil, true, fmt.Errorf("standalone web assets exceed the %d MiB total limit", maxWebTotalBytes>>20)
+		}
+		path := string(pathB)
+		if _, exists := assets[path]; exists {
+			return nil, "", nil, true, fmt.Errorf("standalone payload contains duplicate asset path %q", path)
+		}
+		assets[path] = append([]byte(nil), dataB...) // own the bytes (raw may be reused)
+	}
+	if c.off != len(c.buf) {
+		return nil, "", nil, true, fmt.Errorf("standalone payload has %d trailing byte(s)", len(c.buf)-c.off)
 	}
 	return srcB, string(nameB), assets, true, nil
 }
@@ -189,9 +220,28 @@ func standaloneOrigin() string {
 func buildStandalone(args []string) {
 	var srcPath, outPath, webDir string
 	var gui bool
+	options := true
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
+		if options && args[i] == "--" {
+			options = false
+			continue
+		}
+		if !options {
+			if srcPath != "" {
+				fmt.Fprintln(os.Stderr, "drang build: unexpected argument", args[i])
+				os.Exit(2)
+			}
+			srcPath = args[i]
+			continue
+		}
 		switch args[i] {
 		case "-o", "--output":
+			if seen["output"] {
+				fmt.Fprintln(os.Stderr, "drang build: output option specified more than once")
+				os.Exit(2)
+			}
+			seen["output"] = true
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "drang build: -o needs an output path")
 				os.Exit(2)
@@ -199,6 +249,11 @@ func buildStandalone(args []string) {
 			outPath = args[i+1]
 			i++
 		case "--web":
+			if seen["web"] {
+				fmt.Fprintln(os.Stderr, "drang build: --web specified more than once")
+				os.Exit(2)
+			}
+			seen["web"] = true
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "drang build: --web needs a directory")
 				os.Exit(2)
@@ -206,8 +261,16 @@ func buildStandalone(args []string) {
 			webDir = args[i+1]
 			i++
 		case "--gui":
+			if gui {
+				fmt.Fprintln(os.Stderr, "drang build: --gui specified more than once")
+				os.Exit(2)
+			}
 			gui = true
 		default:
+			if len(args[i]) > 0 && args[i][0] == '-' {
+				fmt.Fprintf(os.Stderr, "drang build: unknown option %q (use -- before a source path beginning with '-')\n", args[i])
+				os.Exit(2)
+			}
 			if srcPath != "" {
 				fmt.Fprintln(os.Stderr, "drang build: unexpected argument", args[i])
 				os.Exit(2)
@@ -219,7 +282,7 @@ func buildStandalone(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: drang build <script.dr> [--web <dir>] [--gui] [-o <output>]")
 		os.Exit(2)
 	}
-	src, err := os.ReadFile(srcPath)
+	src, err := readFileLimited(srcPath, maxSourceBytes, "source file")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "drang:", err)
 		os.Exit(1)
@@ -227,10 +290,11 @@ func buildStandalone(args []string) {
 	// Build-time validation: the script must parse, so the standalone is guaranteed
 	// to at least load. (Runtime errors are still the program's own concern.)
 	p := parser.New(string(src))
-	p.ParseProgram()
+	prog := p.ParseProgram()
 	if reportParseErrors(p, srcPath) {
 		os.Exit(1)
 	}
+	eval.WarnProgramLints(prog, string(src), srcPath, p.Comments(), os.Stderr)
 	var assets map[string][]byte
 	if webDir != "" {
 		a, err := readWebDir(webDir)
@@ -286,6 +350,7 @@ func readWebDir(dir string) (map[string][]byte, error) {
 		return nil, fmt.Errorf("--web %s: not a directory", dir)
 	}
 	out := map[string][]byte{}
+	var total int64
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -293,15 +358,26 @@ func readWebDir(dir string) (map[string][]byte, error) {
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
+		if uint32(len(out)) >= maxWebAssetCount {
+			return fmt.Errorf("asset count exceeds the %d-file limit", maxWebAssetCount)
+		}
 		rel, err := filepath.Rel(dir, p)
 		if err != nil {
 			return err
 		}
-		data, err := os.ReadFile(p)
+		rel = filepath.ToSlash(rel)
+		if len(rel) > int(^uint16(0)) {
+			return fmt.Errorf("asset path is too long to bundle: %s", rel)
+		}
+		data, err := readFileLimited(p, maxWebAssetBytes, "web asset "+rel)
 		if err != nil {
 			return err
 		}
-		out[filepath.ToSlash(rel)] = data
+		total += int64(len(data))
+		if total > maxWebTotalBytes {
+			return fmt.Errorf("web assets exceed the %d MiB total limit", maxWebTotalBytes>>20)
+		}
+		out[rel] = data
 		return nil
 	})
 	if err != nil {
@@ -372,7 +448,14 @@ func writeStandalone(runtimeExe, outPath, name string, src []byte, assets map[st
 			return 0, fmt.Errorf("--gui: %w", err)
 		}
 	}
-	if _, err := tmp.Write(packPayload(name, src, assets)); err != nil {
+	payload, err := packPayload(name, src, assets)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		return 0, err
+	}
+	if err := tmp.Sync(); err != nil {
 		return 0, err
 	}
 	if err := tmp.Close(); err != nil {
@@ -466,9 +549,18 @@ func setPESubsystem(f *os.File, subsystem uint16) error {
 // packPayload frames the name + source + assets, compresses them, and appends the
 // trailer, returning the bytes to add after the runtime binary. Assets are packed
 // in sorted path order, so a given input builds byte-identically.
-func packPayload(name string, src []byte, assets map[string][]byte) []byte {
-	if len(name) > 0xffff {
-		name = name[:0xffff] // basenames are short; clamp defensively
+func packPayload(name string, src []byte, assets map[string][]byte) ([]byte, error) {
+	if len(name) > int(^uint16(0)) {
+		return nil, fmt.Errorf("standalone source name is too long")
+	}
+	if int64(len(src)) > maxSourceBytes {
+		return nil, fmt.Errorf("standalone source exceeds the %d MiB limit", maxSourceBytes>>20)
+	}
+	if uint64(len(src)) > uint64(^uint32(0)) {
+		return nil, fmt.Errorf("standalone source is too large for the payload format")
+	}
+	if uint64(len(assets)) > uint64(maxWebAssetCount) {
+		return nil, fmt.Errorf("standalone has too many assets (%d; limit %d)", len(assets), maxWebAssetCount)
 	}
 	var raw bytes.Buffer
 	putU16(&raw, len(name))
@@ -481,6 +573,24 @@ func packPayload(name string, src []byte, assets map[string][]byte) []byte {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
+	rawSize := uint64(2+len(name)) + uint64(4+len(src)) + 4
+	var assetTotal int64
+	for _, p := range paths {
+		if len(p) > int(^uint16(0)) {
+			return nil, fmt.Errorf("asset path is too long to bundle: %s", p)
+		}
+		if int64(len(assets[p])) > maxWebAssetBytes || uint64(len(assets[p])) > uint64(^uint32(0)) {
+			return nil, fmt.Errorf("web asset %s exceeds the %d MiB limit", p, maxWebAssetBytes>>20)
+		}
+		assetTotal += int64(len(assets[p]))
+		if assetTotal > maxWebTotalBytes {
+			return nil, fmt.Errorf("web assets exceed the %d MiB total limit", maxWebTotalBytes>>20)
+		}
+		rawSize += uint64(2+len(p)) + uint64(4+len(assets[p]))
+		if rawSize > uint64(maxStandalonePayloadBytes) {
+			return nil, fmt.Errorf("standalone payload exceeds the %d MiB decompressed limit", maxStandalonePayloadBytes>>20)
+		}
+	}
 	putU32(&raw, len(paths))
 	for _, p := range paths {
 		putU16(&raw, len(p))
@@ -490,15 +600,25 @@ func packPayload(name string, src []byte, assets map[string][]byte) []byte {
 	}
 
 	var buf bytes.Buffer
-	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-	_, _ = zw.Write(raw.Bytes())
-	_ = zw.Close()
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := zw.Write(raw.Bytes()); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
 	payload := buf.Bytes()
+	if int64(len(payload)) > maxStandaloneCompressedBytes {
+		return nil, fmt.Errorf("standalone compressed payload exceeds the %d MiB limit", maxStandaloneCompressedBytes>>20)
+	}
 	footer := make([]byte, sfxFooter)
 	binary.LittleEndian.PutUint64(footer[0:8], uint64(len(payload)))
 	binary.LittleEndian.PutUint32(footer[8:12], sfxVersion)
 	copy(footer[12:20], sfxMagic)
-	return append(payload, footer...)
+	return append(payload, footer...), nil
 }
 
 func putU16(b *bytes.Buffer, n int) {

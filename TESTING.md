@@ -3,26 +3,27 @@ type: guide
 title: testing drang
 description: How to run drang's local preflight — the -race suite, the fuzzers, the example checks, and the release gate.
 tags: [drang, testing, preflight, quality]
-timestamp: 2026-07-21
+timestamp: 2026-08-12
 ---
 
 # Testing drang
 
-drang has **no hosted CI and no scheduled fuzzing**. That is a deliberate choice, not
-a gap: the whole test apparatus — the `-race` suite and the fuzzers — lives in the
-repo and runs **locally, on demand**. This document is how to run it and what it
-guarantees.
+drang's release gate runs **locally, on demand**: the uncached `-race` suite, focused
+Windows lifecycle stress, documentation contracts, and fuzzers all live in the repo.
+There is currently no hosted CI or scheduled fuzzing; see the rationale below.
 
-The single entry point is the **preflight**:
+This is a z-system project. The single release entry point is the live workspace
+front door at `C:\dev\z.exe`:
 
 ```
-drang tools/verify.dr          # build + vet + -race suite + docs checks, then a 20s fuzz burst per target
-drang tools/verify.dr 60s      # longer fuzz burst per target
-drang tools/verify.dr none     # gate + docs checks only, no fuzzing
+C:\dev\z.exe check          # build + vet + uncached -race/stress + docs, then 20s fuzz per target
+C:\dev\z.exe check 60s      # longer fuzz burst per target
+C:\dev\z.exe check none     # gate + docs checks only, no fuzzing
 ```
 
-or, via the [`z.json`](z.json) task runner, `z check` (which runs it straight from
-source with `go run`, so there is never a stale interpreter).
+The `check` command comes from [`z.json`](z.json) and runs the preflight straight from
+source with `go run`, so there is never a stale interpreter. Do not substitute the
+private `C:\dev\.z\z.exe`; it resolves a different workspace root.
 
 > **Run the preflight before cutting a release, and after any major work.** With no CI
 > watching the tree, this manual pass *is* the gate. A green preflight is the bar for
@@ -39,21 +40,22 @@ runs these stages and exits non-zero if any fails:
 |-------|---------|-----------------|
 | build | `go build ./...` | anything that doesn't compile (incl. `cmd/drang`) |
 | vet | `go vet ./...` | suspicious constructs the compiler allows |
-| race suite | `go test -race ./...` | logic regressions **and** data races, across every package |
+| race suite | `go test -race -count=1 ./...` | logic regressions **and** data races, without a cached release verdict |
+| winjob stress | focused monitor lifecycle tests, `-count=20` | timing-sensitive completion-port close/watch races, GC backstop, and tree-drain regressions |
 | fmt gate | `drang fmt --check bench tools examples` | canonical-format drift in the repo's own scripts |
-| manual examples | `drang tools/check_examples.dr MANUAL.md` | manual/reality drift — shown output byte-compared |
-| reference examples | `drang tools/check_examples.dr REFERENCE.md` | the same, for any runnable REFERENCE blocks |
+| manual examples | `drang tools/check_examples.dr MANUAL.md` | declared exit code and stdout/stderr/combined output; explicit nondeterministic/contextual skips |
+| reference examples | `drang tools/check_examples.dr REFERENCE.md` | the same contract, for runnable REFERENCE blocks |
 | OKF lint | `drang tools/okf_lint.dr` | a concept doc missing its OKF `type` frontmatter |
-| version stamps | `drang tools/version_lint.dr` | README / manual-footer / CHANGELOG / drang.dev stamps behind `cmd/drang/main.go`'s version |
+| version stamps | `drang tools/version_lint.dr` | README, MANUAL, REFERENCE, CHANGELOG, generated-manual, and drang.dev stamps behind `cmd/drang/main.go`'s version |
 | site freshness | `drang tools/gen_manual.dr --check` | a committed `docs/manual.html` that lags MANUAL.md (regenerate-and-compare) |
 | fuzz: parser | `go test -fuzz=FuzzParse ./internal/parser` | inputs that panic/hang the front end |
 | fuzz: printer | `go test -fuzz=FuzzFmtRoundTrip ./internal/printer` | `drang fmt` losing its fixed point |
 | fuzz: eval | `go test -fuzz=FuzzBackendParity ./internal/eval` | the VM and the oracle disagreeing |
 
-The build/vet/race stages are a **gate**: the first failure stops the run (no point
+The build/vet/race/stress stages are a **gate**: the first failure stops the run (no point
 checking docs or fuzzing a broken tree). The docs group then runs as a batch (so one
 pass surfaces every doc regression), and the three fuzz stages all run even if one
-fails — twelve stages in all, and a single pass reports everything at once.
+fails — thirteen stages in all, and a single pass reports everything at once.
 
 The `-race` suite runs the **full** suite with no `-short`, so the slow behavioral
 tests (e.g. the Job-Object resource-limit and CPU-breach tests, which spin a real
@@ -67,16 +69,17 @@ release gate.
 You don't need the full preflight for a tight edit loop. The plain suite is fast:
 
 ```
-go test ./...            # whole suite, ~seconds
-go test -short ./...     # skips the multi-second behavioral limit tests
-go test -race ./...      # add the race detector (slower; what the preflight uses)
-go test ./internal/eval  # one package
-go test -run TestVMParity ./internal/eval   # one test
+C:\dev\z.exe test                         # project command: whole suite
+C:\dev\z.exe go test -short ./...         # skip multi-second behavioral limit tests
+C:\dev\z.exe go test ./internal/eval      # one package
+C:\dev\z.exe go test -run TestVMParity ./internal/eval  # one test
 ```
 
-The toolchain is **Go 1.26** (it is not on the global `PATH` in this environment — it
-lives in the z workspace tree, e.g. `.z/go/1.26.4/bin`; the `-race` suite additionally
-needs `CGO_ENABLED=1` and the workspace's MSYS2 gcc).
+The front door resolves the project's **Go 1.26** runtime and exposes the workspace
+toolchain root. `tools/verify.dr` resolves the bundled MSYS2 UCRT64 GCC from that root,
+then overlays its `PATH`/`CC` plus `CGO_ENABLED=1` on every race/fuzz child. An ambient
+`CGO_ENABLED=0` therefore cannot silently disable those stages, and no persistent Go
+setting is mutated. Ambient `go` or `gcc` is intentionally not assumed to be on `PATH`.
 
 ---
 
@@ -174,6 +177,29 @@ go test -run='^$' -fuzz='^FuzzBackendParity$' -fuzztime=5m ./internal/eval
 
 `-run='^$'` disables the normal tests so only the fuzzer runs; `-fuzztime` bounds it
 (omit it and the fuzzer runs until interrupted).
+
+---
+
+## Release artifact checklist
+
+The preflight qualifies the source tree. A release additionally qualifies the exact
+binary that will be uploaded:
+
+1. Start from a clean tree with the documented Go toolchain and race-detector GCC.
+2. Run `C:\dev\z.exe check` so the checker itself comes from current source, not a
+   stale `drang.exe`, and the pinned toolchain is active.
+3. Build the versioned Windows amd64 asset with the release flags from `z build`
+   (`-trimpath`, `-ldflags "-s -w"`), then confirm `<asset> --version` agrees with
+   `cmd/drang/main.go`, the changelog, manual/reference, and site stamps.
+4. Smoke-test that staged asset directly, including one console standalone made by
+   its `drang build` command.
+5. Run `drang tools/sign.dr <asset.exe>`. The helper signs, verifies the Authenticode
+   timestamp, and writes `<asset.exe>.sha256` beside the binary in standard checksum
+   format. Upload both files and verify the recorded hash once more before publishing.
+
+A standalone produced later by `drang build` is a new image: the appended payload does
+not retain the base interpreter's Authenticode signature. Sign the final generated exe,
+not merely the interpreter it came from.
 
 ---
 

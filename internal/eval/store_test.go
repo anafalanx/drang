@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/anafalanx/drang/internal/value"
@@ -15,6 +16,39 @@ import (
 func storeTestPath(t *testing.T) string {
 	t.Helper()
 	return filepath.ToSlash(filepath.Join(t.TempDir(), "kv.store"))
+}
+
+func testStoreSession(t *testing.T) *storeSession {
+	t.Helper()
+	ss := newStoreSession()
+	t.Cleanup(ss.registry.closeAll)
+	return ss
+}
+
+// The direct Store unit tests share one explicitly reset test session. Production has no global
+// store registry; evaluator tests run through the per-Env session owned by runBackend.
+var directStoreTestSession struct {
+	sync.Mutex
+	ss *storeSession
+}
+
+func openStore(path string) (*Store, value.Value, bool) {
+	directStoreTestSession.Lock()
+	defer directStoreTestSession.Unlock()
+	if directStoreTestSession.ss == nil {
+		directStoreTestSession.ss = newStoreSession()
+	}
+	return directStoreTestSession.ss.open(path)
+}
+
+func resetStoresForTest() {
+	directStoreTestSession.Lock()
+	ss := directStoreTestSession.ss
+	directStoreTestSession.ss = nil
+	directStoreTestSession.Unlock()
+	if ss != nil {
+		ss.registry.closeAll()
+	}
 }
 
 // The parity tests below embed an explicit temp path (never the default) and clear the
@@ -58,6 +92,22 @@ func TestWithStoreBatchParity(t *testing.T) {
 		"})\n" +
 		"say(store_get($s, \"a\") + store_get($s, \"b\"))"
 	assertBoth(t, src, "30\n")
+}
+
+func TestWithStoreSpawnedFirstClassBuiltinCannotImpersonateOwner(t *testing.T) {
+	defer resetStoresForTest()
+	p := storeTestPath(t)
+	src := "$s := store('" + p + "')\n" +
+		"store_clear($s)\n" +
+		"$setter := store_set\n" +
+		"$result := with_store($s, |$s| {\n" +
+		"  $task := spawn(|$set, $store| $set($store, \"child\", 1), $setter, $s)\n" +
+		"  $child := await($task)\n" +
+		"  store_set($s, \"owner\", 1)\n" +
+		"  [is_err($child), store_has($s, \"child\")]\n" +
+		"})\n" +
+		"say($result[0], $result[1], store_has($s, \"child\"), store_has($s, \"owner\"))"
+	assertBoth(t, src, "true false false true\n")
 }
 
 func TestWithStoreRollbackParity(t *testing.T) {
@@ -126,6 +176,107 @@ func TestStorePersistsAcrossOpens(t *testing.T) {
 	s2.close()
 }
 
+func TestClosedStoreHandleCannotOperateAfterReopen(t *testing.T) {
+	defer resetStoresForTest()
+	p := filepath.Join(t.TempDir(), "kv.store")
+	old, _, ok := openStore(p)
+	if !ok {
+		t.Fatal("open old store failed")
+	}
+	oldValue := value.MakeObj(value.Store, old)
+	if got := callBuiltin(t, "store_set", oldValue, str("k"), str("old")); got.IsErr() {
+		t.Fatalf("initial store_set: %s", got.Display())
+	}
+	if err := old.close(); err != nil {
+		t.Fatalf("close old store: %v", err)
+	}
+
+	fresh, _, ok := openStore(p)
+	if !ok {
+		t.Fatal("reopen failed")
+	}
+	if fresh == old {
+		t.Fatal("reopen returned the closed Store object")
+	}
+	freshValue := value.MakeObj(value.Store, fresh)
+	for name, got := range map[string]value.Value{
+		"get":    callBuiltin(t, "store_get", oldValue, str("k")),
+		"set":    callBuiltin(t, "store_set", oldValue, str("k"), str("stale")),
+		"has":    callBuiltin(t, "store_has", oldValue, str("k")),
+		"delete": callBuiltin(t, "store_delete", oldValue, str("k")),
+		"keys":   callBuiltin(t, "store_keys", oldValue),
+		"all":    callBuiltin(t, "store_all", oldValue),
+		"clear":  callBuiltin(t, "store_clear", oldValue),
+		"path":   callBuiltin(t, "store_path", oldValue),
+	} {
+		if !got.IsErr() || !strings.Contains(got.ErrMsg(), "closed") {
+			t.Errorf("closed store %s = %s, want closed-store Err", name, got.Display())
+		}
+	}
+	if got := callBuiltin(t, "store_get", freshValue, str("k")); got.Tag() != value.Str || got.AsStr() != "old" {
+		t.Fatalf("stale handle changed reopened store: got %s, want old", got.Display())
+	}
+	if got := callBuiltin(t, "store_set", freshValue, str("k"), str("fresh")); got.IsErr() {
+		t.Fatalf("fresh handle was not usable: %s", got.Display())
+	}
+}
+
+func TestStoreCloseIsAtomicWithReopen(t *testing.T) {
+	defer resetStoresForTest()
+	p := filepath.Join(t.TempDir(), "kv.store")
+	type openedStore struct {
+		s  *Store
+		ok bool
+	}
+	for i := 0; i < 100; i++ {
+		s, _, ok := openStore(p)
+		if !ok {
+			t.Fatalf("iter %d: open failed", i)
+		}
+		start := make(chan struct{})
+		closed := make(chan error, 1)
+		opened := make(chan openedStore, 1)
+		go func() {
+			<-start
+			closed <- s.close()
+		}()
+		go func() {
+			<-start
+			next, _, openedOK := openStore(p)
+			opened <- openedStore{s: next, ok: openedOK}
+		}()
+		close(start)
+		if err := <-closed; err != nil {
+			t.Fatalf("iter %d: close: %v", i, err)
+		}
+		if got := <-opened; !got.ok {
+			t.Fatalf("iter %d: racing reopen failed", i)
+		}
+
+		// The racing open may linearize immediately before close and return s. Once close has
+		// completed, however, a fresh open must always return a usable replacement rather than a
+		// closed cached handle or an advisory-lock busy error.
+		next, _, ok := openStore(p)
+		if !ok {
+			t.Fatalf("iter %d: post-close reopen failed", i)
+		}
+		if next == s {
+			t.Fatalf("iter %d: post-close reopen returned closed handle", i)
+		}
+	}
+}
+
+func TestStoreCloseInsideBatchReturnsErrNotDeadlock(t *testing.T) {
+	defer resetStoresForTest()
+	p := storeTestPath(t)
+	src := "$s := store('" + p + "')\n" +
+		"$r := with_store($s, |$x| store_close($x))\n" +
+		"say(is_err($r))\n" +
+		"say(store_set($s, \"k\", 1))\n" +
+		"store_close($s)"
+	assertBoth(t, src, "true\ntrue\n")
+}
+
 // TestStoreRejectsNonSerializable: a value carrying a channel is a catchable Err and is
 // not stored.
 func TestStoreRejectsNonSerializable(t *testing.T) {
@@ -176,6 +327,7 @@ func TestStoreDefaultPath(t *testing.T) {
 	scriptPath := filepath.Join(dir, "cursor.dr") // need not exist on disk
 	prog := mustParseProg(t, "$s := store()\nstore_set($s, \"k\", 7)\nsay(store_path($s))")
 	env := NewEnv()
+	defer env.storeSession().registry.closeAll()
 	env.SetScriptPath(scriptPath)
 
 	var buf bytes.Buffer

@@ -169,6 +169,169 @@ func TestNulByteRejected(t *testing.T) {
 	}
 }
 
+func TestParserComplexityLimits(t *testing.T) {
+	tests := []string{
+		strings.Repeat("!", maxParseDepth+32) + "true",
+		strings.Repeat("[", maxParseDepth+32) + "0" + strings.Repeat("]", maxParseDepth+32),
+		strings.Repeat("if true {", maxParseDepth+32) + "1" + strings.Repeat("}", maxParseDepth+32),
+	}
+	for i, src := range tests {
+		p := New(src)
+		p.ParseProgram()
+		if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "source is too complex") {
+			t.Errorf("case %d: expected a bounded-complexity diagnostic, got %q", i, got)
+		}
+	}
+
+	// Exercise the flat-node budget without constructing a million-node fixture.
+	p := New("1")
+	p.budget.nodes = maxParseNodes
+	p.ParseProgram()
+	if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "syntax nodes") {
+		t.Fatalf("node-budget diagnostic = %q", got)
+	}
+}
+
+func TestParserStopsScanningAfterComplexityFailure(t *testing.T) {
+	// This source contains far more opening delimiters than the parser accepts.
+	// Once the depth diagnostic fires, parsing must stop instead of tokenizing the
+	// remaining million delimiters into the lexer's bracket stack.
+	p := New(strings.Repeat("[", 1<<20) + "0")
+	p.ParseProgram()
+	if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "source is too complex") {
+		t.Fatalf("complexity diagnostic = %q", got)
+	}
+	if p.peek.Col > maxParseDepth+16 {
+		t.Fatalf("lexer kept scanning after parser budget failure: lookahead reached column %d", p.peek.Col)
+	}
+}
+
+func TestElseIfNestingCeiling(t *testing.T) {
+	chain := func(levels int, tail string) string {
+		var b strings.Builder
+		for range levels - 1 {
+			b.WriteString("if true {} else ")
+		}
+		b.WriteString("if true {}")
+		b.WriteString(tail)
+		return b.String()
+	}
+
+	// The documented recursive-parser ceiling itself remains legal.
+	p := New(chain(maxParseDepth, ""))
+	p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("%d-level else-if chain: unexpected errors %v", maxParseDepth, errs)
+	}
+
+	// The next branch is rejected before parseIf makes another recursive Go call.
+	p = New(chain(maxParseDepth+1, ""))
+	p.ParseProgram()
+	if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "else-if nesting exceeds the limit") {
+		t.Fatalf("overflow diagnostic = %q", got)
+	}
+}
+
+func TestElseIfComplexityFailureStopsScanning(t *testing.T) {
+	var b strings.Builder
+	for range maxParseDepth {
+		b.WriteString("if true {} else ")
+	}
+	b.WriteString("if ")
+	suffixStart := b.Len()
+	b.WriteString(strings.Repeat("[", 4096))
+	b.WriteByte('0')
+
+	p := New(b.String())
+	p.ParseProgram()
+	if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "else-if nesting exceeds the limit") {
+		t.Fatalf("overflow diagnostic = %q", got)
+	}
+	if !p.budget.failed {
+		t.Fatal("else-if complexity failure was not terminal")
+	}
+	if p.peek.Col > suffixStart+2 {
+		t.Fatalf("lexer kept scanning the adversarial suffix: lookahead reached column %d, suffix starts at %d", p.peek.Col, suffixStart)
+	}
+}
+
+func TestAggregateSyntaxUsesSharedBudget(t *testing.T) {
+	tests := []string{
+		`$"${1}${2}"`,
+		`qw{one two}`,
+		`|$a, $b| 1`,
+	}
+	for _, src := range tests {
+		p := New(src)
+		p.budget.nodes = maxParseNodes - 2
+		p.ParseProgram()
+		if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "syntax nodes") {
+			t.Errorf("%q: expected shared node-budget diagnostic, got %q", src, got)
+		}
+	}
+}
+
+func TestInterpolationSubparserInheritsExpressionDepth(t *testing.T) {
+	p := New(`$"${1}"`)
+	p.exprDepth = maxParseDepth - 1
+	p.ParseProgram()
+	if got := strings.Join(p.Errors(), "; "); !strings.Contains(got, "expression nesting") {
+		t.Fatalf("nested interpolation depth diagnostic = %q", got)
+	}
+}
+
+func TestInterpolationPositionsUseOuterSource(t *testing.T) {
+	src := `1
+$"first ${read_file(q{a})} second ${|$x| { read_file(q{b}) }}"
+<<~$TXT
+    third ${read_file("c")}
+    fourth ${read_file("d")}
+TXT`
+	p := New(src)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	var got [][2]int
+	var visitExpr func(ast.Expr)
+	visitExpr = func(e ast.Expr) {
+		switch n := e.(type) {
+		case *ast.Call:
+			if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "read_file" {
+				line, col := n.Loc()
+				got = append(got, [2]int{line, col})
+			}
+			for _, arg := range n.Args {
+				visitExpr(arg)
+			}
+		case *ast.Interp:
+			for _, part := range n.Parts {
+				visitExpr(part)
+			}
+		case *ast.Lambda:
+			for _, stmt := range n.Body.Stmts {
+				if es, ok := stmt.(*ast.ExprStmt); ok {
+					visitExpr(es.X)
+				}
+			}
+		}
+	}
+	for _, stmt := range prog.Stmts {
+		if es, ok := stmt.(*ast.ExprStmt); ok {
+			visitExpr(es.X)
+		}
+	}
+	want := [][2]int{{2, 11}, {2, 44}, {4, 13}, {5, 14}}
+	if len(got) != len(want) {
+		t.Fatalf("positions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("position %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
 // TestLiteralProvenance verifies step-2b: leaf literals carry the verbatim source
 // (Raw) for the formatter, while the decoded eval fields (Value/Pattern) are unchanged.
 func TestLiteralProvenance(t *testing.T) {

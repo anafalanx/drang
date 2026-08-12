@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/anafalanx/drang/internal/ast"
@@ -20,6 +21,8 @@ type StreamOpts struct {
 	Files        []string  // input files; empty means read Stdin
 	Stdin        io.Reader // input when Files is empty (defaults to os.Stdin)
 	Stdout       io.Writer // where -p writes (defaults to os.Stdout)
+	ModuleDir    string    // base directory for relative use paths
+	ScriptPath   string    // running script path for file-derived defaults such as store()
 }
 
 // RunStream runs prog once per input line in awk/perl -n/-p style. BEGIN { } and
@@ -40,7 +43,12 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 	}
 	out := realOut // runLine reads this each call; -i retargets it per file
 	env := NewEnv()
+	env.SetModuleDir(opts.ModuleDir)
+	env.SetScriptPath(opts.ScriptPath)
 	seedArgv(env, argv)
+	ctx := env.executionContext()
+	owned := ctx.beginRun()
+	defer ctx.endRun(owned)
 	if err := RunPrelude(env); err != nil {
 		return err
 	}
@@ -82,6 +90,9 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 			{"file", value.MakeStr(fname)},
 		}
 		if opts.AutoSplit {
+			if countFieldsOver(line, maxCollectionItems) {
+				return fmt.Errorf("auto-split result exceeds the %d-element collection limit", maxCollectionItems)
+			}
 			fields := strings.Fields(line)
 			fv := make([]value.Value, len(fields))
 			for i, f := range fields {
@@ -102,7 +113,13 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 		}
 		if opts.AutoPrint {
 			cur, _ := env.get("_")
-			fmt.Fprintln(out, streamText(cur))
+			text, err := streamText(cur)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(out, text); err != nil {
+				return fmt.Errorf("writing stream output: %w", err)
+			}
 		}
 		return nil
 	}
@@ -145,17 +162,41 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 				return fmt.Errorf("cannot open %s: %v", fn, err)
 			}
 			if opts.InPlace {
-				var buf strings.Builder
-				out = &buf // capture this file's -p output
+				tmp, err := os.CreateTemp(filepath.Dir(fn), ".drang-stream-*")
+				if err != nil {
+					f.Close()
+					return fmt.Errorf("cannot create temporary output for %s: %w", fn, err)
+				}
+				tmpName := tmp.Name()
+				committed := false
+				defer func() {
+					if !committed {
+						os.Remove(tmpName)
+					}
+				}()
+				out = tmp // stream transformed output instead of retaining the whole file
 				err = scan(f, fn)
-				f.Close()
+				closeInputErr := f.Close()
 				out = realOut // restore before the next file / END
 				if err != nil {
+					tmp.Close()
 					return err
 				}
-				if err := commitInPlace(fn, opts.BackupSuffix, buf.String()); err != nil {
+				if closeInputErr != nil {
+					tmp.Close()
+					return fmt.Errorf("closing %s: %w", fn, closeInputErr)
+				}
+				if err := tmp.Sync(); err != nil {
+					tmp.Close()
+					return fmt.Errorf("syncing temporary output for %s: %w", fn, err)
+				}
+				if err := tmp.Close(); err != nil {
+					return fmt.Errorf("closing temporary output for %s: %w", fn, err)
+				}
+				if err := commitInPlaceTemp(fn, opts.BackupSuffix, tmpName); err != nil {
 					return err
 				}
+				committed = true
 			} else {
 				err = scan(f, fn)
 				f.Close()
@@ -169,21 +210,65 @@ func RunStream(prog *ast.Program, argv []string, opts StreamOpts) error {
 	return evalStmts(end, env)
 }
 
-// commitInPlace writes the transformed content back to fn (atomic temp + rename),
-// first copying the original to fn+suffix when suffix is non-empty. Used by -i.
-func commitInPlace(fn, suffix, content string) error {
+// commitInPlaceTemp atomically promotes an already-synced same-directory temp
+// file. A requested backup is copied through its own temp file, so neither the
+// transformed file nor the backup is retained in memory or left partial.
+func commitInPlaceTemp(fn, suffix, tmpName string) error {
 	if suffix != "" {
-		orig, err := os.ReadFile(fn)
-		if err != nil {
-			return fmt.Errorf("cannot read %s for backup: %v", fn, err)
-		}
-		if err := atomicWriteFile(fn+suffix, orig); err != nil {
+		if err := copyFileAtomic(fn, fn+suffix); err != nil {
 			return fmt.Errorf("cannot write backup %s: %v", fn+suffix, err)
 		}
 	}
-	if err := atomicWriteFile(fn, []byte(content)); err != nil {
+	if fi, err := os.Stat(fn); err == nil {
+		if err := os.Chmod(tmpName, fi.Mode()); err != nil {
+			return fmt.Errorf("cannot preserve mode of %s: %w", fn, err)
+		}
+	}
+	if err := os.Rename(tmpName, fn); err != nil {
 		return fmt.Errorf("cannot write %s: %v", fn, err)
 	}
+	return nil
+}
+
+func copyFileAtomic(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".drang-backup-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		tmp.Close()
+		if !committed {
+			os.Remove(tmpName)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(src); err == nil {
+		if err := os.Chmod(tmpName, fi.Mode()); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
@@ -199,9 +284,10 @@ func evalStmts(stmts []ast.Stmt, env *Env) error {
 
 // streamText renders $_ for -p output: a string prints verbatim, anything else via
 // its Display form (so a body that sets $_ to a number still prints sensibly).
-func streamText(v value.Value) string {
-	if v.Tag() == value.Str {
-		return v.AsStr()
+func streamText(v value.Value) (string, error) {
+	s, ok := displayWithin(v, maxStringBytes)
+	if !ok {
+		return "", fmt.Errorf("stream output exceeds the %d-byte string limit", maxStringBytes)
 	}
-	return v.Display()
+	return s, nil
 }

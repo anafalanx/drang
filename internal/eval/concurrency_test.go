@@ -78,8 +78,8 @@ say("task-len", $n, "src-len", len($a))`
 
 // TestChannelSendCloseRaceSafe runs a producer, a concurrent closer, and a
 // drainer over one shared channel — the pattern the review found racing. Under
-// `go test -race` this must stay clean (close signals via `done`, not by closing
-// the data channel).
+// `go test -race` this must stay clean, and the mutex-ordered channel state must
+// make each send commit before close or fail catchably after it.
 func TestChannelSendCloseRaceSafe(t *testing.T) {
 	env := NewEnv()
 	src := `$c := chan()

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/anafalanx/drang/internal/ast"
@@ -97,6 +98,9 @@ func (it *forIter) next() (value.Value, value.Value, bool) {
 // coherent and produces byte-identical results — the property the parity tests
 // assert across the whole suite.
 func RunProgramVM(prog *ast.Program, env *Env) error {
+	ctx := env.executionContext()
+	owned := ctx.beginRun()
+	defer ctx.endRun(owned)
 	env.resetOverflowBudget()
 	p, ok := compileProgram(prog)
 	if !ok {
@@ -265,7 +269,7 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			}
 			regs[in.A] = v
 		case OpConcat:
-			regs[in.A] = value.MakeStr(regs[in.B].Display() + regs[in.C].Display())
+			regs[in.A] = concatValues(regs[in.B], regs[in.C])
 		case OpAddK:
 			l, r := regs[in.B], p.Consts[in.C]
 			if l.Tag() == value.Int && r.Tag() == value.Int {
@@ -329,7 +333,7 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			}
 			regs[in.A] = v
 		case OpConcatK:
-			regs[in.A] = value.MakeStr(regs[in.B].Display() + p.Consts[in.C].Display())
+			regs[in.A] = concatValues(regs[in.B], p.Consts[in.C])
 		case OpEq:
 			regs[in.A] = value.MakeBool(equal(regs[in.B], regs[in.C]))
 		case OpNe:
@@ -396,6 +400,9 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			x := regs[in.B]
 			switch x.Tag() {
 			case value.Int:
+				if x.AsInt() == math.MinInt64 {
+					return value.MakeNil(), fmt.Errorf("integer overflow: cannot negate %d", x.AsInt())
+				}
 				regs[in.A] = value.MakeInt(-x.AsInt())
 			case value.Float:
 				regs[in.A] = value.MakeFloat(-x.AsFloat())
@@ -582,6 +589,10 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 			if v := regs[in.A]; v.Tag() != value.Nil && !v.IsErr() {
 				ip = int(in.B)
 			}
+		case OpJumpIfErr:
+			if regs[in.A].IsErr() {
+				ip = int(in.B)
+			}
 		case OpJmpFalseLt:
 			// Inline int<int (int64 via AsInt, so >2^53 stays exact — mirrors threeway).
 			// Jump-if-FALSE semantics: jump when the exact op is false. Float (incl. NaN),
@@ -765,7 +776,7 @@ func vmRun(p *Proto, env *Env, params []value.Value, depth int) (res value.Value
 					return value.MakeNil(), fmt.Errorf("undefined: %s%s", name, loopKeywordHint(name))
 				}
 				// a bare builtin name is a first-class function value (mirrors the walker)
-				v = value.MakeObj(value.Func, &Function{Name: name, Builtin: b})
+				v = value.MakeObj(value.Func, &Function{Name: name, Env: env, Builtin: b})
 			}
 			regs[in.A] = v
 		case OpMakeClosure:

@@ -28,6 +28,75 @@ func streamOut(t *testing.T, src, input string, opts StreamOpts) string {
 	return out.String()
 }
 
+func TestStreamReportsOutputFailure(t *testing.T) {
+	prog := mustParseProg(t, `$_ = upper($_)`)
+	err := RunStream(prog, nil, StreamOpts{
+		AutoPrint: true,
+		Stdin:     strings.NewReader("hello\n"),
+		Stdout:    failingWriter{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "writing stream output") {
+		t.Fatalf("output failure = %v", err)
+	}
+}
+
+func TestStreamExecutionContextCoversSpawnedCounterpart(t *testing.T) {
+	src := `$c := chan()
+$t := spawn(|| { sleep(0.05); send($c, 41) })
+$_ = recv($c)
+await($t)?`
+	got := streamOut(t, src, "x\n", StreamOpts{AutoPrint: true})
+	if got != "41\n" {
+		t.Fatalf("spawned stream counterpart produced %q, want %q", got, "41\n")
+	}
+}
+
+func TestStreamFileContextResolvesRelativeUse(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "util.dr"), []byte(`export fn .answer() { 41 }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prog := mustParseProg(t, `use "./util"
+$_ = .answer()`)
+	var out bytes.Buffer
+	err := RunStream(prog, nil, StreamOpts{
+		AutoPrint:  true,
+		Stdin:      strings.NewReader("x\n"),
+		Stdout:     &out,
+		ModuleDir:  dir,
+		ScriptPath: filepath.Join(dir, "main.dr"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "41\n" {
+		t.Fatalf("relative module output = %q, want %q", got, "41\n")
+	}
+}
+
+func TestStreamFileContextProvidesDefaultStorePath(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "main.dr")
+	prog := mustParseProg(t, `$s := store()?
+$_ = store_path($s)?
+store_close($s)?`)
+	var out bytes.Buffer
+	err := RunStream(prog, nil, StreamOpts{
+		AutoPrint:  true,
+		Stdin:      strings.NewReader("x\n"),
+		Stdout:     &out,
+		ModuleDir:  dir,
+		ScriptPath: scriptPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, ".drang", "main.store") + "\n"
+	if got := out.String(); got != want {
+		t.Fatalf("default stream store path = %q, want %q", got, want)
+	}
+}
+
 func TestStreamAutoPrint(t *testing.T) {
 	got := streamOut(t, `$_ = upper($_)`, "ab\ncd\n", StreamOpts{AutoPrint: true})
 	if got != "AB\nCD\n" {

@@ -33,6 +33,33 @@ type Job struct {
 	killOnClose bool // immutable after New; re-applied by SetLimits so a limit write never drops it
 }
 
+// withHandle runs f while the job handle is pinned under mu. Close cannot release (and the OS
+// cannot recycle) the handle until f returns. Kernel calls that consume the raw handle must go
+// through this helper rather than reading j.handle directly.
+func (j *Job) withHandle(f func(windows.Handle) error) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return errClosedJob
+	}
+	return f(j.handle)
+}
+
+// duplicateHandle returns a private, non-inheritable reference to the same Job Object. Launch uses
+// duplicates in its PROC_THREAD_ATTRIBUTE_JOB_LIST so a concurrent Close cannot invalidate a raw
+// handle while CreateProcess is consuming it. The caller owns and must close the duplicate.
+func (j *Job) duplicateHandle() (windows.Handle, error) {
+	var dup windows.Handle
+	err := j.withHandle(func(h windows.Handle) error {
+		cur := windows.CurrentProcess()
+		return windows.DuplicateHandle(cur, h, cur, &dup, 0, false, windows.DUPLICATE_SAME_ACCESS)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return dup, nil
+}
+
 // basicAccountingInformation is JOBOBJECT_BASIC_ACCOUNTING_INFORMATION. x/sys
 // exposes the information-class constant but not this structure.
 type basicAccountingInformation struct {
@@ -129,8 +156,16 @@ func (j *Job) SetLimits(l Limits) error {
 	return nil
 }
 
-// Handle returns the raw job handle, for the born-in-job launcher's attribute list.
-func (j *Job) Handle() windows.Handle { return j.handle }
+// Handle returns the current raw job handle, or 0 after Close. The value is only a snapshot; code
+// that must keep it valid across a kernel call uses withHandle or duplicateHandle.
+func (j *Job) Handle() windows.Handle {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return 0
+	}
+	return j.handle
+}
 
 // ActiveProcessCount returns the number of live processes in the job, including
 // descendants that inherited membership. It is the loss-proof counterpart to a

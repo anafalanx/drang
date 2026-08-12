@@ -20,6 +20,7 @@ import (
 	"crypto/subtle"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -42,7 +43,10 @@ import (
 //go:embed htmx.min.js
 var htmxJS []byte
 
-const htmxPath = "/_/htmx.js"
+const (
+	htmxPath                 = "/_/htmx.js"
+	maxServeRequestBodyBytes = int64(8 << 20)
+)
 
 // embeddedWeb holds the web/ asset tree bundled into a `drang build` standalone
 // (forward-slash path -> bytes), or nil for a plain run. When present, serve()
@@ -67,15 +71,28 @@ func builtinServe(args []value.Value) (value.Value, error) {
 	if g == nil {
 		return ev, nil
 	}
+	if g.staticRoot != nil {
+		defer g.staticRoot.Close()
+	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", g.port))
 	if err != nil {
 		return value.MakeErr("serve: "+err.Error(), 1), nil
 	}
 	g.url = fmt.Sprintf("http://127.0.0.1:%d/?t=%s", ln.Addr().(*net.TCPAddr).Port, g.token)
-	fmt.Fprintf(stdout, "drang: serving on %s\n", g.url)
+	if _, err := fmt.Fprintf(lockedShared(stdout), "drang: serving on %s\n", g.url); err != nil {
+		_ = ln.Close()
+		return value.MakeNil(), fmt.Errorf("serve: write status: %w", err)
+	}
 
-	httpSrv := &http.Server{Handler: g}
+	httpSrv := &http.Server{
+		Handler:           g,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	if g.open {
 		go g.openAndWatch(httpSrv) // launch the clamped browser; shut down when it closes
 	}
@@ -91,6 +108,7 @@ func builtinServe(args []value.Value) (value.Value, error) {
 type guiServer struct {
 	routes     map[string]*Function
 	fileServer http.Handler
+	staticRoot *os.Root
 	token      string
 	port       int
 	open       bool
@@ -102,6 +120,16 @@ type guiServer struct {
 // catchable Err describing what was wrong.
 func buildGUIServer(opts *value.OrderedMap) (*guiServer, value.Value) {
 	g := &guiServer{routes: map[string]*Function{}, open: true}
+	for _, k := range opts.Keys() {
+		if k.Tag() != value.Str {
+			return nil, value.MakeErr("serve: option keys must be strings, got "+k.TypeName(), 1)
+		}
+		switch k.AsStr() {
+		case "routes", "static", "port", "open":
+		default:
+			return nil, value.MakeErr(fmt.Sprintf("serve: unknown option %q", k.AsStr()), 1)
+		}
+	}
 
 	routesVal, ok := opts.Get(value.MakeStr("routes"))
 	if !ok || routesVal.Tag() != value.Map {
@@ -126,37 +154,81 @@ func buildGUIServer(opts *value.OrderedMap) (*guiServer, value.Value) {
 		g.routes[p] = fn
 	}
 
-	// A built standalone serves its embedded web/ tree from memory; a plain run
-	// serves the static: directory from disk (http.Dir is traversal-safe).
-	if len(embeddedWeb) > 0 {
-		g.fileServer = memFileServer(embeddedWeb)
-	} else if sv, ok := opts.Get(value.MakeStr("static")); ok && sv.Tag() == value.Str && sv.AsStr() != "" {
-		g.fileServer = http.FileServer(http.Dir(sv.AsStr()))
-	}
-
-	if p, ok := optInt(opts, "port"); ok {
+	if pv, ok := opts.Get(value.MakeStr("port")); ok {
+		if pv.Tag() != value.Int {
+			return nil, value.MakeErr("serve: port must be an int, got "+pv.TypeName(), 1)
+		}
+		p := pv.AsInt()
 		if p < 0 || p > 65535 {
 			return nil, value.MakeErr("serve: port must be 0..65535", 1)
 		}
 		g.port = int(p)
 	}
-	if o, ok := httpOptBool(opts, "open"); ok {
-		g.open = o
+	if ov, ok := opts.Get(value.MakeStr("open")); ok {
+		if ov.Tag() != value.Bool {
+			return nil, value.MakeErr("serve: open must be a bool, got "+ov.TypeName(), 1)
+		}
+		g.open = ov.AsBool()
 	}
-	g.token = randToken()
+
+	// A built standalone serves its embedded web/ tree from memory; a plain run
+	// serves static files through os.Root so symlinks cannot escape the selected
+	// directory. Open the root only after all non-resource options validate.
+	staticVal, hasStatic := opts.Get(value.MakeStr("static"))
+	if hasStatic && staticVal.Tag() != value.Str {
+		return nil, value.MakeErr("serve: static must be a string, got "+staticVal.TypeName(), 1)
+	}
+	if len(embeddedWeb) > 0 {
+		g.fileServer = memFileServer(embeddedWeb)
+	} else if hasStatic && staticVal.AsStr() != "" {
+		root, err := os.OpenRoot(staticVal.AsStr())
+		if err != nil {
+			return nil, value.MakeErr("serve: static: "+err.Error(), 1)
+		}
+		g.staticRoot = root
+		g.fileServer = http.FileServerFS(root.FS())
+	}
+
+	token, err := randToken()
+	if err != nil {
+		if g.staticRoot != nil {
+			_ = g.staticRoot.Close()
+		}
+		return nil, value.MakeErr("serve: secure token generation failed: "+err.Error(), 1)
+	}
+	g.token = token
 	return g, value.MakeNil()
 }
 
 // randToken returns a 256-bit hex token, unguessable per launch.
-func randToken() string {
+var readRandom = rand.Read
+
+func randToken() (string, error) {
 	var b [32]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+	n, err := readRandom(b[:])
+	if err != nil {
+		return "", err
+	}
+	if n != len(b) {
+		return "", io.ErrUnexpectedEOF
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func (g *guiServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.authorize(w, r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	// The launch token is a one-request bootstrap secret. Once it has issued the
+	// HttpOnly cookie, redirect to the same URL without ?t= so browser history,
+	// copied links, and Referer headers cannot disclose it.
+	if _, present := r.URL.Query()["t"]; present {
+		clean := *r.URL
+		q := clean.Query()
+		q.Del("t")
+		clean.RawQuery = q.Encode()
+		http.Redirect(w, r, clean.String(), http.StatusSeeOther)
 		return
 	}
 	if r.URL.Path == htmxPath {
@@ -209,7 +281,17 @@ func tokenEqual(a, b string) bool {
 // runHandler builds the request value, calls the drang handler under the VM lock,
 // and writes its result.
 func (g *guiServer) runHandler(w http.ResponseWriter, r *http.Request, fn *Function) {
-	req := requestValue(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxServeRequestBodyBytes)
+	req, reqErr := requestValue(r)
+	if reqErr != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(reqErr, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "bad request: "+reqErr.Error(), http.StatusBadRequest)
+		}
+		return
+	}
 	g.mu.Lock()
 	result, err := callHandlerSafely(fn, req)
 	g.mu.Unlock()
@@ -217,7 +299,16 @@ func (g *guiServer) runHandler(w http.ResponseWriter, r *http.Request, fn *Funct
 		http.Error(w, "drang handler error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeResult(w, result)
+	if err := writeResult(w, result); err != nil {
+		if errors.Is(err, errInvalidHandlerResponse) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// A response write can fail only after the client has gone away or the
+		// connection has failed. Do not attempt a second response; report it to the
+		// program's diagnostic stream instead.
+		_, _ = fmt.Fprintf(lockedShared(stderr), "drang: serve: response write failed: %v\n", err)
+	}
 }
 
 // callHandlerSafely calls a drang handler with a panic guard, so a bug in a
@@ -230,6 +321,19 @@ func callHandlerSafely(fn *Function, req value.Value) (result value.Value, err e
 			err = fmt.Errorf("handler panicked: %v", rec)
 		}
 	}()
+	// The HTTP goroutine is a real evaluator strand. Count it separately from
+	// the long-lived serve() caller so blocking on await/a channel removes the
+	// request's own slot, and always release that slot when the request returns.
+	// guiServer's mutex serializes handler evaluation, so the original captured
+	// graph/strand remains safe and stateful across requests. Spawn/pmap boundaries
+	// still clone and renew their worker strands.
+	if fn.Env != nil {
+		ctx := fn.Env.executionContext()
+		if ctx != nil {
+			ctx.addRunnable(1)
+			defer ctx.exitRunnable()
+		}
+	}
 	var callArgs []value.Value
 	switch {
 	case fn.Builtin != nil, len(fn.Params) == 1:
@@ -244,54 +348,107 @@ func callHandlerSafely(fn *Function, req value.Value) (result value.Value, err e
 
 // writeResult renders a handler's return value: a string is text/html; a map is
 // {status?, headers?, body}; nil is 204; an Err (or anything else) is a 500.
-func writeResult(w http.ResponseWriter, v value.Value) {
+func writeResult(w http.ResponseWriter, v value.Value) error {
 	switch {
 	case v.IsErr():
 		http.Error(w, "drang: "+v.ErrMsg(), http.StatusInternalServerError)
+		return nil
 	case v.Tag() == value.Str:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, v.AsStr())
+		_, err := io.WriteString(w, v.AsStr())
+		return err
 	case v.Tag() == value.Map:
-		writeMapResult(w, v.Obj().(*value.OrderedMap))
+		return writeMapResult(w, v.Obj().(*value.OrderedMap))
 	case v.Tag() == value.Nil:
 		w.WriteHeader(http.StatusNoContent)
+		return nil
 	default:
 		http.Error(w, "drang: a handler must return a string, a map, or nil (got "+v.TypeName()+")", http.StatusInternalServerError)
+		return nil
 	}
 }
 
-func writeMapResult(w http.ResponseWriter, m *value.OrderedMap) {
+func writeMapResult(w http.ResponseWriter, m *value.OrderedMap) error {
+	for _, k := range m.Keys() {
+		if k.Tag() != value.Str {
+			return invalidHandlerResponsef("response-map keys must be strings")
+		}
+		switch k.AsStr() {
+		case "status", "headers", "body":
+		default:
+			return invalidHandlerResponsef("unknown response-map key %q", k.AsStr())
+		}
+	}
 	status := http.StatusOK
-	if s, ok := m.Get(value.MakeStr("status")); ok && s.Tag() == value.Int {
+	if s, ok := m.Get(value.MakeStr("status")); ok {
+		if s.Tag() != value.Int || s.AsInt() < 200 || s.AsInt() > 599 {
+			return invalidHandlerResponsef("response status must be an int from 200 to 599")
+		}
 		status = int(s.AsInt())
 	}
-	ct := "text/html; charset=utf-8"
-	if h, ok := m.Get(value.MakeStr("headers")); ok && h.Tag() == value.Map {
+	headers := make(http.Header)
+	headers.Set("Content-Type", "text/html; charset=utf-8")
+	if h, ok := m.Get(value.MakeStr("headers")); ok {
+		if h.Tag() != value.Map {
+			return invalidHandlerResponsef("response headers must be a map")
+		}
 		hm := h.Obj().(*value.OrderedMap)
 		for i, k := range hm.Keys() {
 			vv := hm.Vals()[i]
 			if k.Tag() != value.Str || vv.Tag() != value.Str {
-				continue
+				return invalidHandlerResponsef("response header names and values must be strings")
 			}
-			if strings.EqualFold(k.AsStr(), "content-type") {
-				ct = vv.AsStr()
-			} else {
-				w.Header().Set(k.AsStr(), vv.AsStr())
+			if !validHeaderName(k.AsStr()) || strings.ContainsAny(vv.AsStr(), "\r\n") {
+				return invalidHandlerResponsef("invalid response header %q", k.AsStr())
 			}
+			headers.Set(k.AsStr(), vv.AsStr())
 		}
 	}
-	w.Header().Set("Content-Type", ct)
-	w.WriteHeader(status)
-	if b, ok := m.Get(value.MakeStr("body")); ok && b.Tag() == value.Str {
-		_, _ = io.WriteString(w, b.AsStr())
+	body := ""
+	if b, ok := m.Get(value.MakeStr("body")); ok {
+		if b.Tag() != value.Str {
+			return invalidHandlerResponsef("response body must be a string")
+		}
+		body = b.AsStr()
 	}
+	for k, vs := range headers {
+		w.Header()[k] = append([]string(nil), vs...)
+	}
+	w.WriteHeader(status)
+	if body != "" {
+		_, err := io.WriteString(w, body)
+		return err
+	}
+	return nil
+}
+
+var errInvalidHandlerResponse = errors.New("invalid handler response")
+
+func invalidHandlerResponsef(format string, args ...any) error {
+	return fmt.Errorf("%w: drang: %s", errInvalidHandlerResponse, fmt.Sprintf(format, args...))
+}
+
+func validHeaderName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // requestValue converts an HTTP request into the drang map a handler receives:
 // {method, path, query, form, headers}. ParseForm merges URL query and (for form
 // content-types) the POST body — which is what htmx sends by default.
-func requestValue(r *http.Request) value.Value {
-	_ = r.ParseForm()
+func requestValue(r *http.Request) (value.Value, error) {
+	if err := r.ParseForm(); err != nil {
+		return value.MakeNil(), err
+	}
 	out := value.MakeMap()
 	om := out.Obj().(*value.OrderedMap)
 	om.Set(value.MakeStr("method"), value.MakeStr(r.Method))
@@ -299,7 +456,7 @@ func requestValue(r *http.Request) value.Value {
 	om.Set(value.MakeStr("query"), firstValuesMap(r.URL.Query()))
 	om.Set(value.MakeStr("form"), firstValuesMap(r.Form))
 	om.Set(value.MakeStr("headers"), headerMap(r.Header)) // shared with the http client
-	return out
+	return out, nil
 }
 
 // firstValuesMap renders url.Values as a drang map, taking the first value per key.
@@ -365,7 +522,11 @@ func (g *guiServer) openAndWatch(httpSrv *http.Server) {
 	if err := removeBrowserProfile(profileDir); err != nil {
 		fmt.Fprintf(stdout, "drang: cannot remove temporary browser profile: %v\n", err)
 	}
-	_ = httpSrv.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		_ = httpSrv.Close()
+	}
 }
 
 func removeBrowserProfile(profileDir string) error {

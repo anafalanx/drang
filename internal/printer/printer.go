@@ -178,6 +178,17 @@ func (p *printer) stmts(list []ast.Stmt, limit int) {
 			p.write("\n")
 		}
 		p.flushBefore(nodeLine(s))
+		// A comment on the opening line of a multi-line block statement cannot
+		// remain trailing after canonical expansion: attaching it to the closing
+		// brace changes directive scope (notably `# lint:ignore`). Keep it directly
+		// before the statement instead of letting block weaving move it inside.
+		if nodeLine(s) != endLine(s) {
+			if t, ok := p.trailingOn(nodeLine(s)); ok {
+				p.pad()
+				p.write(t)
+				p.write("\n")
+			}
+		}
 		p.pad()
 		p.stmt(s)
 		// Attach a same-line trailing comment only when no later statement also starts on

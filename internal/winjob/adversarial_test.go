@@ -1,6 +1,7 @@
 package winjob
 
 import (
+	"errors"
 	"os"
 	"runtime"
 	"strconv"
@@ -155,6 +156,85 @@ func TestProcessHandleWaitRace(t *testing.T) {
 	_ = job.Terminate(1)
 	_, _ = p.Wait()
 	wg.Wait()
+}
+
+// Wait and Release compete for ownership rather than both operating on the same raw handle. The
+// loser is a harmless no-op/already-waited result; neither may close a handle in active use.
+func TestProcessWaitReleaseRace(t *testing.T) {
+	for i := 0; i < 25; i++ {
+		f := nul(t)
+		job := mustJob(t, false)
+		p, err := Launch([]string{selfExe(t)}, "", childEnv("sleep"), []*Job{job}, Stdio{Stdin: f, Stdout: f, Stderr: f})
+		if err != nil {
+			f.Close()
+			job.Close()
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { _, err := p.Wait(); done <- err }()
+		p.Release()
+		_ = job.Terminate(1)
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, errWaitDone) {
+				t.Fatalf("iter %d: Wait/Release race returned %v", i, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("iter %d: Wait/Release race hung", i)
+		}
+		f.Close()
+		job.Close()
+	}
+}
+
+// Watch pins both the completion-port and Job handles for the association call. Closing either
+// concurrently may win, but must never make Watch act on a released/recycled handle.
+func TestMonitorWatchCloseRace(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		mon, err := NewMonitor()
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := mustJob(t, false)
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); _, _ = mon.Watch(job) }()
+		go func() { defer wg.Done(); _ = mon.Close() }()
+		go func() { defer wg.Done(); _ = job.Close() }()
+		wg.Wait()
+		_ = mon.Close()
+		_ = job.Close()
+	}
+}
+
+// Launch consumes private duplicate Job handles. A racing owner Close therefore produces either a
+// clean launch error or a child born into the still-pinned Job, never a stale-handle launch.
+func TestLaunchJobCloseRace(t *testing.T) {
+	f := nul(t)
+	defer f.Close()
+	for i := 0; i < 40; i++ {
+		job := mustJob(t, true)
+		var p *Process
+		var launchErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			p, launchErr = Launch([]string{selfExe(t)}, "", childEnv("sleep"), []*Job{job}, Stdio{Stdin: f, Stdout: f, Stderr: f})
+		}()
+		go func() { defer wg.Done(); _ = job.Close() }()
+		wg.Wait()
+		if launchErr == nil {
+			done := make(chan struct{})
+			go func() { _, _ = p.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("iter %d: child survived closing its KILL_ON_JOB_CLOSE owner", i)
+			}
+		}
+		_ = job.Close()
+	}
 }
 
 // D5 + general: launch+Wait many children with no unbounded handle growth.

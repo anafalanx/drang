@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,6 +79,28 @@ func TestServeAuthorizeTokenGate(t *testing.T) {
 	}
 }
 
+func TestServeScrubsBootstrapTokenFromURL(t *testing.T) {
+	g := &guiServer{token: "secret-token", fileServer: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "served")
+	})}
+	r := httptest.NewRequest(http.MethodGet, "/page?q=kept&t=secret-token", nil)
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("bootstrap request got status %d, want redirect", w.Code)
+	}
+	if location := w.Header().Get("Location"); location != "/page?q=kept" {
+		t.Fatalf("bootstrap redirect location = %q, want token-free URL", location)
+	}
+	if len(w.Result().Cookies()) == 0 || w.Result().Cookies()[0].Value != "secret-token" {
+		t.Fatal("bootstrap redirect did not issue the authentication cookie")
+	}
+	if strings.Contains(w.Body.String(), "served") {
+		t.Fatal("bootstrap request was served before its token was scrubbed")
+	}
+}
+
 func TestServeHTMXServed(t *testing.T) {
 	w := httptest.NewRecorder()
 	(&guiServer{}).serveHTMX(w)
@@ -137,8 +161,132 @@ func TestServeWriteResult(t *testing.T) {
 
 	// an Err result -> 500
 	w = httptest.NewRecorder()
-	writeResult(w, value.MakeErr("boom", 1))
+	if err := writeResult(w, value.MakeErr("boom", 1)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 	if w.Code != 500 {
 		t.Errorf("err result got code %d, want 500", w.Code)
+	}
+}
+
+func TestBuildGUIServerRejectsEntropyFailure(t *testing.T) {
+	oldReadRandom := readRandom
+	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	defer func() { readRandom = oldReadRandom }()
+
+	opts := mkMap(value.MakeStr("routes"), value.MakeMap())
+	g, errv := buildGUIServer(opts.Obj().(*value.OrderedMap))
+	if g != nil || !errv.IsErr() || !strings.Contains(errv.ErrMsg(), "entropy unavailable") {
+		t.Fatalf("buildGUIServer = (%v, %s), want entropy Err", g, errv.Display())
+	}
+}
+
+func TestBuildGUIServerRejectsShortEntropyRead(t *testing.T) {
+	oldReadRandom := readRandom
+	readRandom = func(p []byte) (int, error) { return len(p) - 1, nil }
+	defer func() { readRandom = oldReadRandom }()
+
+	opts := mkMap(value.MakeStr("routes"), value.MakeMap())
+	g, errv := buildGUIServer(opts.Obj().(*value.OrderedMap))
+	if g != nil || !errv.IsErr() || !strings.Contains(errv.ErrMsg(), "unexpected EOF") {
+		t.Fatalf("buildGUIServer = (%v, %s), want short-read Err", g, errv.Display())
+	}
+}
+
+func TestServeRejectsOversizedFormBeforeHandler(t *testing.T) {
+	called := false
+	fn := &Function{Builtin: func([]value.Value) (value.Value, error) {
+		called = true
+		return value.MakeStr("unexpected"), nil
+	}}
+	body := strings.NewReader("x=" + strings.Repeat("a", int(maxServeRequestBodyBytes)))
+	r := httptest.NewRequest(http.MethodPost, "/", body)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	(&guiServer{}).runHandler(w, r, fn)
+
+	if called {
+		t.Fatal("handler ran after request body exceeded its limit")
+	}
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized form got status %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestServeMalformedHandlerResponseIsControlled500(t *testing.T) {
+	bad := value.MakeMap()
+	bad.Obj().(*value.OrderedMap).Set(value.MakeStr("status"), value.MakeInt(999))
+	fn := &Function{Builtin: func([]value.Value) (value.Value, error) { return bad, nil }}
+	w := httptest.NewRecorder()
+	(&guiServer{}).runHandler(w, httptest.NewRequest(http.MethodGet, "/", nil), fn)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("malformed response got status %d, want 500", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "response status") {
+		t.Fatalf("malformed response body %q does not explain the validation failure", w.Body.String())
+	}
+}
+
+func TestServeStaticRootCannotFollowEscapingSymlink(t *testing.T) {
+	oldEmbeddedWeb := embeddedWeb
+	embeddedWeb = nil
+	defer func() { embeddedWeb = oldEmbeddedWeb }()
+
+	base := t.TempDir()
+	root := filepath.Join(base, "public")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(base, "secret.txt")
+	if err := os.WriteFile(secret, []byte("must-not-escape"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "escape.txt")); err != nil {
+		t.Skipf("symlinks unavailable on this Windows host: %v", err)
+	}
+
+	opts := mkMap(
+		value.MakeStr("routes"), value.MakeMap(),
+		value.MakeStr("static"), value.MakeStr(root),
+		value.MakeStr("open"), value.MakeBool(false),
+	)
+	g, errv := buildGUIServer(opts.Obj().(*value.OrderedMap))
+	if g == nil {
+		t.Fatalf("buildGUIServer: %s", errv.Display())
+	}
+	defer g.staticRoot.Close()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/escape.txt", nil)
+	r.AddCookie(&http.Cookie{Name: "drang_token", Value: g.token})
+	g.ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), "must-not-escape") {
+		t.Fatal("static server followed a symlink outside its root")
+	}
+}
+
+type failingHTTPWriter struct {
+	header http.Header
+	status int
+}
+
+func (w *failingHTTPWriter) Header() http.Header  { return w.header }
+func (w *failingHTTPWriter) WriteHeader(code int) { w.status = code }
+func (*failingHTTPWriter) Write([]byte) (int, error) {
+	return 0, errors.New("connection failed")
+}
+
+func TestServeResultPropagatesResponseWriteFailure(t *testing.T) {
+	w := &failingHTTPWriter{header: make(http.Header)}
+	err := writeResult(w, value.MakeStr("body"))
+	if err == nil || !strings.Contains(err.Error(), "connection failed") {
+		t.Fatalf("writeResult error = %v, want connection failure", err)
+	}
+
+	m := value.MakeMap()
+	m.Obj().(*value.OrderedMap).Set(value.MakeStr("body"), value.MakeStr("body"))
+	w = &failingHTTPWriter{header: make(http.Header)}
+	err = writeResult(w, m)
+	if err == nil || !strings.Contains(err.Error(), "connection failed") {
+		t.Fatalf("map writeResult error = %v, want connection failure", err)
 	}
 }

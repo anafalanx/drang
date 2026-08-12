@@ -3,14 +3,15 @@ package eval
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/anafalanx/drang/internal/value"
 )
 
 // evalDispatch implements the argv-driven task runner. It is exit-terminal: on
-// the normal path it calls os.Exit with the resolved code and does not return.
-// A malformed task table is an aborting error returned to the caller instead.
+// the normal path it returns the same exitSignal as exit(), which unwinds through
+// functions/VM frames to the CLI. The CLI alone owns os.Exit; embedders and tests
+// can observe the requested code without dispatch terminating their host process.
+// A malformed task table or output failure is an aborting error instead.
 func evalDispatch(args []value.Value, env *Env) (value.Value, error) {
 	if len(args) != 1 {
 		return value.MakeNil(), fmt.Errorf("dispatch expects 1 argument (a map of tasks), got %d", len(args))
@@ -18,26 +19,36 @@ func evalDispatch(args []value.Value, env *Env) (value.Value, error) {
 	if args[0].Tag() != value.Map {
 		return value.MakeNil(), fmt.Errorf("dispatch expects a map of tasks, got %s", args[0].TypeName())
 	}
-	code, err := dispatchResolve(args[0].Obj().(*value.OrderedMap), dispatchArgs(env))
+	argv, err := dispatchArgs(env)
 	if err != nil {
 		return value.MakeNil(), err
 	}
-	os.Exit(code)
-	return value.MakeNil(), nil // unreachable
+	code, err := dispatchResolve(args[0].Obj().(*value.OrderedMap), argv)
+	if err != nil {
+		return value.MakeNil(), err
+	}
+	return value.MakeNil(), exitSignal{code: code}
 }
 
 // dispatchResolve selects and runs the task named by argv[0], returning the
-// process exit code. Split out (no os.Exit) so it is unit-testable.
+// process exit code. Errors from dispatch's own output remain Go errors: a broken
+// stdout/stderr must not turn a requested listing or diagnostic into apparent success.
 func dispatchResolve(tasks *value.OrderedMap, argv []string) (int, error) {
 	if len(argv) == 0 || argv[0] == "--list" || argv[0] == "-l" || argv[0] == "list" {
-		listTasks(stdout, tasks) // the listing IS the requested result
+		if err := listTasks(stdout, tasks); err != nil { // the listing IS the requested result
+			return 0, err
+		}
 		return 0, nil
 	}
 	name := argv[0]
 	taskVal, ok := tasks.Get(value.MakeStr(name))
 	if !ok {
-		fmt.Fprintf(stderr, "drang: unknown task %q\n", name)
-		listTasks(stderr, tasks) // part of the error diagnostic, not output
+		if _, err := fmt.Fprintf(stderr, "drang: unknown task %q\n", name); err != nil {
+			return 0, fmt.Errorf("dispatch: write unknown-task diagnostic: %w", err)
+		}
+		if err := listTasks(stderr, tasks); err != nil { // part of the error diagnostic, not output
+			return 0, err
+		}
 		return 2, nil
 	}
 	fn, ok := asFunction(taskVal)
@@ -59,34 +70,81 @@ func dispatchResolve(tasks *value.OrderedMap, argv []string) (int, error) {
 	}
 	result, err := callFunction(fn, callArgs, 0) // a dispatched task is a fresh top-level entry (depth 0)
 	if err != nil {
-		fmt.Fprintln(stderr, "drang:", err)
+		if code, ok := ExitRequested(err); ok {
+			return code, nil // exit()/die() already carry their terminal status
+		}
+		if _, writeErr := fmt.Fprintln(stderr, "drang:", err); writeErr != nil {
+			return 0, fmt.Errorf("dispatch: write task error: %w", writeErr)
+		}
 		return ExitCode(err), nil
 	}
 	if result.IsErr() {
-		fmt.Fprintln(stderr, "drang:", result.ErrMsg())
+		if _, err := fmt.Fprintln(stderr, "drang:", result.ErrMsg()); err != nil {
+			return 0, fmt.Errorf("dispatch: write task error: %w", err)
+		}
 		return clampCode(result.ErrCode()), nil
 	}
 	return 0, nil
 }
 
-func listTasks(w io.Writer, tasks *value.OrderedMap) {
-	fmt.Fprintln(w, "tasks:")
-	for _, k := range tasks.Keys() {
-		fmt.Fprintln(w, "  "+k.Display())
+func listTasks(w io.Writer, tasks *value.OrderedMap) error {
+	remaining := maxStringBytes - int64(len("tasks:\n"))
+	if remaining < 0 {
+		return fmt.Errorf("dispatch: task list exceeds the %d-byte string limit", maxStringBytes)
 	}
+	names := make([]string, 0, tasks.Len())
+	for _, k := range tasks.Keys() {
+		if remaining < int64(len("  \n")) {
+			return fmt.Errorf("dispatch: task list exceeds the %d-byte string limit", maxStringBytes)
+		}
+		remaining -= int64(len("  \n"))
+		var name string
+		if k.Tag() == value.Str {
+			name = k.AsStr()
+			if int64(len(name)) > remaining {
+				return fmt.Errorf("dispatch: task list exceeds the %d-byte string limit", maxStringBytes)
+			}
+		} else {
+			var ok bool
+			name, ok = displayWithin(k, remaining)
+			if !ok {
+				return fmt.Errorf("dispatch: task list exceeds the %d-byte string limit", maxStringBytes)
+			}
+		}
+		names = append(names, name)
+		remaining -= int64(len(name))
+	}
+	if _, err := fmt.Fprintln(w, "tasks:"); err != nil {
+		return fmt.Errorf("dispatch: write task list: %w", err)
+	}
+	for _, name := range names {
+		if _, err := fmt.Fprintln(w, "  "+name); err != nil {
+			return fmt.Errorf("dispatch: write task list: %w", err)
+		}
+	}
+	return nil
 }
 
-func dispatchArgs(env *Env) []string {
+func dispatchArgs(env *Env) ([]string, error) {
 	v, ok := env.get("ARGV")
 	if !ok || v.Tag() != value.Arr {
-		return nil
+		return nil, nil
 	}
 	elems := v.Obj().(*value.Array).Elems
-	out := make([]string, len(elems))
-	for i, e := range elems {
-		out[i] = e.Display()
+	if len(elems) > maxCollectionItems {
+		return nil, fmt.Errorf("dispatch: ARGV exceeds the %d-element collection limit", maxCollectionItems)
 	}
-	return out
+	out := make([]string, 0, len(elems))
+	remaining := maxStringBytes
+	for _, e := range elems {
+		s, ok := displayWithin(e, remaining)
+		if !ok {
+			return nil, fmt.Errorf("dispatch: ARGV exceeds the %d-byte string limit", maxStringBytes)
+		}
+		out = append(out, s)
+		remaining -= int64(len(s))
+	}
+	return out, nil
 }
 
 // clampCode coerces an Err code into a valid process exit status (1..255),

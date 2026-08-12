@@ -63,6 +63,7 @@ const (
 	OpJumpIfFalsy           // if !truthy(R[A]) { ip = B }
 	OpJumpIfTruthy          // if truthy(R[A])  { ip = B }
 	OpJumpIfDefined         // if R[A] is neither nil nor error { ip = B }   (for //)
+	OpJumpIfErr             // if R[A] is an error { ip = B } (bounded interpolation)
 	// Fused compare-and-branch (if/while conditions): compute R[A] <cmp> R[B] and
 	// jump to C when the comparison is FALSE. Computes the exact op (not its
 	// inverse), so NaN behaves identically to the walker.

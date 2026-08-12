@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anafalanx/drang/internal/ast"
 	"github.com/anafalanx/drang/internal/parser"
 	"github.com/anafalanx/drang/internal/value"
 )
@@ -226,7 +227,10 @@ func TestMergeEnvCaseInsensitive(t *testing.T) {
 	defer os.Unsetenv("DRANG_TESTVAR")
 	overlay := value.MakeMap().Obj().(*value.OrderedMap)
 	overlay.Set(str("drang_testvar"), str("new")) // different case on purpose
-	env := mergeEnv(overlay)
+	env, err := mergeEnv(overlay)
+	if err != nil {
+		t.Fatalf("merge environment: %v", err)
+	}
 	count, val := 0, ""
 	for _, e := range env {
 		if i := strings.IndexByte(e, '='); i >= 0 && strings.EqualFold(e[:i], "DRANG_TESTVAR") {
@@ -255,7 +259,8 @@ func TestDispatchResolve(t *testing.T) {
 	env := NewEnv()
 	src := `fn .ok($a) { say("ran", $a) }
 fn .boom($a) { fail("kaboom")? }
-fn .noargs() { say("noargs") }`
+fn .noargs() { say("noargs") }
+fn .quit() { exit(7) }`
 	p := parser.New(src)
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
@@ -265,7 +270,7 @@ fn .noargs() { say("noargs") }`
 		t.Fatalf("run: %v", err)
 	}
 	tasks := value.MakeMap().Obj().(*value.OrderedMap)
-	for _, n := range []string{"ok", "boom", "noargs"} {
+	for _, n := range []string{"ok", "boom", "noargs", "quit"} {
 		v, _ := env.get("." + n) // user fns register under their dotted name
 		tasks.Set(value.MakeStr(n), v)
 	}
@@ -277,6 +282,7 @@ fn .noargs() { say("noargs") }`
 		{[]string{"ok", "x"}, 0}, // runs, success
 		{[]string{"noargs"}, 0},  // zero-param task
 		{[]string{"boom"}, 1},    // ?-propagated Err -> code 1
+		{[]string{"quit"}, 7},    // explicit exit keeps its terminal code
 		{[]string{"nope"}, 2},    // unknown task
 		{nil, 0},                 // list
 		{[]string{"--list"}, 0},  // list keyword
@@ -297,6 +303,126 @@ fn .noargs() { say("noargs") }`
 	bad.Set(value.MakeStr("x"), value.MakeInt(1))
 	if _, err := dispatchResolve(bad, []string{"x"}); err == nil {
 		t.Error("a non-function task should abort")
+	}
+}
+
+// dispatch is terminal language control flow, not permission for the evaluator
+// package to terminate its embedding process. Both backends must return the
+// existing exitSignal and leave the statement after dispatch unreachable.
+func TestDispatchUsesExitSignalOnBothBackends(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		argv []string
+		code int
+		want string
+	}{
+		{
+			name: "successful task",
+			src: `fn .ok() { say("ran") }
+dispatch({ok: .ok})
+say("unreachable")`,
+			argv: []string{"ok"},
+			code: 0,
+			want: "ran\n",
+		},
+		{
+			name: "task calls exit",
+			src: `fn .quit() { exit(7) }
+dispatch({quit: .quit})
+say("unreachable")`,
+			argv: []string{"quit"},
+			code: 7,
+		},
+	}
+	runners := []struct {
+		name string
+		run  func(*ast.Program, *Env) error
+	}{
+		{"walker", RunProgram},
+		{"vm", RunProgramVM},
+	}
+	for _, tc := range tests {
+		for _, backend := range runners {
+			t.Run(tc.name+"/"+backend.name, func(t *testing.T) {
+				p := parser.New(tc.src)
+				prog := p.ParseProgram()
+				if errs := p.Errors(); len(errs) > 0 {
+					t.Fatalf("parse: %v", errs)
+				}
+				env := NewEnv()
+				seedArgv(env, tc.argv)
+				var out bytes.Buffer
+				oldOut := swapStdout(&out)
+				err := backend.run(prog, env)
+				swapStdout(oldOut)
+				code, ok := ExitRequested(err)
+				if !ok || code != tc.code {
+					t.Fatalf("ExitRequested(%v) = (%d, %v), want (%d, true)", err, code, ok, tc.code)
+				}
+				if out.String() != tc.want {
+					t.Fatalf("stdout = %q, want %q", out.String(), tc.want)
+				}
+			})
+		}
+	}
+}
+
+type dispatchFailAfterWriter struct {
+	writes int
+}
+
+func (w *dispatchFailAfterWriter) Write(p []byte) (int, error) {
+	if w.writes == 0 {
+		return 0, errors.New("dispatch write failed")
+	}
+	w.writes--
+	return len(p), nil
+}
+
+func TestDispatchPropagatesWriterFailures(t *testing.T) {
+	tasks := value.MakeMap().Obj().(*value.OrderedMap)
+	tasks.Set(value.MakeStr("build"), value.MakeNil())
+
+	// listTasks must check both its header and each task row.
+	if err := listTasks(&dispatchFailAfterWriter{}, tasks); err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("listTasks header error = %v", err)
+	}
+	if err := listTasks(&dispatchFailAfterWriter{writes: 1}, tasks); err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("listTasks row error = %v", err)
+	}
+
+	oldOut := swapStdout(&dispatchFailAfterWriter{})
+	_, listErr := dispatchResolve(tasks, nil)
+	swapStdout(oldOut)
+	if listErr == nil || !strings.Contains(listErr.Error(), "write failed") {
+		t.Fatalf("dispatch list writer error = %v", listErr)
+	}
+
+	oldErr := swapStderr(&dispatchFailAfterWriter{})
+	_, unknownErr := dispatchResolve(tasks, []string{"missing"})
+	swapStderr(oldErr)
+	if unknownErr == nil || !strings.Contains(unknownErr.Error(), "write failed") {
+		t.Fatalf("dispatch unknown-task writer error = %v", unknownErr)
+	}
+
+	// A returned Err needs a diagnostic; failure to write it is itself propagated.
+	env := NewEnv()
+	p := parser.New(`fn .boom() { fail("boom") }`)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parse: %v", errs)
+	}
+	if err := RunProgram(prog, env); err != nil {
+		t.Fatalf("define task: %v", err)
+	}
+	boom, _ := env.get(".boom")
+	tasks.Set(value.MakeStr("boom"), boom)
+	oldErr = swapStderr(&dispatchFailAfterWriter{})
+	_, taskErr := dispatchResolve(tasks, []string{"boom"})
+	swapStderr(oldErr)
+	if taskErr == nil || !strings.Contains(taskErr.Error(), "write failed") {
+		t.Fatalf("dispatch task-error writer error = %v", taskErr)
 	}
 }
 

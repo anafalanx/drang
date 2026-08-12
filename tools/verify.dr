@@ -2,32 +2,55 @@
 # release or after major work. There is no hosted CI: this IS the gate, run on
 # demand, on your own machine. drang verifying drang.
 #
-#   drang tools/verify.dr           # build + vet + -race + docs checks, then a 20s fuzz burst per target
-#   drang tools/verify.dr 60s       # longer fuzz burst per target
-#   drang tools/verify.dr none      # skip fuzzing (build + vet + -race + docs only)
+#   C:\dev\z.exe check           # build + vet + uncached -race/stress + docs, then 20s fuzz/target
+#   C:\dev\z.exe check 60s       # longer fuzz burst per target
+#   C:\dev\z.exe check none      # skip fuzzing (build + vet + -race + docs only)
 #
 # Run from the repo root (the go commands use ./... paths, and the docs checks read
 # the root docs). Exits non-zero if any stage fails, so it composes in a shell.
+$argc := len($ARGV)?
+if $argc > 1 {
+	die("usage: z check [duration|none]")
+}
 $ft := $ARGV[0] // "20s"
 $fuzz := $ft != "none"
+$ucrt_bin ::= path_join($ENV.Z_HOME, "r", "msys2", "ucrt64", "bin")?
+$msys_bin ::= path_join($ENV.Z_HOME, "r", "msys2", "usr", "bin")?
+$instrumented_path ::= $ucrt_bin ~ ";" ~ $msys_bin ~ ";" ~ $ENV.PATH
+$instrumented_go ::= {
+	env_add: {
+		CGO_ENABLED: "1",
+		CC: path_join($ucrt_bin, "gcc.exe")?,
+		PATH: $instrumented_path,
+		CHERE_INVOKING: "1",
+		MINGW_CHOST: "x86_64-w64-mingw32",
+		MINGW_PACKAGE_PREFIX: "mingw-w64-ucrt-x86_64",
+		MINGW_PREFIX: "/ucrt64",
+		MSYS2_PATH_TYPE: "inherit",
+		MSYSTEM: "UCRT64",
+		MSYSTEM_PREFIX: "/ucrt64"
+	}
+}
 say("")
 say("=== drang preflight ===")
 if $fuzz {
-	say("build + vet + -race suite + docs checks, then a " ~ $ft ~ " fuzz burst per target")
+	say(
+		"build + vet + uncached -race/stress suites + docs checks, then a " ~ $ft ~ " fuzz burst per target"
+	)
 } else {
-	say("build + vet + -race suite + docs checks (fuzzing skipped)")
+	say("build + vet + uncached -race/stress suites + docs checks (fuzzing skipped)")
 }
 say("")
 
 # --- stages ---------------------------------------------------------------
-fn .stage($name, $cmd, $args) {
+fn .stage($name, $cmd, $args, $opts = {}) {
 	say("--- " ~ $name ~ " ---")
-	$r := run($cmd, $args)
+	$r := run($cmd, $args, $opts)
 	$ok := !is_err($r)
 	if $ok {
 		say("  ok: " ~ $name)
 	} else {
-		say("  FAIL: " ~ $name ~ " (exit " ~ str(err_code($r)) ~ ")")
+		say("  FAIL: " ~ $name ~ " (exit " ~ str(err_code($r))? ~ ")")
 	}
 	say("")
 	$ok
@@ -36,21 +59,38 @@ fn .stage($name, $cmd, $args) {
 $results := []
 
 fn .record($results, $name, $ok) {
-	push($results, {name: $name, ok: $ok})
+	push($results, {name: $name, ok: $ok})?
 	$results
 }
 
-# Gate: build, vet, then the full race-enabled suite. Stop at the first failure —
-# no point checking docs or fuzzing a broken tree.
+# Gate: build, vet, the full uncached race-enabled suite, then a repeat of the most
+# timing-sensitive Job Object lifecycle contracts. -count=1 prevents Go's test cache
+# from turning a prior green run into today's release verdict.
 $gate := [
-	{name: "go build ./...", cmd: "go", args: ["build", "./..."]},
-	{name: "go vet ./...", cmd: "go", args: ["vet", "./..."]},
-	{name: "go test -race ./...", cmd: "go", args: ["test", "-race", "./..."]}
+	{name: "go build ./...", cmd: "go", args: ["build", "./..."], opts: {}},
+	{name: "go vet ./...", cmd: "go", args: ["vet", "./..."], opts: {}},
+	{
+		name: "go test -race -count=1 ./...",
+		cmd: "go",
+		args: ["test", "-race", "-count=1", "./..."],
+		opts: $instrumented_go
+	},
+	{
+		name: "winjob lifecycle stress (20x)",
+		cmd: "go",
+		args: [
+			"test",
+			"-count=20",
+			"-run=^TestMonitor(NoLeakOnDrop|TreeKillDrainSignal|CloseUnblocksBusyPort|WatchCloseRace)$",
+			"./internal/winjob"
+		],
+		opts: {}
+	}
 ]
 $broke := false
 for $s in $gate {
-	$ok := .stage($s.name, $s.cmd, $s.args)
-	$results = .record($results, $s.name, $ok)
+	$ok := .stage($s.name, $s.cmd, $s.args, $s.opts)
+	$results = .record($results, $s.name, $ok)?
 	if !$ok {
 		$broke = true
 		break
@@ -76,7 +116,7 @@ if !$broke {
 	]
 	for $s in $docStages {
 		$ok := .stage($s.name, $s.cmd, $s.args)
-		$results = .record($results, $s.name, $ok)
+		$results = .record($results, $s.name, $ok)?
 	}
 }
 # Fuzz sweep: parser totality, formatter fixed-point, and VM/walker parity. Only if
@@ -90,8 +130,8 @@ if $fuzz and !$broke {
 	]
 	for $t in $targets {
 		$args := ["test", "-run=^$", "-fuzz=^" ~ $t.func ~ "$", "-fuzztime=" ~ $ft, $t.pkg]
-		$ok := .stage($t.name, "go", $args)
-		$results = .record($results, $t.name, $ok)
+		$ok := .stage($t.name, "go", $args, $instrumented_go)
+		$results = .record($results, $t.name, $ok)?
 	}
 } else if $fuzz and $broke {
 	say("(skipping fuzz sweep — a gate stage failed)")
@@ -110,9 +150,9 @@ for $r in $results {
 }
 say("")
 if $failed == 0 {
-	say("preflight PASSED — " ~ str(len($results)) ~ " stages green.")
+	say("preflight PASSED — " ~ str(len($results)?)? ~ " stages green.")
 	exit(0)
 } else {
-	say("preflight FAILED — " ~ str($failed) ~ " of " ~ str(len($results)) ~ " stages red.")
+	say("preflight FAILED — " ~ str($failed)? ~ " of " ~ str(len($results)?)? ~ " stages red.")
 	exit(1)
 }
