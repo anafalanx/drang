@@ -1,0 +1,19 @@
+# Line-ending policy: LF in the repository and in every working tree, independent
+# of each machine's core.autocrlf. drang targets Windows, macOS and Linux; the Go
+# and drang sources and the docs are all LF-clean, so this changes nothing on disk.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries: never normalize
+*.exe   binary
+*.dll   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.store binary
